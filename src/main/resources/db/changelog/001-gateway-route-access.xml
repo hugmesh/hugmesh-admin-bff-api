@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!-- gateway_route_access: per-gateway external-access rules. SOURCE OF TRUTH
+         (the gateways read-cache it in Cassandra). IDs are generated app-side so
+         no DB-default UUID function is needed (portable Postgres + H2). The
+         reserved column names role/allow are emitted quoted by Liquibase per
+         dialect, so the DDL works on both. -->
+    <changeSet id="001-gateway-route-access" author="hugmesh">
+        <createTable tableName="gateway_route_access">
+            <column name="id" type="uuid">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="gateway" type="varchar(255)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="url_pattern" type="varchar(512)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="role" type="varchar(255)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="casdoor_user" type="varchar(255)"/>
+            <column name="allow" type="boolean" defaultValueBoolean="true">
+                <constraints nullable="false"/>
+            </column>
+            <column name="updated_at" type="timestamp" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+    </changeSet>
+
+    <!-- D8 MFA floor: per-route mfa_required gate. THIRD dual-write site of the
+         gateway_route_access.mfa_required column (alongside the merged
+         hugmesh-gateway CanonicalSeed + the generator's route-access
+         initdb/20-schema.sql Postgres seed) — kept in lockstep so the SOURCE OF TRUTH
+         table shape is identical wherever it is created/seeded. SHIPS DARK + INERT:
+         NOT NULL DEFAULT false, so EVERY existing/new row is mfa_required=false and
+         the admin-bff does NOT read it (no behaviour change). It exists purely so the
+         column is present before any future policy flip (the gateway's
+         GatewayRouteAccessFilter.decide() is the ONLY enforcer; admin-bff only owns
+         the changelog copy). A separate additive changeSet (not folded into 001-create)
+         so an already-deployed table gains the column idempotently. -->
+    <changeSet id="001b-gateway-route-access-mfa-required" author="hugmesh">
+        <preConditions onFail="MARK_RAN">
+            <not>
+                <columnExists tableName="gateway_route_access" columnName="mfa_required"/>
+            </not>
+        </preConditions>
+        <addColumn tableName="gateway_route_access">
+            <column name="mfa_required" type="boolean" defaultValueBoolean="false">
+                <constraints nullable="false"/>
+            </column>
+        </addColumn>
+    </changeSet>
+</databaseChangeLog>

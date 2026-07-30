@@ -1,0 +1,33 @@
+{
+  "name": "@{{NPM_SCOPE}}/{{HOST_NAME}}",
+  "version": "0.1.0",
+  "description": "{{BRAND_TITLE}} host shell — minimal runnable Angular native-federation HOST, rendered by the mesh repo-templating angular-host archetype's base-absent skeleton. Dynamic /api/federation/manifest union over the static floor; deps pinned to the same Angular majors as the fleet remotes (hugmesh-user-ui).",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "ng": "ng",
+    "start": "ng serve host-shell",
+    "build": "ng build host-shell",
+    "build:host-shell": "ng build host-shell"
+  },
+  "dependencies": {
+    "@angular-architects/native-federation": "^22.0.0",
+    "@angular/common": "^22.0.2",
+    "@angular/compiler": "^22.0.2",
+    "@angular/core": "^22.0.2",
+    "@angular/platform-browser": "^22.0.2",
+    "@angular/platform-browser-dynamic": "^22.0.2",
+    "@angular/router": "^22.0.2",
+    "@softarc/native-federation-node": "^3.5.5",
+    "es-module-shims": "^2.8.1",
+    "rxjs": "^7.8.2",
+    "tslib": "^2.6.0",
+    "zone.js": "^0.16.1"
+  },
+  "devDependencies": {
+    "@angular-devkit/build-angular": "^22.0.4",
+    "@angular/cli": "^22.0.4",
+    "@angular/compiler-cli": "^22.0.2",
+    "typescript": "~6.0.3"
+  }
+}

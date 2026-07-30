@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+      fleet_entitlement — the per-subject FLEET-ADMIN SUBSCRIPTION gate. A non-superadmin
+      FLEET_ADMIN reaches the public /bff/admin/phone-fleet/** surface ONLY while an ACTIVE,
+      unexpired entitlement row exists for their Casdoor subject; otherwise every endpoint is
+      a clean 403 "fleet entitlement required" (SUPERADMIN is exempt). Superadmin-managed via
+      /bff/superadmin/fleet-entitlements (PUT upsert / DELETE / GET list, SUPERADMIN + step-up).
+
+      subject: the Casdoor subject the entitlement is keyed on = the PRIMARY KEY (natural key,
+               one entitlement per subject; no gen_random_uuid needed).
+      active:  the on/off switch (NOT NULL DEFAULT true — an upsert without an explicit flag
+               grants access).
+      seats:   an optional advisory seat count (informational; not enforced by the wall).
+      expires_at: an optional subscription expiry — isEntitled() is fail-closed on
+               (expires_at IS NULL OR expires_at > now()), evaluated against the DB clock.
+      updated_at: last-write audit stamp.
+
+      Portable DDL: subject is a plain varchar PK (NOT a DB-generated uuid, unlike the 200-band
+      tables). timestamptz -> the portable 'timestamp with time zone' generic type,
+      defaultValueComputed="now()". GRANT is PG-gated (dbms=postgresql, onFail/onError=MARK_RAN)
+      like every other table grant; the H2/non-PG path MARK_RANs it. Unlike the audit tables
+      (which never grant DELETE) this table GRANTs DELETE — an entitlement is revocable state,
+      not an audit trail, and the superadmin surface has an explicit DELETE endpoint.
+
+      Numbering: band 306 (next free above 305-phone-device-owner). Appended LAST at the
+      include site in db.changelog-master.xml. Independent of every other changeSet (net-new).
+    -->
+
+    <!-- ═══════════════════════════ fleet_entitlement ══════════════════════════════ -->
+    <changeSet id="306-fleet-entitlement-table" author="hugmesh">
+        <comment>Per-subject fleet-admin subscription gate. isEntitled = row exists AND active
+                 AND (expires_at IS NULL OR expires_at > now()); fail-closed (no row = false).
+                 SUPERADMIN-managed; the FLEET_ADMIN owner surface reads it as the entitlement
+                 wall.</comment>
+        <createTable tableName="fleet_entitlement">
+            <!-- The Casdoor subject the entitlement is keyed on = natural PRIMARY KEY (one
+                 entitlement per subject). Sized like the account subject band (400). -->
+            <column name="subject" type="varchar(400)">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <!-- On/off switch. NOT NULL DEFAULT true so a bare upsert grants access. -->
+            <column name="active" type="boolean" defaultValueBoolean="true">
+                <constraints nullable="false"/>
+            </column>
+            <!-- Optional advisory seat count (informational; the wall does not enforce it). -->
+            <column name="seats" type="int"/>
+            <!-- Optional subscription expiry; NULL = no expiry. isEntitled is fail-closed
+                 on (expires_at IS NULL OR expires_at > now()) against the DB clock. -->
+            <column name="expires_at" type="timestamp with time zone"/>
+            <!-- Last-write audit stamp (DB now()). -->
+            <column name="updated_at" type="timestamp with time zone" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+    </changeSet>
+
+    <changeSet id="306-fleet-entitlement-grant" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>GRANT SELECT,INSERT,UPDATE,DELETE on fleet_entitlement to the admin_bff role.
+                 DELETE is granted (unlike the audit tables) — an entitlement is revocable
+                 state with an explicit superadmin DELETE endpoint, not an audit trail. PG
+                 only; MARK_RAN elsewhere.</comment>
+        <sql>GRANT SELECT, INSERT, UPDATE, DELETE ON fleet_entitlement TO admin_bff</sql>
+        <rollback>REVOKE SELECT, INSERT, UPDATE, DELETE ON fleet_entitlement FROM admin_bff</rollback>
+    </changeSet>
+
+</databaseChangeLog>

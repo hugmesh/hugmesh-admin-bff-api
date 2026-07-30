@@ -1,0 +1,118 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+      service_scaffold — the per-domain record of a SCAFFOLD a SUPERADMIN requested from the
+      Service-Store wizard (the "scaffold a new service, then federate it" surface of the
+      App-Store). It records, per brand/domain, WHICH example archetype was chosen for a
+      service_key + the intended federation hints (mount_at / requires_role). The rendered
+      starter codebase is produced ON DEMAND from the embedded skeletons (ScaffoldService) —
+      this table holds INTENT only; nothing is deployed.
+
+      This table follows the 100/102 App-Store conventions:
+        * id is a DB-generated varchar(36) UUID string — the (gen_random_uuid())::text column
+          DEFAULT (the 200-band idiom baked inline here since this is a NEW table created after
+          the 200 migration); the repository INSERT omits id and RETURNING id reads it back.
+        * desired-state with a single state column: state IN ('requested','archived'); the
+          archive endpoint CASes it requested->archived when the starter is first materialised
+          (the row is NEVER hard-deleted — the audit trail, the 100/102 convention).
+        * a per-row `domain` discriminator (the 010 pattern, NOT NULL) so a brand ADMIN only
+          sees / the superadmin targets a specific brand's scaffolds.
+        * created_at/updated_at timestamptz DEFAULT now(), mirroring 100-service-curation.
+
+      display_name / mount_at / requires_role are NULLABLE hints; created_by_subject is the
+      SUPERADMIN Casdoor subject (jwt.getSubject()) who requested the scaffold.
+
+      ── Portable DDL (mirrors 100-service-curation.xml) ─────────────────────────────
+      timestamptz -> the portable Liquibase 'timestamp with time zone' generic type. The PG-only
+      GRANT is gated dbms=postgresql onFail=MARK_RAN so the changelog never fails off-Postgres.
+      UPDATE is granted (the archive CAS bumps state); no DELETE (the row is the audit trail).
+
+      ── Numbering: 320 ─────────────────────────────────────────────────────────────
+      Next FREE band above the current max WIRED band (310-backing-service-mode). Appended LAST
+      at the include site in db.changelog-master.xml after the 310 include.
+    -->
+
+    <changeSet id="320-service-scaffold" author="hugmesh">
+        <comment>service_scaffold — per-domain scaffold-request record for the Service-Store
+                 wizard (which archetype for which service_key; INTENT only; the starter ZIP is
+                 rendered on demand; state requested->archived via CAS; SHIPS the render dark of
+                 any deploy).</comment>
+        <createTable tableName="service_scaffold">
+            <!-- DB-generated varchar(36) UUID (the (gen_random_uuid())::text idiom; INSERT omits
+                 id, RETURNING id reads it back — the 100/102 App-Store convention). -->
+            <column name="id" type="varchar(36)" defaultValueComputed="(gen_random_uuid())::text">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <!-- Per-row tenant discriminator (the 010 pattern). NOT NULL. -->
+            <column name="domain" type="varchar(253)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="service_key" type="varchar(128)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- The chosen ScaffoldArchetype id (a catalog member; the service refuses an unknown
+                 one — no DB FK, like go_live_intent.provider). -->
+            <column name="archetype" type="varchar(64)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- Nullable human label (defaults to service_key when rendering). -->
+            <column name="display_name" type="varchar(128)"/>
+            <!-- Nullable intended federation mount path. -->
+            <column name="mount_at" type="varchar(128)"/>
+            <!-- Nullable intended requiresRole federation gate. -->
+            <column name="requires_role" type="varchar(32)"/>
+            <column name="state" type="varchar(16)" defaultValue="requested">
+                <constraints nullable="false"/>
+            </column>
+            <!-- The SUPERADMIN subject (jwt.getSubject()) who requested the scaffold. -->
+            <column name="created_by_subject" type="varchar(400)"/>
+            <column name="created_at" type="timestamp with time zone" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+            <column name="updated_at" type="timestamp with time zone" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+        <rollback>
+            <dropTable tableName="service_scaffold"/>
+        </rollback>
+    </changeSet>
+
+    <changeSet id="320-service-scaffold-state-check" author="hugmesh">
+        <comment>CHECK: state is one of the two lifecycle values (requested/archived).</comment>
+        <sql>
+            ALTER TABLE service_scaffold
+                ADD CONSTRAINT ck_service_scaffold_state
+                CHECK (state IN ('requested', 'archived'))
+        </sql>
+        <rollback>ALTER TABLE service_scaffold DROP CONSTRAINT ck_service_scaffold_state</rollback>
+    </changeSet>
+
+    <changeSet id="320-service-scaffold-domain-index" author="hugmesh">
+        <comment>Index on (domain) for the superadmin per-domain scaffold list.</comment>
+        <createIndex tableName="service_scaffold" indexName="idx_service_scaffold_domain">
+            <column name="domain"/>
+        </createIndex>
+        <rollback>
+            <dropIndex tableName="service_scaffold" indexName="idx_service_scaffold_domain"/>
+        </rollback>
+    </changeSet>
+
+    <changeSet id="320-service-scaffold-grant" author="hugmesh">
+        <!-- PostgreSQL-only runtime grant. The dbms precondition skips it off-Postgres
+             (onFail=MARK_RAN records it as run) so the changelog continues. UPDATE is granted (the
+             archive CAS bumps state); no DELETE — the row is the audit trail. -->
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>GRANT SELECT,INSERT,UPDATE on service_scaffold to the admin_bff role
+                 (no DELETE — the archive CAS is an update, the row is the audit).</comment>
+        <sql>GRANT SELECT, INSERT, UPDATE ON service_scaffold TO admin_bff</sql>
+        <rollback>REVOKE SELECT, INSERT, UPDATE ON service_scaffold FROM admin_bff</rollback>
+    </changeSet>
+</databaseChangeLog>

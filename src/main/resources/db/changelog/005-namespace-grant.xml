@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!-- namespace_grant: per-user namespace access grants, durable. One row per
+         (grantee, namespace). grantee is the lowercased user identifier the admin
+         granted (typically an account id). -->
+    <changeSet id="005-namespace-grant" author="hugmesh">
+        <createTable tableName="namespace_grant">
+            <column name="grantee" type="varchar(400)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="namespace" type="varchar(128)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="created_at" type="timestamp" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+        <addPrimaryKey tableName="namespace_grant" columnNames="grantee, namespace"
+                       constraintName="pk_namespace_grant"/>
+    </changeSet>
+</databaseChangeLog>

@@ -1,0 +1,207 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+      notification outbox spine (Notifications PR2) — the TRANSACTIONAL OUTBOX for the
+      per-domain @system notifications subsystem. SHIPS DARK: nothing reads/consumes
+      these tables yet (the hugmesh-actions reconciler is PR4). The only observable
+      change is an extra notification_outbox row written in the SAME reactive
+      transaction as an access_suspension (ban/timeout) effect write, so the outbox row
+      exists IFF the effect commits (lossless transactional-outbox pattern).
+
+      ── Four tables (each its own changeSet — independent redeploy + rollback) ──
+        - notification_outbox     a durable, append-only record of an effect that should
+                                  notify the affected principal via the neutral @system
+                                  sender. payload carries ONLY reason / ttl / target
+                                  context — NEVER the acting mod/admin identity (the
+                                  @system sender is neutral; see AppealContact precedent).
+                                  UNIQUE(source_table, source_id, category) is the dedup
+                                  guard: a re-ban of an already-suspended target (the
+                                  service's idempotent no-op write) cannot double-insert.
+        - notification_delivery   per-channel sent guard (outbox_id, channel, status,
+                                  sent_at) — the single delivered-truth so a later Kafka
+                                  path + a SQL-tail backstop never double-deliver. SCHEMA
+                                  ONLY this PR (nothing writes it yet).
+        - notification_cursor     per-consumer delivery cursor (consumer, last_seen,
+                                  updated_at) — where each consumer has read to in the
+                                  outbox. SCHEMA ONLY this PR.
+        - announcement_suppressed a minimal per-domain ADMIN kill-switch for the
+                                  @system BROADCAST channel. The existing Announcement
+                                  system (changeset 060/061) has per-announcement
+                                  state/target flags but NO domain-wide suppression flag,
+                                  so this is NET-NEW and does NOT alter AnnouncementService
+                                  behaviour in this PR (only an ADMIN GET/PUT toggle reads
+                                  /writes it). One row per domain.
+
+      ── Portable DDL (matches 008-access-suspension.xml) ─────────────────────────
+      id is varchar(36) holding an app-generated UUID string (NOT a Postgres uuid
+      column) — the same portable pattern AccessSuspensionRepository / RouteAccessRepository
+      use, so the INSERT round-trips on Postgres AND the H2 (PG-compat, NON_KEYWORDS)
+      test store without a pgcrypto dependency. timestamptz -> the portable Liquibase
+      'timestamp with time zone' generic type. domain is NOT NULL (stamped from the
+      effect's domain on write) with default 'default' for single-issuer back-compat
+      (matches 010/061). The payload is text/clob JSON.
+
+      ── Numbered 062 ─────────────────────────────────────────────────────────────
+      One above the announcement-domain changeset 061 (the current max). Appended LAST
+      in db.changelog-master.xml.
+    -->
+
+    <changeSet id="062-notification-outbox" author="hugmesh">
+        <comment>notification_outbox: durable transactional-outbox record of an effect
+                 that should notify the affected principal via the neutral @system
+                 sender. payload carries reason/ttl/target ONLY — never the actor.</comment>
+        <createTable tableName="notification_outbox">
+            <column name="id" type="varchar(36)">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <!-- Tenant discriminator, stamped from the EFFECT's domain on write
+                 (default 'default' for single-issuer back-compat; matches 010/061). -->
+            <column name="domain" type="varchar(64)" defaultValue="default">
+                <constraints nullable="false"/>
+            </column>
+            <!-- The desired-state table the row was emitted from (e.g. access_suspension)
+                 + its row id — the (source_table, source_id, category) natural key. -->
+            <column name="source_table" type="varchar(64)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="source_id" type="varchar(36)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- The notification category (e.g. 'account-restriction'). -->
+            <column name="category" type="varchar(64)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- JSON: reason / ttl / target context ONLY. The acting mod/admin identity
+                 (mod_action.actor) is DELIBERATELY EXCLUDED — the @system sender is
+                 neutral and must never expose who took the action. -->
+            <column name="payload" type="clob"/>
+            <column name="created_at" type="timestamp with time zone" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+    </changeSet>
+
+    <changeSet id="062-notification-outbox-dedup-unique" author="hugmesh">
+        <comment>UNIQUE(source_table, source_id, category): at most ONE outbox row per
+                 effect per category, so the service's idempotent re-ban (no-op write)
+                 cannot double-insert. Portable plain UNIQUE (applies on H2 + PG).</comment>
+        <addUniqueConstraint tableName="notification_outbox"
+                             columnNames="source_table, source_id, category"
+                             constraintName="uq_notification_outbox_source"/>
+    </changeSet>
+
+    <changeSet id="062-notification-outbox-domain-index" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>Index the per-tenant read predicate on notification_outbox (PG read
+                 optimisation; H2 applies the predicate in-SQL regardless).</comment>
+        <sql>CREATE INDEX idx_notification_outbox_domain ON notification_outbox (domain)</sql>
+        <rollback>DROP INDEX idx_notification_outbox_domain</rollback>
+    </changeSet>
+
+    <changeSet id="062-notification-delivery" author="hugmesh">
+        <comment>notification_delivery: per-channel sent guard — the single delivered-
+                 truth so a later Kafka path + a SQL-tail backstop never double-deliver.
+                 SCHEMA ONLY this PR (nothing writes it yet).</comment>
+        <createTable tableName="notification_delivery">
+            <column name="id" type="varchar(36)">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="outbox_id" type="varchar(36)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- The delivery channel (e.g. 'matrix', 'akkoma', 'forum', 'email'). -->
+            <column name="channel" type="varchar(32)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- pending / sent / failed (CHECK below). -->
+            <column name="status" type="varchar(16)" defaultValue="pending">
+                <constraints nullable="false"/>
+            </column>
+            <column name="sent_at" type="timestamp with time zone"/>
+        </createTable>
+    </changeSet>
+
+    <changeSet id="062-notification-delivery-status-check" author="hugmesh">
+        <comment>CHECK: delivery status is one of the three lifecycle values.</comment>
+        <sql>
+            ALTER TABLE notification_delivery
+                ADD CONSTRAINT ck_notification_delivery_status
+                CHECK (status IN ('pending', 'sent', 'failed'))
+        </sql>
+        <rollback>ALTER TABLE notification_delivery DROP CONSTRAINT ck_notification_delivery_status</rollback>
+    </changeSet>
+
+    <changeSet id="062-notification-delivery-channel-unique" author="hugmesh">
+        <comment>UNIQUE(outbox_id, channel): at most ONE delivery row per (outbox row,
+                 channel) — the per-channel exactly-once guard so two delivery paths
+                 (Kafka + SQL-tail) converge on one row instead of double-sending.</comment>
+        <addUniqueConstraint tableName="notification_delivery"
+                             columnNames="outbox_id, channel"
+                             constraintName="uq_notification_delivery_channel"/>
+    </changeSet>
+
+    <changeSet id="062-notification-cursor" author="hugmesh">
+        <comment>notification_cursor: per-consumer delivery cursor (where each consumer
+                 has read to in the outbox). SCHEMA ONLY this PR.</comment>
+        <createTable tableName="notification_cursor">
+            <!-- The consumer name is the natural key (one cursor per consumer). -->
+            <column name="consumer" type="varchar(64)">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <!-- The last outbox id (or watermark) this consumer has processed. -->
+            <column name="last_seen" type="varchar(36)"/>
+            <column name="updated_at" type="timestamp with time zone" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+    </changeSet>
+
+    <changeSet id="062-announcement-suppressed" author="hugmesh">
+        <comment>announcement_suppressed: minimal per-domain ADMIN kill-switch for the
+                 @system BROADCAST channel. NET-NEW (the Announcement system has no
+                 domain-wide suppression flag) and does NOT alter AnnouncementService
+                 behaviour in this PR — only an ADMIN GET/PUT toggle reads/writes it.
+                 One row per domain (domain is the natural key).</comment>
+        <createTable tableName="announcement_suppressed">
+            <column name="domain" type="varchar(64)">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="suppressed" type="boolean" defaultValueBoolean="false">
+                <constraints nullable="false"/>
+            </column>
+            <column name="updated_by" type="varchar(400)"/>
+            <column name="updated_at" type="timestamp with time zone" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+    </changeSet>
+
+    <changeSet id="062-notification-grant" author="hugmesh">
+        <!-- PostgreSQL-only runtime grant (the H2 test store has no admin_bff role, so
+             GRANT would error there). dbms precondition skips it off-Postgres. -->
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>GRANT on the notification spine tables to the admin_bff role.</comment>
+        <sql>
+            GRANT SELECT, INSERT, UPDATE ON notification_outbox   TO admin_bff;
+            GRANT SELECT, INSERT, UPDATE ON notification_delivery TO admin_bff;
+            GRANT SELECT, INSERT, UPDATE ON notification_cursor   TO admin_bff;
+            GRANT SELECT, INSERT, UPDATE ON announcement_suppressed TO admin_bff
+        </sql>
+        <rollback>
+            REVOKE SELECT, INSERT, UPDATE ON notification_outbox   FROM admin_bff;
+            REVOKE SELECT, INSERT, UPDATE ON notification_delivery FROM admin_bff;
+            REVOKE SELECT, INSERT, UPDATE ON notification_cursor   FROM admin_bff;
+            REVOKE SELECT, INSERT, UPDATE ON announcement_suppressed FROM admin_bff
+        </rollback>
+    </changeSet>
+
+</databaseChangeLog>

@@ -1,0 +1,393 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+      node-storage — the control-plane SOURCE OF TRUTH for ADDITIONAL storage an operator
+      ATTACHES to a specific mesh node so SERVICES can use SPACE on that node. CLONES the
+      device-license-registry (011) idioms verbatim. Two tables:
+
+        node_storage_pool         — a registered additional disk/pool PINNED to one node
+                                    (FK -> device_registry). Identity is the node + a stable
+                                    disk_serial; the pool advertises reserved_bytes (the
+                                    operator's capacity claim) and a node-local provisioner
+                                    pool_path the extended Rancher local-path-provisioner
+                                    nodePathMap maps. Per-node + per-domain.
+        storage_service_assignment — the explicit (pool x service) placement rows: which
+                                    service is pinned to which pool's node (nodeAffinity +
+                                    a node-pinned local PV bound on THAT node). CAS-revoke
+                                    (never DELETE = audit); generation + propagation_state
+                                    drive the GitOps-ack like 011's licenses; an ACTIVE row
+                                    is the single element the apps/13b ApplicationSet
+                                    list-generator selects on (selector state:active).
+
+      ── Portable DDL (mirrors 011-device-license-registry.xml EXACTLY) ───────────────
+      id is an app-generated varchar(36) UUID string (NOT a Postgres uuid column with
+      gen_random_uuid()), so the INSERT is portable across Postgres and the H2
+      (PostgreSQL-compat, NON_KEYWORDS) test store with no pgcrypto dependency and the app
+      can return the new row id. timestamptz -> the portable Liquibase 'timestamp with time
+      zone' generic type, defaultValueComputed="now()". One changeSet per CHECK /
+      partial-unique / FK / index / GRANT (independent redeploy + rollback). PG-gated
+      partial-uniques + GRANT via a dbms=postgresql precondition (onFail/onError=MARK_RAN) —
+      the H2 path enforces the at-most-one-active invariant with the service
+      findActive-before-insert guard, exactly like 011.
+
+      ── DOMAIN stamped from the node's RESIDENCY (not the caller) [FIX-NODEFAULT] ─────
+      Both tables carry a per-row `domain` tenant discriminator for the ADMIN read view,
+      but it is NEVER caller-supplied: the service resolves the node FIRST and stamps the
+      pool/assignment domain from device_registry.domain (the node's residency), exactly as
+      011's grantDevice() stamps license.domain from the device's residency. A 'default'
+      residency is impossible to register (the 011 register guard already rejected it), so
+      the per-domain ADMIN wall is non-vacuous here too.
+
+      ── OWNERSHIP gating is in the SERVICE, not the schema (deliberate DIVERGENCE) ────
+      Storage is ADMIN-CAPABLE (not superadmin-only) but OWNERSHIP-gated: an ADMIN may act
+      ONLY on own-domain ADMIN-owned nodes; any SUPERADMIN-owned node is SUPERADMIN-only;
+      SUPERADMIN is unrestricted. That ALLOW/DENY matrix is enforced in the service layer
+      (PR2) reading device_registry.owner_type + PrincipalDomain residency — the schema only
+      records owner_type via the FK'd device row, exactly like 011.
+
+      ── propagation_state + generation (GitOps ACK + rollback) ───────────────────────
+      storage_service_assignment carries propagation_state (pending/applied/failed/
+      degraded — same CHECK vocabulary as 011's device_ssh_license) so the UI can show the
+      capacity-aware placement / rebalance ACK, plus a monotonic `generation` bumped on
+      every mutate that the per-node signed export's monotonic-generation rollback guard
+      reads (PR4 reproduces DeviceRegistryExportService.exportNode exactly).
+
+      ── CAS-revoke never DELETE ──────────────────────────────────────────────────────
+      An assignment is retired by a CAS active->revoked (the row is the audit trail), never
+      a DELETE — exactly like 011's license revoke. A pool may be detached (DELETE) only
+      when no ACTIVE assignment references it (the service guards; the FK is the backstop).
+
+      ── SHIPS INERT (opt-in / add-by-command) ────────────────────────────────────────
+      The tables are created EMPTY. With zero pool rows the platform behaves EXACTLY as
+      today (the extended local-path-provisioner keeps its DEFAULT_PATH; the 13b
+      ApplicationSet selects zero elements). Node storage is an OPTIONAL service the
+      operator opts into per node.
+
+      ── Numbering: 085 ───────────────────────────────────────────────────────────────
+      HIGH number band (085-089) to avoid colliding with the low-numbered open PRs;
+      APPENDED LAST at the include site in db.changelog-master.xml, after the most recent
+      include. Independent of every other changeSet (a net-new pair of tables).
+    -->
+
+    <!-- ════════════════════════ node_storage_pool ════════════════════════════════ -->
+
+    <changeSet id="085-node-storage-pool" author="hugmesh">
+        <comment>node_storage_pool — an additional disk/pool registered + PINNED to ONE
+                 mesh node (FK -> device_registry). domain is stamped from the node's
+                 RESIDENCY by the service [FIX-NODEFAULT], never the caller.</comment>
+        <createTable tableName="node_storage_pool">
+            <column name="id" type="varchar(36)">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <!-- The node this pool is physically attached to. A pool is NODE-PINNED:
+                 a PV carved from it can only ever bind on this node. -->
+            <column name="device_id" type="varchar(36)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- A stable per-disk identity (serial / wwn) so re-registering the same
+                 physical disk on the same node is idempotent (UNIQUE per device). -->
+            <column name="disk_serial" type="varchar(128)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- The node-local filesystem path the provisioner nodePathMap maps for this
+                 pool (e.g. /var/hugmesh/storage/<id>). -->
+            <column name="pool_path" type="varchar(512)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- The operator's capacity CLAIM in bytes. The node-agent's df is AUTHORITATIVE
+                 over this; the assign-time over-subscription check (PR2) compares
+                 SUM(active reserved_bytes) <= node-df available_bytes. -->
+            <column name="reserved_bytes" type="bigint">
+                <constraints nullable="false"/>
+            </column>
+            <!-- Default-exclusive for video/large-object pools (one service per pool). The
+                 service defaults this true for video workloads (memory note). -->
+            <column name="is_exclusive" type="boolean" defaultValueBoolean="false">
+                <constraints nullable="false"/>
+            </column>
+            <column name="filesystem" type="varchar(32)"/>
+            <column name="state" type="varchar(16)" defaultValue="active">
+                <constraints nullable="false"/>
+            </column>
+            <!-- home/tenant discriminator for the ADMIN read view — stamped from the node's
+                 residency by the service (NO default residency is reachable). -->
+            <column name="domain" type="varchar(64)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- the node-agent reconcile / provisioner-patch ACK outcome the UI surfaces. -->
+            <column name="propagation_state" type="varchar(16)" defaultValue="pending">
+                <constraints nullable="false"/>
+            </column>
+            <!-- monotonic generation bumped on every mutate; the per-node signed export
+                 (PR4) carries max(generation) so a node rejects a rolled-back payload. -->
+            <column name="generation" type="bigint" defaultValueNumeric="0">
+                <constraints nullable="false"/>
+            </column>
+            <column name="created_by" type="varchar(400)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="created_at" type="timestamp with time zone" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+            <column name="detached_at" type="timestamp with time zone"/>
+            <column name="detached_by" type="varchar(400)"/>
+        </createTable>
+    </changeSet>
+
+    <changeSet id="085-node-storage-pool-state-check" author="hugmesh">
+        <comment>CHECK: state is active (usable) or detached (CAS audit, never DELETEd
+                 while history matters).</comment>
+        <sql>
+            ALTER TABLE node_storage_pool
+                ADD CONSTRAINT ck_node_storage_pool_state
+                CHECK (state IN ('active', 'detached'))
+        </sql>
+        <rollback>ALTER TABLE node_storage_pool DROP CONSTRAINT ck_node_storage_pool_state</rollback>
+    </changeSet>
+
+    <changeSet id="085-node-storage-pool-propagation-check" author="hugmesh">
+        <comment>CHECK: propagation_state is one of the four push-with-ack outcomes
+                 (same vocabulary as 011's device_ssh_license).</comment>
+        <sql>
+            ALTER TABLE node_storage_pool
+                ADD CONSTRAINT ck_node_storage_pool_propagation
+                CHECK (propagation_state IN ('pending', 'applied', 'failed', 'degraded'))
+        </sql>
+        <rollback>ALTER TABLE node_storage_pool DROP CONSTRAINT ck_node_storage_pool_propagation</rollback>
+    </changeSet>
+
+    <changeSet id="085-node-storage-pool-reserved-bytes-check" author="hugmesh">
+        <comment>CHECK: a capacity claim must be strictly positive — a zero/negative
+                 reserved_bytes pool is meaningless.</comment>
+        <sql>
+            ALTER TABLE node_storage_pool
+                ADD CONSTRAINT ck_node_storage_pool_reserved_bytes
+                CHECK (reserved_bytes > 0)
+        </sql>
+        <rollback>ALTER TABLE node_storage_pool DROP CONSTRAINT ck_node_storage_pool_reserved_bytes</rollback>
+    </changeSet>
+
+    <changeSet id="085-node-storage-pool-device-fk" author="hugmesh">
+        <comment>FK: a pool's device_id references a real device_registry row (the node it
+                 is pinned to). The pool's residency + owner_type are READ THROUGH this FK
+                 (the service stamps domain from device.domain, gates on device.owner_type).</comment>
+        <addForeignKeyConstraint
+                constraintName="fk_node_storage_pool_device"
+                baseTableName="node_storage_pool" baseColumnNames="device_id"
+                referencedTableName="device_registry" referencedColumnNames="id"/>
+        <rollback>
+            <dropForeignKeyConstraint baseTableName="node_storage_pool"
+                                      constraintName="fk_node_storage_pool_device"/>
+        </rollback>
+    </changeSet>
+
+    <!--
+      The partial UNIQUE below is PARTIAL (... WHERE state='active'). PostgreSQL supports
+      partial indexes; the H2 (PG-compat) slice-test store does NOT, so it is gated with a
+      dbms=postgresql precondition (onFail=MARK_RAN) and applies only on Postgres. On H2 the
+      at-most-one-active-pool-per-(device,disk) invariant is enforced by the service
+      (findActive-before-insert), exactly as 011 does — an idempotent attach resolves an
+      existing active row rather than writing a duplicate.
+    -->
+    <changeSet id="085-node-storage-pool-active-disk-unique" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>Partial UNIQUE: at most one ACTIVE pool per (device_id, disk_serial).
+                 Detached rows are excluded so the same physical disk can be re-attached
+                 after detach (the audit trail holds the cycles).</comment>
+        <sql>
+            CREATE UNIQUE INDEX uq_node_storage_pool_active_disk
+                ON node_storage_pool (device_id, disk_serial)
+                WHERE state = 'active'
+        </sql>
+        <rollback>DROP INDEX uq_node_storage_pool_active_disk</rollback>
+    </changeSet>
+
+    <changeSet id="085-node-storage-pool-domain-index" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>Index the per-tenant residency read predicate on node_storage_pool.</comment>
+        <sql>CREATE INDEX idx_node_storage_pool_domain ON node_storage_pool (domain)</sql>
+        <rollback>DROP INDEX idx_node_storage_pool_domain</rollback>
+    </changeSet>
+
+    <changeSet id="085-node-storage-pool-device-index" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>Index the per-node capacity scan (SUM reserved_bytes for a device).</comment>
+        <sql>CREATE INDEX idx_node_storage_pool_device ON node_storage_pool (device_id)</sql>
+        <rollback>DROP INDEX idx_node_storage_pool_device</rollback>
+    </changeSet>
+
+    <changeSet id="085-node-storage-pool-grant" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>GRANT SELECT,INSERT,UPDATE,DELETE on node_storage_pool to the admin_bff
+                 role (an operator may detach a pool with no active assignment).</comment>
+        <sql>GRANT SELECT, INSERT, UPDATE, DELETE ON node_storage_pool TO admin_bff</sql>
+        <rollback>REVOKE SELECT, INSERT, UPDATE, DELETE ON node_storage_pool FROM admin_bff</rollback>
+    </changeSet>
+
+    <!-- ════════════════════ storage_service_assignment ═══════════════════════════ -->
+
+    <changeSet id="085-storage-service-assignment" author="hugmesh">
+        <comment>storage_service_assignment — the explicit (pool x service) placement rows.
+                 An ACTIVE row pins a service to the pool's node (nodeAffinity + a node-pinned
+                 PV). CAS active->revoked (never deleted = audit); generation +
+                 propagation_state drive the GitOps ACK. domain is stamped from the pool's
+                 residency by the service [FIX-NODEFAULT].</comment>
+        <createTable tableName="storage_service_assignment">
+            <column name="id" type="varchar(36)">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <!-- The pool whose node-local space this assignment consumes (FK -> pool). -->
+            <column name="pool_id" type="varchar(36)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- The service (workload) identity being placed — the ApplicationSet
+                 list-generator keys the Kustomize patch on this. -->
+            <column name="service_name" type="varchar(253)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- The PVC the patch binds to the node-pinned PV (the bound claim name). -->
+            <column name="pvc_name" type="varchar(253)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- The slice of the pool reserved for this service (<= pool.reserved_bytes;
+                 the assign-time check rejects over-subscription). -->
+            <column name="requested_bytes" type="bigint">
+                <constraints nullable="false"/>
+            </column>
+            <column name="state" type="varchar(16)" defaultValue="active">
+                <constraints nullable="false"/>
+            </column>
+            <column name="assigned_by" type="varchar(400)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="assigned_at" type="timestamp with time zone" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+            <column name="revoked_at" type="timestamp with time zone"/>
+            <column name="revoked_by" type="varchar(400)"/>
+            <!-- home/tenant discriminator for the ADMIN read view — stamped from the pool's
+                 residency by the service, never the caller [FIX-NODEFAULT]. -->
+            <column name="domain" type="varchar(64)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- the GitOps placement / rebalance ACK outcome the UI surfaces. -->
+            <column name="propagation_state" type="varchar(16)" defaultValue="pending">
+                <constraints nullable="false"/>
+            </column>
+            <!-- monotonic generation bumped on every mutate; the export's rollback guard
+                 reads max(generation). -->
+            <column name="generation" type="bigint" defaultValueNumeric="0">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+    </changeSet>
+
+    <changeSet id="085-storage-service-assignment-state-check" author="hugmesh">
+        <comment>CHECK: state is active (placed) or revoked (CAS active->revoked, never
+                 deleted = audit).</comment>
+        <sql>
+            ALTER TABLE storage_service_assignment
+                ADD CONSTRAINT ck_storage_service_assignment_state
+                CHECK (state IN ('active', 'revoked'))
+        </sql>
+        <rollback>ALTER TABLE storage_service_assignment DROP CONSTRAINT ck_storage_service_assignment_state</rollback>
+    </changeSet>
+
+    <changeSet id="085-storage-service-assignment-propagation-check" author="hugmesh">
+        <comment>CHECK: propagation_state is one of the four push-with-ack outcomes.</comment>
+        <sql>
+            ALTER TABLE storage_service_assignment
+                ADD CONSTRAINT ck_storage_service_assignment_propagation
+                CHECK (propagation_state IN ('pending', 'applied', 'failed', 'degraded'))
+        </sql>
+        <rollback>ALTER TABLE storage_service_assignment DROP CONSTRAINT ck_storage_service_assignment_propagation</rollback>
+    </changeSet>
+
+    <changeSet id="085-storage-service-assignment-requested-bytes-check" author="hugmesh">
+        <comment>CHECK: a placement must request a strictly positive slice.</comment>
+        <sql>
+            ALTER TABLE storage_service_assignment
+                ADD CONSTRAINT ck_storage_service_assignment_requested_bytes
+                CHECK (requested_bytes > 0)
+        </sql>
+        <rollback>ALTER TABLE storage_service_assignment DROP CONSTRAINT ck_storage_service_assignment_requested_bytes</rollback>
+    </changeSet>
+
+    <changeSet id="085-storage-service-assignment-pool-fk" author="hugmesh">
+        <comment>FK: an assignment's pool_id references a real node_storage_pool row. The
+                 assignment's residency is READ THROUGH this FK (the service stamps domain
+                 from pool.domain). A pool cannot be DELETEd while an assignment references
+                 it (the FK is the backstop to the service's no-active-assignment guard).</comment>
+        <addForeignKeyConstraint
+                constraintName="fk_storage_service_assignment_pool"
+                baseTableName="storage_service_assignment" baseColumnNames="pool_id"
+                referencedTableName="node_storage_pool" referencedColumnNames="id"/>
+        <rollback>
+            <dropForeignKeyConstraint baseTableName="storage_service_assignment"
+                                      constraintName="fk_storage_service_assignment_pool"/>
+        </rollback>
+    </changeSet>
+
+    <!--
+      Partial UNIQUE (PG-only, dbms-gated; the H2 path relies on the service guard): at most
+      ONE active assignment per (pool_id, service_name). Re-assigning the same service to the
+      same pool is idempotent (resolve the existing active row); a service moves pools only
+      via revoke-then-assign. Revoked rows are excluded so the audit holds the cycles. This
+      is the row the apps/13b ApplicationSet selects on (state:active).
+    -->
+    <changeSet id="085-storage-service-assignment-active-unique" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>Partial UNIQUE: at most one ACTIVE assignment per (pool_id,
+                 service_name).</comment>
+        <sql>
+            CREATE UNIQUE INDEX uq_storage_service_assignment_active
+                ON storage_service_assignment (pool_id, service_name)
+                WHERE state = 'active'
+        </sql>
+        <rollback>DROP INDEX uq_storage_service_assignment_active</rollback>
+    </changeSet>
+
+    <changeSet id="085-storage-service-assignment-domain-index" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>Index the per-tenant read predicate (the ADMIN assignment view).</comment>
+        <sql>CREATE INDEX idx_storage_service_assignment_domain ON storage_service_assignment (domain)</sql>
+        <rollback>DROP INDEX idx_storage_service_assignment_domain</rollback>
+    </changeSet>
+
+    <changeSet id="085-storage-service-assignment-pool-index" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>Index the per-pool over-subscription scan (SUM requested_bytes for a
+                 pool).</comment>
+        <sql>CREATE INDEX idx_storage_service_assignment_pool ON storage_service_assignment (pool_id)</sql>
+        <rollback>DROP INDEX idx_storage_service_assignment_pool</rollback>
+    </changeSet>
+
+    <changeSet id="085-storage-service-assignment-grant" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>GRANT SELECT,INSERT,UPDATE on storage_service_assignment to the admin_bff
+                 role (revoke is a CAS UPDATE — the row is never DELETEd = the audit trail).</comment>
+        <sql>GRANT SELECT, INSERT, UPDATE ON storage_service_assignment TO admin_bff</sql>
+        <rollback>REVOKE SELECT, INSERT, UPDATE ON storage_service_assignment FROM admin_bff</rollback>
+    </changeSet>
+</databaseChangeLog>

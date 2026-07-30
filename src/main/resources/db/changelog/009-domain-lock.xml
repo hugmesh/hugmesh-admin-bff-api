@@ -1,0 +1,182 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+      domain_lock — the DESIRED-STATE table + sole source of truth for the
+      DOMAIN-LOCKED (force local-only / no-federation) roles. It is the ADD-semantics
+      sibling of 008 access_suspension (and DELIBERATELY a SEPARATE table — see below).
+
+      ── ADD-active vs REMOVE-active (why NOT overload access_suspension) ─────────
+      access_suspension is REMOVE-semantics: an active row means "DROP the role"
+      (ROLE_MATRIX/ROLE_MASTODON/PROFILE) and its closed CHECK + reconcile invert the
+      role. Domain-lock is the OPPOSITE — an active row means "ADD/KEEP the
+      ROLE_*_DOMAINLOCKED marker" (the user RETAINS ROLE_MATRIX/ROLE_MASTODON; the
+      gateway is untouched). Overloading 008 would invert its meaning, so this is its
+      own table with its own closed role vocabulary.
+
+      ── Force-local allowlist source ────────────────────────────────────────────
+      The set of ACTIVE rows IS the force-local allowlist the generator akkoma MRF /
+      egress proxy reads (per the design's "DB-backed allowlist table the module reads
+      live"): one read of "active rows for ROLE_MASTODON_DOMAINLOCKED" materializes the
+      Mastodon force-local set; ROLE_MATRIX_DOMAINLOCKED the Matrix one. No separate
+      allowlist table — domain_lock IS the source.
+
+      ── Numbering: 009 ──────────────────────────────────────────────────────────
+      Sits ABOVE 008 (the current account-states FOUNDATION) and is APPENDED LAST at
+      the include site in db.changelog-master.xml, immediately after the 008 include
+      (independent tables — order is irrelevant; a concurrent PR appending at the same
+      include site is a trivial keep-BOTH conflict).
+
+      ── Portable DDL (mirrors 008 / RouteAccessRepository EXACTLY) ───────────────
+      id is an app-generated varchar(36) UUID string (NOT a Postgres uuid column with
+      gen_random_uuid()), so the INSERT is portable across Postgres and the H2
+      (PostgreSQL-compat, NON_KEYWORDS) test store with no pgcrypto dependency and the
+      app can return the new row id. timestamptz -> the portable Liquibase
+      'timestamp with time zone' generic type. Reserved column words (role / state) are
+      covered by the test store's NON_KEYWORDS pragma and are plain ALTER-friendly
+      identifiers on PG.
+
+      ── Constraints (each its own changeSet, independent redeploy + rollback) ────
+        - role   CHECK IN ('ROLE_MATRIX_DOMAINLOCKED','ROLE_MASTODON_DOMAINLOCKED')
+                 [DomainLockRequest @Pattern parity; the two ADDITIVE markers]
+        - state  CHECK IN ('active','removed')                          [active =
+                 enforce; the loop CASes active->removed on unlock; never deletes —
+                 the row is the audit]
+        - propagation_state CHECK IN ('pending','applied','failed','degraded')
+                 [the homeserver/egress force-local leg result; the loop reconciles
+                 'pending'/'failed'/'degraded' forward]
+        - uq_domain_lock_active PARTIAL UNIQUE (casdoor_user, role) WHERE state='active'
+                 [at most ONE active lock per (user,role); a re-lock while active is a
+                 no-op]  (Postgres dbms-gated; H2 uses the service findActive-before-
+                 insert guard, exactly like 008)
+        - idx_domain_lock_active_role (role) WHERE state='active'        [the MRF /
+                 egress force-local materialization scan: active rows per platform role]
+      GRANT SELECT,INSERT,UPDATE ON domain_lock TO admin_bff (PG-only; onError=MARK_RAN
+      so the H2 test store — which has no admin_bff role — never fails the changelog).
+    -->
+
+    <changeSet id="009-domain-lock" author="hugmesh">
+        <comment>domain_lock desired-state table (ADD-active force-local source of
+                 truth for the single-writer domain-lock reconcile loop).</comment>
+        <createTable tableName="domain_lock">
+            <column name="id" type="varchar(36)">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="casdoor_user" type="varchar(400)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="localpart" type="varchar(255)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="role" type="varchar(40)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="state" type="varchar(16)" defaultValue="active">
+                <constraints nullable="false"/>
+            </column>
+            <column name="created_at" type="timestamp with time zone" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+            <column name="propagation_state" type="varchar(16)" defaultValue="pending">
+                <constraints nullable="false"/>
+            </column>
+            <column name="reason" type="varchar(1024)"/>
+            <column name="set_by" type="varchar(400)">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+    </changeSet>
+
+    <changeSet id="009-domain-lock-role-check" author="hugmesh">
+        <comment>CHECK: role is one of the two ADDITIVE domain-locked markers
+                 (DomainLockRequest @Pattern parity).</comment>
+        <sql>
+            ALTER TABLE domain_lock
+                ADD CONSTRAINT ck_domain_lock_role
+                CHECK (role IN ('ROLE_MATRIX_DOMAINLOCKED', 'ROLE_MASTODON_DOMAINLOCKED'))
+        </sql>
+        <rollback>ALTER TABLE domain_lock DROP CONSTRAINT ck_domain_lock_role</rollback>
+    </changeSet>
+
+    <changeSet id="009-domain-lock-state-check" author="hugmesh">
+        <comment>CHECK: state is one of the two lifecycle values the loop writes
+                 (active = enforce; removed = unlocked, CAS active->removed).</comment>
+        <sql>
+            ALTER TABLE domain_lock
+                ADD CONSTRAINT ck_domain_lock_state
+                CHECK (state IN ('active', 'removed'))
+        </sql>
+        <rollback>ALTER TABLE domain_lock DROP CONSTRAINT ck_domain_lock_state</rollback>
+    </changeSet>
+
+    <changeSet id="009-domain-lock-propagation-check" author="hugmesh">
+        <comment>CHECK: propagation_state is one of the four force-local leg outcomes
+                 (pending/applied/failed/degraded — degraded covers the gated stub-seam
+                 attempted-and-failed homeserver/egress effect).</comment>
+        <sql>
+            ALTER TABLE domain_lock
+                ADD CONSTRAINT ck_domain_lock_propagation
+                CHECK (propagation_state IN ('pending', 'applied', 'failed', 'degraded'))
+        </sql>
+        <rollback>ALTER TABLE domain_lock DROP CONSTRAINT ck_domain_lock_propagation</rollback>
+    </changeSet>
+
+    <!--
+      The two indexes below are PARTIAL (… WHERE state='active'). PostgreSQL supports
+      partial indexes; the H2 (PG-compat) slice-test store does NOT, so each is gated
+      with a dbms=postgresql precondition (onFail=MARK_RAN) and applies only on
+      Postgres. On H2 the at-most-one-active-lock-per-(user,role) invariant is enforced
+      by the service (findActive-before-insert), exactly as 008 does — the reconcile
+      loop's idempotent diff means a stray duplicate self-heals anyway.
+    -->
+    <changeSet id="009-domain-lock-active-unique" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>Partial UNIQUE: at most one ACTIVE lock per (casdoor_user, role).
+                 Removed rows (state='removed') are excluded so the audit trail can
+                 hold many historical lock/unlock cycles for the same user+role.</comment>
+        <sql>
+            CREATE UNIQUE INDEX uq_domain_lock_active
+                ON domain_lock (casdoor_user, role)
+                WHERE state = 'active'
+        </sql>
+        <rollback>DROP INDEX uq_domain_lock_active</rollback>
+    </changeSet>
+
+    <changeSet id="009-domain-lock-active-role-index" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>Partial index for the force-local materialization scan (the MRF /
+                 egress read: active rows for a given platform role).</comment>
+        <sql>
+            CREATE INDEX idx_domain_lock_active_role
+                ON domain_lock (role)
+                WHERE state = 'active'
+        </sql>
+        <rollback>DROP INDEX idx_domain_lock_active_role</rollback>
+    </changeSet>
+
+    <changeSet id="009-domain-lock-grant" author="hugmesh">
+        <!-- PostgreSQL-only runtime grant. The H2 test store has no admin_bff role,
+             so GRANT would error there; the dbms precondition skips this changeSet
+             entirely off-Postgres (onFail=MARK_RAN records it as run) so the H2
+             changelog continues. On a real Postgres deployment the grant applies. -->
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>GRANT SELECT,INSERT,UPDATE on domain_lock to the admin_bff role
+                 (the loop never DELETEs — unlock is a CAS update).</comment>
+        <sql>
+            GRANT SELECT, INSERT, UPDATE ON domain_lock TO admin_bff
+        </sql>
+        <rollback>
+            REVOKE SELECT, INSERT, UPDATE ON domain_lock FROM admin_bff
+        </rollback>
+    </changeSet>
+</databaseChangeLog>

@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+      phone_device mdm_* — the phone-ingest/v2 ADDITIVE columns: the Headwind MDM
+      enrollment facts the wizard's mdm-enroll step reports (whether the device-owner DPC
+      was set, which DPC package, which Headwind server the phone reports to, how ownership
+      was set, and when). Strictly additive over 302: a v1 record (no mdm object) lands
+      with mdm_enrolled=false and NULL facts, so the columns carry the same
+      inventory/telemetry-only semantics as the rest of the table (NO authorizing data; the
+      MDM policy itself lives in Headwind, never here).
+
+      ── Numbering: band 303 ──────────────────────────────────────────────────────────
+      Next free above 302 (phone-device). Appended LAST at the include site in
+      db.changelog-master.xml.
+
+      ── Modeling (mirrors 302) ───────────────────────────────────────────────────────
+      mdm_enrolled is boolean NOT NULL DEFAULT false, exactly like
+      enterprise_profile_present (the DEFAULT also backfills the pre-303 rows). Varchar
+      sizes mirror the comparable 302 columns: mdm_dpc_package like auditor_package (a
+      package name, 253), mdm_headwind_url like login_server/attestation_url (a URL, 512),
+      mdm_set_via like attestation_verdict (a short label, 64). mdm_enrolled_at is a
+      nullable portable timestamptz ('timestamp with time zone'). The 302 GRANT already
+      covers table-level SELECT/INSERT/UPDATE, so no new grant is needed for addColumn;
+      Liquibase auto-generates the dropColumn rollback.
+    -->
+
+    <!-- ═══════════════════════ phone_device mdm_* columns ═════════════════════════ -->
+    <changeSet id="303-phone-device-mdm-columns" author="hugmesh">
+        <comment>phone-ingest/v2 additive Headwind MDM enrollment facts. Telemetry only,
+                 NO authorizing data; v1 records land as mdm_enrolled=false + NULLs.</comment>
+        <addColumn tableName="phone_device">
+            <!-- Whether the wizard's mdm-enroll step set the device-owner DPC. NOT NULL
+                 DEFAULT false (the enterprise_profile_present model): backfills pre-303
+                 rows and keeps a v1 ingest's fold unambiguous. -->
+            <column name="mdm_enrolled" type="boolean" defaultValueBoolean="false">
+                <constraints nullable="false"/>
+            </column>
+            <!-- The device-owner DPC package ("com.hmdm.launcher"); a package name, sized
+                 like auditor_package. -->
+            <column name="mdm_dpc_package" type="varchar(253)"/>
+            <!-- The Headwind server the phone reports to; a URL, sized like login_server. -->
+            <column name="mdm_headwind_url" type="varchar(512)"/>
+            <!-- How device ownership was set ("adb-device-owner"); a short label, sized
+                 like attestation_verdict. -->
+            <column name="mdm_set_via" type="varchar(64)"/>
+            <!-- When enrollment completed (ISO-8601 from the wizard); NULL when mdm-enroll
+                 never ran (the wizard emits "" for the absent fact). -->
+            <column name="mdm_enrolled_at" type="timestamp with time zone"/>
+        </addColumn>
+    </changeSet>
+
+</databaseChangeLog>

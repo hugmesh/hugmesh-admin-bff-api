@@ -1,0 +1,157 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+      game_instance — the DESIRED-STATE table + sole source of truth for a per-domain
+      RUNNING game-server instance (games app-store, PR4). Modelled EXACTLY on
+      access_suspension (008): a desired-state row the single-writer reconcile loop
+      drives into the cluster, NEVER deleted (the row is the audit).
+
+      ── State machine (clone of access_suspension's state + propagation_state) ───────
+        state              pending | active | suspended | terminated
+          pending    just requested; the reconciler has not yet rendered it.
+          active     rendered into the per-domain ConfigMap; ArgoCD applies the
+                     Deployment/Service/PVC.
+          suspended  admin/runner paused it (rendered OUT of the ConfigMap, workload
+                     scaled to zero) but the row + PVC survive (resumable).
+          terminated terminal; rendered OUT, workload+Service removed. The world-save
+                     PVC retention is a teardown policy decision (see ending_at).
+        propagation_state  pending | applied | failed
+          The ConfigMap-render leg result the loop reconciles forward (mirrors the
+          homeserver-leg propagation_state of access_suspension).
+
+      ── ending_at: the SINGLE expiry clock (clone of expires_at) ─────────────────────
+      NULL = runs until explicitly stopped. Otherwise the loop CASes state -> terminated
+      when ending_at <= now (the SuspensionExpiryAction idiom: one scan, one clock).
+
+      ── Owner == JWT subject; domain from validated issuer ───────────────────────────
+      `domain` is the tenant discriminator (stamped from the validated token issuer);
+      `owner_subject` is the creating principal's jwt.getSubject() (owner == subject,
+      fail-closed). The admin read/write surface is scoped to `domain`; the
+      single-writer reconcile loop is cross-brand and ignores it.
+
+      ── partial UNIQUE WHERE active (clone of uq_access_suspension_active) ────────────
+      At most ONE non-terminal instance per (domain, slug, name): a re-create while one
+      is live is a no-op/409. PG partial unique (state IN ('pending','active','suspended'));
+      H2 (PG-compat, no partial indexes) enforces it in the service (find-before-insert).
+
+      ── node_port / console_path / namespace ────────────────────────────────────────
+      Allocated by later PRs (PR7 NodePort allocator; PR5 namespace). Nullable here —
+      PR4 is the model + reconciler; the port allocator + console route land in PR7.
+
+      ── Portable DDL (mirrors 008/012) ───────────────────────────────────────────────
+      app-generated varchar(36) UUID id; timestamptz -> 'timestamp with time zone';
+      PG-only partial indexes + GRANT gated dbms=postgresql (onFail=MARK_RAN) so the H2
+      test store never fails the changelog.
+
+      ── Numbering: 091 (games-services control-plane band 090-099) ───────────────────
+      Sits ABOVE 090 (the catalog it references by slug). Appended LAST.
+    -->
+
+    <changeSet id="091-game-instance" author="hugmesh">
+        <comment>game_instance desired-state table (sole source of truth for the
+                 single-writer instance reconcile loop).</comment>
+        <createTable tableName="game_instance">
+            <column name="id" type="varchar(36)">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <!-- Tenant/brand discriminator (validated issuer). -->
+            <column name="domain" type="varchar(253)" defaultValue="default">
+                <constraints nullable="false"/>
+            </column>
+            <!-- The catalog server this instance runs (logical FK to game_server_catalog.slug). -->
+            <column name="slug" type="varchar(64)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- A human instance name unique within (domain, slug) while non-terminal. -->
+            <column name="name" type="varchar(64)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="state" type="varchar(16)" defaultValue="pending">
+                <constraints nullable="false"/>
+            </column>
+            <column name="propagation_state" type="varchar(16)" defaultValue="pending">
+                <constraints nullable="false"/>
+            </column>
+            <!-- Owner == creating principal's jwt.getSubject() (fail-closed). -->
+            <column name="owner_subject" type="varchar(400)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="created_at" type="timestamp with time zone" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+            <!-- NULL = runs until stopped; otherwise the single expiry clock. -->
+            <column name="ending_at" type="timestamp with time zone"/>
+            <!-- Allocated by later PRs (PR7 NodePort; PR5 namespace). -->
+            <column name="namespace" type="varchar(64)"/>
+            <column name="node_port" type="int"/>
+            <column name="console_path" type="varchar(256)"/>
+            <column name="updated_at" type="timestamp with time zone" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+    </changeSet>
+
+    <changeSet id="091-game-instance-state-check" author="hugmesh">
+        <comment>CHECK: state is one of the four lifecycle values.</comment>
+        <sql>
+            ALTER TABLE game_instance
+                ADD CONSTRAINT ck_game_instance_state
+                CHECK (state IN ('pending', 'active', 'suspended', 'terminated'))
+        </sql>
+        <rollback>ALTER TABLE game_instance DROP CONSTRAINT ck_game_instance_state</rollback>
+    </changeSet>
+
+    <changeSet id="091-game-instance-propagation-check" author="hugmesh">
+        <comment>CHECK: propagation_state is one of the three render-leg outcomes.</comment>
+        <sql>
+            ALTER TABLE game_instance
+                ADD CONSTRAINT ck_game_instance_propagation
+                CHECK (propagation_state IN ('pending', 'applied', 'failed'))
+        </sql>
+        <rollback>ALTER TABLE game_instance DROP CONSTRAINT ck_game_instance_propagation</rollback>
+    </changeSet>
+
+    <changeSet id="091-game-instance-active-unique" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>Partial UNIQUE: at most one NON-TERMINAL instance per (domain, slug, name).
+                 Terminated rows are excluded so the audit trail can hold many historical
+                 instances with the same name.</comment>
+        <sql>
+            CREATE UNIQUE INDEX uq_game_instance_active
+                ON game_instance (domain, slug, name)
+                WHERE state IN ('pending', 'active', 'suspended')
+        </sql>
+        <rollback>DROP INDEX uq_game_instance_active</rollback>
+    </changeSet>
+
+    <changeSet id="091-game-instance-ending-index" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>Partial index for the expiry scan (ending_at &lt;= now AND state active).</comment>
+        <sql>
+            CREATE INDEX idx_game_instance_ending
+                ON game_instance (ending_at)
+                WHERE state = 'active'
+        </sql>
+        <rollback>DROP INDEX idx_game_instance_ending</rollback>
+    </changeSet>
+
+    <changeSet id="091-game-instance-grant" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>GRANT SELECT,INSERT,UPDATE on game_instance to admin_bff (the loop never
+                 DELETEs — terminate is a CAS update).</comment>
+        <sql>GRANT SELECT, INSERT, UPDATE ON game_instance TO admin_bff</sql>
+        <rollback>REVOKE SELECT, INSERT, UPDATE ON game_instance FROM admin_bff</rollback>
+    </changeSet>
+
+</databaseChangeLog>

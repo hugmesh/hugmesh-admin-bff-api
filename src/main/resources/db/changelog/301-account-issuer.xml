@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+      301 — account.account_issuer: the multi-brand bff_-session domain-scope blocker.
+
+      GAP: user-bff's BffSessionAuthenticationWebFilter mints a SYNTHETIC Jwt for a
+      bff_ session carrier and stamps an `iss` claim so PrincipalDomain.forScope (13
+      of the 16 Bug-2 controllers call it) can resolve the caller's brand. It can
+      only do that via #singleTrustedIssuerOrNull, which returns the lone trusted
+      issuer when trustedIssuers().size() == 1 and NULL otherwise. The introspect
+      contract carries no brand/issuer field — only `provider`, the OAuth LOGIN
+      provider (google/discord/casdoor), a completely different axis from the
+      per-brand one-Casdoor-per-brand concept DomainRegistry models. So in a
+      genuinely multi-issuer deployment NO iss is stamped, Roles.domainOf returns
+      null and forScope yields the "__deny__" sentinel: every domain-scoped bff_
+      -session read/write FAILS CLOSED. Native login is unusable for domain-scoped
+      surfaces on any true multi-brand cluster.
+
+      FIX (enrichment, this changeset + the InternalAccountController stamp/read):
+      persist the account's OWN Casdoor issuer on the account row, captured at the
+      ONE place the raw id_token is decoded (InternalAccountController#ensureAccount's
+      provider="casdoor" branch — the native-login mint path; the session mint at
+      POST /sessions only ever receives the accountId). Introspect then surfaces it
+      as a nullable `issuer` field, and user-bff prefers it over the single-issuer
+      fallback ONLY when it is in that deployment's trusted set.
+
+      *** WHY THIS COLUMN IS VALIDATED AND casdoor_sub (292) WAS NOT ***
+      InternalAccountController decodes the id_token WITHOUT re-verifying its
+      signature (its own javadoc says so), and body.handle() is user-bff-supplied.
+      The gateway's DomainRegistry is explicit: "Never key the domain off a
+      user-settable claim — a user could forge cross-tenant scope." casdoor_sub
+      could tolerate a loose decode because it is only ever ADDED to a deny-wins
+      route-pin identity set (an extra id can never remove a deny). An ISSUER
+      DECIDES TENANT SCOPE, so a forged one would be a cross-brand read/write
+      primitive — strictly worse than today's fail-closed deny.
+
+      Therefore the stamp is gated: the decoded `iss` is written ONLY if it is a
+      member of this deployment's CONFIGURED trusted-issuer set (commons
+      DomainRegistry#trustedIssuers, wired from app.tenancy.issuers +
+      spring.security.oauth2.resourceserver.jwt.issuer-uri and already an @Import-ed
+      bean here via CommonsSecurityConfig). An unrecognised/forged iss stamps NULL —
+      a no-op that falls back to exactly today's fail-closed deny. NOTE the stamp
+      deliberately does NOT use DomainRegistry#isTrusted: that method delegates to
+      domainOf, which SHORT-CIRCUITS to DEFAULT_DOMAIN without inspecting its
+      argument when the registry map is empty (the no-config case) — i.e. it answers
+      "trusted" for ANY string, forged ones included. The stamp requires strict
+      membership of a NON-EMPTY trustedIssuers() set instead.
+
+      DELIBERATELY NULLABLE, NO DEFAULT, NO backfill: the issuer is not derivable
+      from any existing column (that is the bug) — provider is the login provider,
+      not the brand — so legacy rows CANNOT be backfilled here. They self-heal on
+      the account's next native login, because ensureAccount re-runs (and re-stamps)
+      on EVERY sign-in, exactly like the roles re-sync and the 292 sub stamp. Until
+      then introspect returns issuer=null and user-bff degrades to precisely its
+      current singleTrustedIssuerOrNull behavior. Like changesets 290/291/292,
+      auth-core's AccountStore INSERT path knows nothing of this column (its
+      AccountRow entity has no such field), so NOT NULL would fail every account
+      creation.
+
+      DELIBERATELY NOT UNIQUE: an issuer is shared by EVERY account of that brand —
+      uniqueness here is nonsensical and would break the second login per brand.
+
+      Named account_issuer, not `issuer`: ISSUER is a reserved/near-reserved word in
+      several engines and a bare `issuer` column reads ambiguously beside the JWT
+      plumbing. varchar(400): issuer URIs are URLs; matches the account.id width
+      idiom rather than the 292 sub's varchar(64) (a UUID). Portable DDL mirrors the
+      180-band idiom: addColumn with a <rollback><dropColumn>. Band 301: next free
+      above 300. Appended LAST.
+    -->
+
+    <changeSet id="301-account-issuer-add-column" author="hugmesh">
+        <comment>account.account_issuer — the account's own Casdoor issuer URI, captured
+                 from the native-login id_token at InternalAccountController#ensureAccount
+                 (provider="casdoor") ONLY when the decoded iss is a member of the
+                 configured, non-empty trusted-issuer set (the id_token is decoded but NOT
+                 signature-verified, and an issuer decides tenant scope — an unvalidated
+                 stamp would be a cross-brand forgery primitive). Unvalidated/absent →
+                 NULL. Nullable (legacy rows self-heal on next native login), NOT unique
+                 (every account of a brand shares its issuer). Read back by
+                 /bff/internal/session/introspect as the nullable `issuer` field so
+                 user-bff's synthetic-Jwt filter can resolve the right brand for a bff_
+                 session carrier instead of failing closed on every multi-brand
+                 deployment.</comment>
+        <addColumn tableName="account">
+            <column name="account_issuer" type="varchar(400)"/>
+        </addColumn>
+        <rollback>
+            <dropColumn tableName="account" columnName="account_issuer"/>
+        </rollback>
+    </changeSet>
+
+</databaseChangeLog>

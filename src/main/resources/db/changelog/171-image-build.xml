@@ -1,0 +1,139 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+      image-build — the admin-bff catalog for the in-UI image-generation feature (PR-1 of
+      the 7-PR ships-dark plan). One row per requested image build. The build effector
+      (the generator Job the BFF will apply) is a LATER PR; this leg adds the durable
+      catalog + repos ONLY, so a build request would record a QUEUED row and emit NO real
+      Job yet — it SHIPS DARK.
+
+        - requested_by / target_user — the JWT SUBJECT that asked + the subject the image
+          is FOR (owner == subject enforced in the service later; the schema records both).
+        - domain — the validated-issuer brand the build belongs to.
+        - image_type — primary / mesh-extension / client (the SAME closed vocabulary as
+          device_registry.image_type [011], CHECK-constrained for API/DB parity).
+        - hardware_class — the optional target hardware (pi / x86 / chromebook / ...).
+        - device_id — the device this image is bound to, if any (NULL for a fresh build).
+        - ssh_keys_allowed — whether the build may emit a downloadable SSH-keys bundle
+          (the SSH-terminal-dial feature gate); DEFAULT false = fail-closed.
+        - job_name / image_ref / keys_ref — the applied generator Job name + the produced
+          image artifact ref + the (optional) keys-bundle artifact ref. REFERENCES only —
+          never secret bytes; keys_ref points at a build-artifacts location, never keys here.
+
+      ── Portable DDL (mirrors 011-device-license-registry.xml / 070-test-run.xml /
+         160-cloud-backups.xml EXACTLY) ───────────────────────────────────────────────
+      id is an app-generated varchar(36) UUID string (NOT a Postgres uuid column), portable
+      across Postgres + the H2 (PostgreSQL-compat, NON_KEYWORDS) test store, and the app can
+      return the new row id. timestamptz -> 'timestamp with time zone',
+      defaultValueComputed="now()". One changeSet per CHECK / index / GRANT. The index +
+      GRANT are gated dbms=postgresql (onFail/onError=MARK_RAN) so they apply only on
+      Postgres; the H2 path runs the DDL identically.
+
+      ── Band: 171 ────────────────────────────────────────────────────────────────────
+      The pair partner of 170-device-ssh-keys; 170/171 is the NEXT FREE band above the
+      150-159 Casdoor MFA reserve and the 160-162 cloud-backups band. Appended LAST at the
+      include site in db.changelog-master.xml, after the 170 include.
+    -->
+
+    <changeSet id="171-image-build" author="hugmesh">
+        <comment>image_build — one requested image build. SHIPS DARK: a request records a
+                 QUEUED catalog row; the generator Job effector is a later PR. image_type
+                 reuses the device_registry image vocabulary; ssh_keys_allowed defaults
+                 false (fail-closed). job_name / image_ref / keys_ref are REFERENCES only.</comment>
+        <createTable tableName="image_build">
+            <column name="id" type="varchar(36)">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="created_at" type="timestamp with time zone" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+            <!-- the JWT SUBJECT that requested the build. -->
+            <column name="requested_by" type="varchar(400)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- the subject the image is FOR (owner == subject enforced in the service). -->
+            <column name="target_user" type="varchar(400)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- the validated-issuer brand the build belongs to. -->
+            <column name="domain" type="varchar(64)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- primary / mesh-extension / client — the device_registry image vocabulary. -->
+            <column name="image_type" type="varchar(32)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- the optional target hardware (pi / x86 / chromebook / ...). -->
+            <column name="hardware_class" type="varchar(64)"/>
+            <!-- the device this image is bound to, if any (NULL for a fresh build). -->
+            <column name="device_id" type="varchar(36)"/>
+            <!-- QUEUED -> RUNNING -> COMPLETED | FAILED | ERROR (ERROR = harness broken =
+                 inconclusive, distinct from FAILED = the build itself failed; the 070
+                 lifecycle vocabulary). -->
+            <column name="status" type="varchar(16)" defaultValue="QUEUED">
+                <constraints nullable="false"/>
+            </column>
+            <!-- whether the build may emit a downloadable SSH-keys bundle (the SSH-terminal
+                 feature gate). DEFAULT false = fail-closed. -->
+            <column name="ssh_keys_allowed" type="boolean" defaultValueBoolean="false">
+                <constraints nullable="false"/>
+            </column>
+            <!-- the generator Job name the BFF applied (for log tail / reap). -->
+            <column name="job_name" type="varchar(253)"/>
+            <!-- the produced image artifact REFERENCE (a registry/object-store ref). -->
+            <column name="image_ref" type="varchar(512)"/>
+            <!-- the (optional) keys-bundle artifact REFERENCE (a build-artifacts location).
+                 NEVER key bytes. -->
+            <column name="keys_ref" type="varchar(512)"/>
+            <column name="started_at" type="timestamp with time zone"/>
+            <column name="finished_at" type="timestamp with time zone"/>
+            <column name="error" type="varchar(2000)"/>
+        </createTable>
+    </changeSet>
+
+    <changeSet id="171-image-build-status-check" author="hugmesh">
+        <comment>CHECK: status is one of the lifecycle states the orchestrator writes
+                 (QUEUED|RUNNING|COMPLETED|FAILED|ERROR — the 070 vocabulary).</comment>
+        <sql>
+            ALTER TABLE image_build
+                ADD CONSTRAINT ck_image_build_status
+                CHECK (status IN ('QUEUED', 'RUNNING', 'COMPLETED', 'FAILED', 'ERROR'))
+        </sql>
+        <rollback>ALTER TABLE image_build DROP CONSTRAINT ck_image_build_status</rollback>
+    </changeSet>
+
+    <changeSet id="171-image-build-image-type-check" author="hugmesh">
+        <comment>CHECK: image_type is one of the device_registry image vocabulary
+                 (primary | mesh-extension | client) — API/DB parity with 011.</comment>
+        <sql>
+            ALTER TABLE image_build
+                ADD CONSTRAINT ck_image_build_image_type
+                CHECK (image_type IN ('primary', 'mesh-extension', 'client'))
+        </sql>
+        <rollback>ALTER TABLE image_build DROP CONSTRAINT ck_image_build_image_type</rollback>
+    </changeSet>
+
+    <changeSet id="171-image-build-created-index" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>Newest-first list scan for the admin image-build console table.</comment>
+        <sql>CREATE INDEX idx_image_build_created ON image_build (created_at DESC)</sql>
+        <rollback>DROP INDEX idx_image_build_created</rollback>
+    </changeSet>
+
+    <changeSet id="171-image-build-grant" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>GRANT SELECT,INSERT,UPDATE on image_build to the admin_bff role (status
+                 transitions are UPDATEs; rows are the build history — never DELETEd).</comment>
+        <sql>GRANT SELECT, INSERT, UPDATE ON image_build TO admin_bff</sql>
+        <rollback>REVOKE SELECT, INSERT, UPDATE ON image_build FROM admin_bff</rollback>
+    </changeSet>
+</databaseChangeLog>

@@ -1,0 +1,118 @@
+{
+	"$schema": "./node_modules/@angular/cli/lib/config/schema.json",
+	"version": 1,
+	"newProjectRoot": "projects",
+	"projects": {
+		"{{APP_SLUG}}": {
+			"projectType": "application",
+			"root": ".",
+			"sourceRoot": "src",
+			"prefix": "snap-{{APP_SLUG}}",
+			"architect": {
+				"build": {
+					"builder": "@angular-architects/native-federation:build",
+					"options": {
+						"entryPoints": [
+							"src/main.ts"
+						],
+						"projectName": "{{APP_SLUG}}"
+					},
+					"configurations": {
+						"production": {
+							"target": "{{APP_SLUG}}:esbuild:production"
+						},
+						"development": {
+							"target": "{{APP_SLUG}}:esbuild:development",
+							"dev": true
+						}
+					},
+					"defaultConfiguration": "production"
+				},
+				"serve": {
+					"builder": "@angular-architects/native-federation:build",
+					"options": {
+						"target": "{{APP_SLUG}}:serve-original:development",
+						"rebuildDelay": 0,
+						"dev": true,
+						"port": 0,
+						"entryPoints": [
+							"src/main.ts"
+						],
+						"projectName": "{{APP_SLUG}}"
+					}
+				},
+				"esbuild": {
+					"builder": "@angular-devkit/build-angular:application",
+					"options": {
+						"outputPath": "dist/{{APP_SLUG}}",
+						"index": "src/index.html",
+						"browser": "src/main.ts",
+						"polyfills": [
+							"zone.js",
+							"es-module-shims"
+						],
+						"tsConfig": "tsconfig.app.json",
+						"assets": [],
+						"styles": ["src/styles.scss"]
+					},
+					"configurations": {
+						"production": {
+							"outputHashing": "all"
+						},
+						"development": {
+							"optimization": false,
+							"extractLicenses": false,
+							"sourceMap": true
+						}
+					},
+					"defaultConfiguration": "production"
+				},
+				"serve-original": {
+					"builder": "@angular-devkit/build-angular:dev-server",
+					"options": {
+						"buildTarget": "{{APP_SLUG}}:build",
+						"port": 4201
+					}
+				},
+				"test": {
+					"builder": "@angular-devkit/build-angular:karma",
+					"options": {
+						"main": "src/test.ts",
+						"polyfills": ["zone.js", "zone.js/testing"],
+						"tsConfig": "tsconfig.spec.json",
+						"karmaConfig": "karma.conf.js",
+						"assets": [],
+						"styles": ["src/styles.scss"],
+						"scripts": []
+					}
+				}
+			}
+		}
+	},
+	"schematics": {
+		"@schematics/angular:component": {
+			"type": "component"
+		},
+		"@schematics/angular:directive": {
+			"type": "directive"
+		},
+		"@schematics/angular:service": {
+			"type": "service"
+		},
+		"@schematics/angular:guard": {
+			"typeSeparator": "."
+		},
+		"@schematics/angular:interceptor": {
+			"typeSeparator": "."
+		},
+		"@schematics/angular:module": {
+			"typeSeparator": "."
+		},
+		"@schematics/angular:pipe": {
+			"typeSeparator": "."
+		},
+		"@schematics/angular:resolver": {
+			"typeSeparator": "."
+		}
+	}
+}

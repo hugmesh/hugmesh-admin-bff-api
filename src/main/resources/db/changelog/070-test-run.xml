@@ -1,0 +1,252 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+      test_run — the durable record of every test-architecture run the generator
+      test-runner executes (LEAN on fe/be/pki-ready, HEAVY on x86-attach) and that
+      the admin Test-Reports console lists / downloads / re-triggers.
+
+      One row per run. The row is created QUEUED the moment a run is triggered
+      (admin POST /bff/admin/test-reports/run OR the cluster orchestrator), moves
+      RUNNING when the test-runner Job starts, and lands COMPLETED | FAILED |
+      ERROR with the per-suite/per-role roll-up (passed/failed/skipped/duration)
+      and a report_ref pointing at the stored artifact bundle on the test-reports
+      PVC (run-<ts>-<commit>/{junit.xml,summary.json,logs/}).
+
+      ── Numbering: 070 ───────────────────────────────────────────────────────
+      A HIGH number (above the backup 050 / announcement 060 reserved-high band
+      and well above the porting/foundation changesets) so it NEVER collides on
+      merge with an open PR's changeset id (the open forum-console / domain-lock
+      branches touch different changesets). Appended LAST in
+      db.changelog-master.xml.
+
+      ── Portable DDL (BackupRecord/AccessSuspension style) ────────────────────
+      id is a varchar(36) holding an app-generated UUID string (the
+      RouteAccessRepository / AccessSuspension pattern), NOT a Postgres uuid column
+      with gen_random_uuid() — so the INSERT is portable across PostgreSQL and the
+      H2 (PostgreSQL-compat, NON_KEYWORDS) slice-test store WITHOUT a pgcrypto
+      dependency, and the app can return the new row id. plain varchar / int /
+      bigint / boolean / timestamp + defaultValueComputed now() — the SAME style as
+      050/060 — so the identical DDL runs on PostgreSQL and on H2.
+
+      ── Constraints (API<->DB parity — the platform rule that a closed vocabulary
+         the API enforces is ALSO a DB CHECK so a non-controller write path cannot
+         violate it). Each constraint is its own changeSet (independent redeploy +
+         rollback). ──
+        - tier   CHECK IN ('LEAN','HEAVY')        [TestReportsController run?tier
+                 @Pattern parity; LEAN on fe/be/pki-ready, HEAVY on x86-attach]
+        - status CHECK IN ('QUEUED','RUNNING','COMPLETED','FAILED','ERROR')
+                 [the orchestrator lifecycle; ERROR = harness/peer-pairing broken
+                 = inconclusive, distinct from FAILED = a real assertion failed]
+        - trigger_source CHECK IN ('ADMIN','ARGOCD','HEAVY_ATTACH')  [provenance:
+                 admin on-demand vs the lean PostSync gate vs the x86-attach edge]
+
+      SECURITY: report_ref is only a PVC-relative bundle path — never a secret.
+      The stored artifacts are scrubbed at write-time (test-runner) AND re-scrubbed
+      at read-time (TestReportArchive) before download. No tokens/passwords are
+      persisted here.
+    -->
+
+    <changeSet id="070-test-run" author="hugmesh">
+        <comment>test_run: durable record of every LEAN/HEAVY test-architecture run
+                 (source of truth for the admin Test-Reports console list/download).</comment>
+        <createTable tableName="test_run">
+            <column name="id" type="varchar(36)">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="created_at" type="timestamp" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+            <!-- JWT subject of the admin who triggered an on-demand run; the
+                 cluster orchestrator writes 'system'. -->
+            <column name="triggered_by" type="varchar(400)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- LEAN (fe/be/pki-ready, Pi) | HEAVY (x86-attach, kafka+clickhouse). -->
+            <column name="tier" type="varchar(16)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- ADMIN (on-demand) | ARGOCD (lean PostSync gate) | HEAVY_ATTACH. -->
+            <column name="trigger_source" type="varchar(16)" defaultValue="ADMIN">
+                <constraints nullable="false"/>
+            </column>
+            <!-- QUEUED -> RUNNING -> COMPLETED | FAILED | ERROR. -->
+            <column name="status" type="varchar(16)" defaultValue="QUEUED">
+                <constraints nullable="false"/>
+            </column>
+            <!-- the git commit the runner image / suite was built from (provenance). -->
+            <column name="commit_sha" type="varchar(64)"/>
+            <!-- name of the k8s Job the orchestrator applied (for log tail / reap). -->
+            <column name="job_name" type="varchar(253)"/>
+            <column name="started_at" type="timestamp"/>
+            <column name="finished_at" type="timestamp"/>
+            <!-- roll-up counters (the summary.json totals the runner emits). -->
+            <column name="total_tests" type="int" defaultValueNumeric="0">
+                <constraints nullable="false"/>
+            </column>
+            <column name="passed" type="int" defaultValueNumeric="0">
+                <constraints nullable="false"/>
+            </column>
+            <column name="failed" type="int" defaultValueNumeric="0">
+                <constraints nullable="false"/>
+            </column>
+            <column name="skipped" type="int" defaultValueNumeric="0">
+                <constraints nullable="false"/>
+            </column>
+            <column name="duration_ms" type="bigint"/>
+            <!-- PVC-relative path to the stored bundle dir (run-<ts>-<commit>/). -->
+            <column name="report_ref" type="varchar(512)"/>
+            <column name="error" type="varchar(2000)"/>
+        </createTable>
+    </changeSet>
+
+    <changeSet id="070-test-run-tier-check" author="hugmesh">
+        <comment>CHECK: test_run.tier is one of the two run tiers (mirrors the
+                 TestReportsController run?tier @Pattern / the LEAN|HEAVY vocabulary).</comment>
+        <sql>
+            ALTER TABLE test_run
+                ADD CONSTRAINT ck_test_run_tier
+                CHECK (tier IN ('LEAN', 'HEAVY'))
+        </sql>
+        <rollback>ALTER TABLE test_run DROP CONSTRAINT ck_test_run_tier</rollback>
+    </changeSet>
+
+    <changeSet id="070-test-run-status-check" author="hugmesh">
+        <comment>CHECK: test_run.status is one of the lifecycle states the
+                 orchestrator writes (QUEUED|RUNNING|COMPLETED|FAILED|ERROR).</comment>
+        <sql>
+            ALTER TABLE test_run
+                ADD CONSTRAINT ck_test_run_status
+                CHECK (status IN ('QUEUED', 'RUNNING', 'COMPLETED', 'FAILED', 'ERROR'))
+        </sql>
+        <rollback>ALTER TABLE test_run DROP CONSTRAINT ck_test_run_status</rollback>
+    </changeSet>
+
+    <changeSet id="070-test-run-trigger-source-check" author="hugmesh">
+        <comment>CHECK: test_run.trigger_source records the run provenance
+                 (ADMIN on-demand | ARGOCD lean gate | HEAVY_ATTACH x86 edge).</comment>
+        <sql>
+            ALTER TABLE test_run
+                ADD CONSTRAINT ck_test_run_trigger_source
+                CHECK (trigger_source IN ('ADMIN', 'ARGOCD', 'HEAVY_ATTACH'))
+        </sql>
+        <rollback>ALTER TABLE test_run DROP CONSTRAINT ck_test_run_trigger_source</rollback>
+    </changeSet>
+
+    <changeSet id="070-test-run-created-index" author="hugmesh">
+        <comment>Newest-first list scan for the admin Test-Reports table.</comment>
+        <createIndex tableName="test_run" indexName="idx_test_run_created">
+            <column name="created_at" descending="true"/>
+        </createIndex>
+        <rollback>
+            <dropIndex tableName="test_run" indexName="idx_test_run_created"/>
+        </rollback>
+    </changeSet>
+
+    <!--
+      test_run_result — the per-suite / per-role roll-up rows the live SSE dashboard
+      and the {runId} detail view render (running/pass/fail per suite, per role).
+      The test-runner POSTs these via the event-ingest endpoint as suites finish;
+      the orchestrator upserts them and replays them to a reconnecting admin so the
+      per-suite/per-role matrix survives a pod restart (bounded SSE replay buffer is
+      live-only — the durable matrix is here).
+    -->
+    <changeSet id="070-test-run-result" author="hugmesh">
+        <comment>test_run_result: per-(suite,role) pass/fail/skip roll-up for the
+                 Test-Reports detail matrix + the durable side of the SSE dashboard.</comment>
+        <createTable tableName="test_run_result">
+            <column name="id" type="varchar(36)">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="run_id" type="varchar(36)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- e.g. 19-local-only-mastodon, 24-final-e2e-sweep. -->
+            <column name="suite" type="varchar(255)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- the role the test maps to (annotation convention role=...); 'ALL'
+                 for suite-level / unscoped rows. -->
+            <column name="role" type="varchar(64)" defaultValue="ALL">
+                <constraints nullable="false"/>
+            </column>
+            <!-- running | passed | failed | skipped — the per-(suite,role) state. -->
+            <column name="state" type="varchar(16)" defaultValue="running">
+                <constraints nullable="false"/>
+            </column>
+            <column name="passed" type="int" defaultValueNumeric="0">
+                <constraints nullable="false"/>
+            </column>
+            <column name="failed" type="int" defaultValueNumeric="0">
+                <constraints nullable="false"/>
+            </column>
+            <column name="skipped" type="int" defaultValueNumeric="0">
+                <constraints nullable="false"/>
+            </column>
+            <column name="duration_ms" type="bigint"/>
+            <column name="updated_at" type="timestamp" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+    </changeSet>
+
+    <changeSet id="070-test-run-result-state-check" author="hugmesh">
+        <comment>CHECK: test_run_result.state is one of the per-(suite,role) states.</comment>
+        <sql>
+            ALTER TABLE test_run_result
+                ADD CONSTRAINT ck_test_run_result_state
+                CHECK (state IN ('running', 'passed', 'failed', 'skipped'))
+        </sql>
+        <rollback>ALTER TABLE test_run_result DROP CONSTRAINT ck_test_run_result_state</rollback>
+    </changeSet>
+
+    <changeSet id="070-test-run-result-fk" author="hugmesh">
+        <comment>FK: every per-(suite,role) row belongs to a test_run; cascade so a
+                 run delete reaps its result matrix.</comment>
+        <addForeignKeyConstraint
+                baseTableName="test_run_result" baseColumnNames="run_id"
+                constraintName="fk_test_run_result_run"
+                referencedTableName="test_run" referencedColumnNames="id"
+                onDelete="CASCADE"/>
+        <rollback>
+            <dropForeignKeyConstraint baseTableName="test_run_result"
+                                      constraintName="fk_test_run_result_run"/>
+        </rollback>
+    </changeSet>
+
+    <changeSet id="070-test-run-result-unique" author="hugmesh">
+        <comment>At most one roll-up row per (run, suite, role) so the ingest path
+                 upserts (find-then-update) deterministically.</comment>
+        <addUniqueConstraint tableName="test_run_result"
+                             columnNames="run_id, suite, role"
+                             constraintName="uq_test_run_result_run_suite_role"/>
+        <rollback>
+            <dropUniqueConstraint tableName="test_run_result"
+                                  constraintName="uq_test_run_result_run_suite_role"/>
+        </rollback>
+    </changeSet>
+
+    <changeSet id="070-test-run-grant" author="hugmesh">
+        <!-- PostgreSQL-only runtime grant. The H2 test store has no admin_bff role,
+             so GRANT would error there; the dbms precondition skips this changeSet
+             off-Postgres (onFail=MARK_RAN records it as run) so the H2 changelog
+             continues. On a real Postgres deployment the grant applies. -->
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>GRANT SELECT,INSERT,UPDATE,DELETE on the test-run tables to the
+                 admin_bff role (DELETE = retention prune of the oldest runs).</comment>
+        <sql>
+            GRANT SELECT, INSERT, UPDATE, DELETE ON test_run TO admin_bff;
+            GRANT SELECT, INSERT, UPDATE, DELETE ON test_run_result TO admin_bff;
+        </sql>
+        <rollback>
+            REVOKE SELECT, INSERT, UPDATE, DELETE ON test_run FROM admin_bff;
+            REVOKE SELECT, INSERT, UPDATE, DELETE ON test_run_result FROM admin_bff;
+        </rollback>
+    </changeSet>
+</databaseChangeLog>

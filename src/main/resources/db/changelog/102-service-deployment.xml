@@ -1,0 +1,144 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+      service_deployment — the per-domain LIFECYCLE ACCOUNTING table for the App-Store
+      (PR1 = data/accounting layer ONLY; the actual ArgoCD/Casdoor/cert effects are
+      DEFERRED + stubbed/logged — this PR SHIPS DARK). It records a service deployed to
+      a brand/domain, its created/ending clock, and the enforce actions to run at the
+      end of its lease.
+
+      This table CLONES the 008 access_suspension shape + conventions:
+        * desired-state with a single state column: state IN ('active','ended'); a
+          deployment ends via a CAS active->ended (the ServiceDeploymentExpiryAction,
+          a CLONE of SuspensionExpiryAction) — the row is NEVER hard-deleted (the audit
+          trail).
+        * ending_at is the SINGLE expiry clock (the access_suspension.expires_at twin):
+          NULL = no-expiry (a permanent deployment); a non-null value is the instant the
+          lease-gated single-writer tick flips active->ended.
+        * propagation_state IN ('pending','applied','failed') — the enforce-actions leg
+          result the loop self-heals forward (008's propagation_state twin).
+        * a per-row `domain` discriminator (the 010 pattern, NOT NULL) so a brand ADMIN
+          only sees/the superadmin targets a specific brand's deployments; Roles.domainOf
+          + PrincipalDomain enforce it.
+
+      enforce_actions is an opaque JSON/CSV list of the effects to emit at end-of-lease
+      (e.g. teardown, revoke-roles, revoke-certs, alert). profile_ref is a NULLABLE soft
+      reference to an app_profile (101) name — the template the deployment was stamped
+      from; nullable so a deployment need not use a profile.
+
+      ── Portable DDL (mirrors 008-access-suspension.xml / 012-domain-registry.xml) ──
+      id is an app-generated varchar(36) UUID string. timestamptz -> the portable
+      Liquibase 'timestamp with time zone' generic type. The partial index for the
+      expiry scan (ending_at WHERE state='active') is PG-only (no partial indexes on the
+      H2 test store), gated dbms=postgresql onFail=MARK_RAN — on H2 the expiry scan still
+      works via the full-column predicate. The PG-only GRANT is gated the same way.
+
+      ── Numbering: 102 ─────────────────────────────────────────────────────────
+      Sits ABOVE 101 in the free >=100 band. Appended LAST at the include site after 101.
+    -->
+
+    <changeSet id="102-service-deployment" author="hugmesh">
+        <comment>service_deployment — per-domain lifecycle accounting (clones the 008
+                 access_suspension desired-state shape; ending_at is the single expiry
+                 clock; enforce_actions emitted at end-of-lease; SHIPS DARK).</comment>
+        <createTable tableName="service_deployment">
+            <column name="id" type="varchar(36)">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <!-- Per-row tenant discriminator (the 010 pattern). NOT NULL. -->
+            <column name="domain" type="varchar(253)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="service_key" type="varchar(128)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- Nullable soft reference to an app_profile.name (the stamped template). -->
+            <column name="profile_ref" type="varchar(128)"/>
+            <column name="state" type="varchar(16)" defaultValue="active">
+                <constraints nullable="false"/>
+            </column>
+            <column name="created_at" type="timestamp with time zone" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+            <!-- The SINGLE expiry clock. NULL = no-expiry (permanent deployment). -->
+            <column name="ending_at" type="timestamp with time zone"/>
+            <!-- Opaque JSON/CSV of the enforce effects to EMIT at end-of-lease
+                 (teardown,revoke-roles,revoke-certs,alert). -->
+            <column name="enforce_actions" type="clob"/>
+            <column name="propagation_state" type="varchar(16)" defaultValue="pending">
+                <constraints nullable="false"/>
+            </column>
+            <!-- Stamped when the row CASes active->ended. -->
+            <column name="ended_at" type="timestamp with time zone"/>
+            <!-- The SUPERADMIN subject (jwt.getSubject()) who created the deployment. -->
+            <column name="created_by_subject" type="varchar(400)"/>
+        </createTable>
+    </changeSet>
+
+    <changeSet id="102-service-deployment-state-check" author="hugmesh">
+        <comment>CHECK: state is one of the two lifecycle values (active/ended).</comment>
+        <sql>
+            ALTER TABLE service_deployment
+                ADD CONSTRAINT ck_service_deployment_state
+                CHECK (state IN ('active', 'ended'))
+        </sql>
+        <rollback>ALTER TABLE service_deployment DROP CONSTRAINT ck_service_deployment_state</rollback>
+    </changeSet>
+
+    <changeSet id="102-service-deployment-propagation-check" author="hugmesh">
+        <comment>CHECK: propagation_state is one of the three enforce-leg outcomes.</comment>
+        <sql>
+            ALTER TABLE service_deployment
+                ADD CONSTRAINT ck_service_deployment_propagation
+                CHECK (propagation_state IN ('pending', 'applied', 'failed'))
+        </sql>
+        <rollback>ALTER TABLE service_deployment DROP CONSTRAINT ck_service_deployment_propagation</rollback>
+    </changeSet>
+
+    <changeSet id="102-service-deployment-domain-index" author="hugmesh">
+        <comment>Index on (domain) for the admin own-domain read + the superadmin
+                 per-domain list.</comment>
+        <createIndex tableName="service_deployment" indexName="idx_service_deployment_domain">
+            <column name="domain"/>
+        </createIndex>
+        <rollback>
+            <dropIndex tableName="service_deployment" indexName="idx_service_deployment_domain"/>
+        </rollback>
+    </changeSet>
+
+    <changeSet id="102-service-deployment-expiry-index" author="hugmesh">
+        <!-- PG-only partial index for the expiry scan (ending_at <= now AND
+             state='active'). The H2 test store has no partial indexes; the dbms
+             precondition skips it there (onFail=MARK_RAN) and the scan still runs via
+             the full-column predicate. -->
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>Partial index for the expiry scan (ending_at &lt;= now AND state='active').</comment>
+        <sql>
+            CREATE INDEX idx_service_deployment_expiry
+                ON service_deployment (ending_at)
+                WHERE state = 'active'
+        </sql>
+        <rollback>DROP INDEX idx_service_deployment_expiry</rollback>
+    </changeSet>
+
+    <changeSet id="102-service-deployment-grant" author="hugmesh">
+        <!-- PostgreSQL-only runtime grant. The H2 test store has no admin_bff role, so
+             GRANT would error there; the dbms precondition skips this changeSet entirely
+             off-Postgres (onFail=MARK_RAN records it as run) so the H2 changelog
+             continues. No DELETE — a deployment ENDS via a CAS active->ended. -->
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>GRANT SELECT,INSERT,UPDATE on service_deployment to the admin_bff role
+                 (no DELETE — end is a CAS update, the row is the audit).</comment>
+        <sql>GRANT SELECT, INSERT, UPDATE ON service_deployment TO admin_bff</sql>
+        <rollback>REVOKE SELECT, INSERT, UPDATE ON service_deployment FROM admin_bff</rollback>
+    </changeSet>
+</databaseChangeLog>

@@ -1,0 +1,27 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: hugmesh-backend
+resources:
+  - deployment.yaml
+  - service.yaml
+  # The cloud-backups effector ServiceAccount the pod runs as. Created WITH the
+  # admin-bff (automated sync) so it exists when the pod schedules; the
+  # least-privilege Role/RoleBinding that grant it CR-apply live in
+  # manifests/velero/rbac.yaml (manual sync, arrives with Velero). Identity without
+  # authority until backups are deliberately enabled.
+  - backups-effector-sa.yaml
+  - hpa.yaml
+# First-party images now pull from the in-cluster GitLab container registry
+# (registry.hugmesh.systems = the GitLab chart's hosts.domain default; project
+# path = <group>/<repo>). The CI in each repo pushes :<branch> + :<sha>; we track
+# the moving :main here for dev. Pulls need the gitlab-registry imagePullSecret
+# (ESO-materialized, see manifests/external-secrets).
+images:
+  - { name: hugmesh-systems/admin-bff-api, newName: registry.hugmesh.systems/hugmesh/hugmesh-admin-bff-api, newTag: main }
+patches:
+  - target: { kind: Deployment }
+    patch: |
+      - op: add
+        path: /spec/template/spec/imagePullSecrets
+        value:
+          - name: gitlab-registry

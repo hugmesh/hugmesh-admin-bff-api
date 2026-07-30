@@ -1,0 +1,25 @@
+# hugmesh-deploy.yaml — per-repo deploy descriptor (Phase 6 catalog).
+#
+# Discovered by the catalog ApplicationSet (hugmesh-generator
+# specs/cluster/apps/13-service-catalog.yaml): its scmProvider gitea generator
+# scans the in-cluster Forgejo org for repos carrying THIS file + a `deploy/`
+# kustomize dir and generates one ArgoCD Application (source path: deploy/).
+#
+# DUAL-HOME / SHIPS DARK: the central manifest still lives at
+# hugmesh-generator specs/cluster/manifests/admin-bff-api/ and remains the
+# authoritative source today. This file + deploy/ are a Forgejo-cutover prep:
+# the live GitHub-rooted ArgoCD ignores it, and the (currently unseeded) Forgejo
+# catalog matches nothing, so it changes nothing running. deploy/ is a verbatim
+# copy of the central manifest — keep the two in sync until cutover.
+name: hugmesh-admin-bff-api          # Application name
+namespace: hugmesh-backend           # target k8s namespace (existing tier ns)
+image: hugmesh-systems/admin-bff-api # image repo (tag pinned in deploy/ kustomize)
+port: 8080
+replicas: 1
+# Gateway route the admin/BFF seeds into the routing DB (Phase 2 core). The admin
+# BFF is ClusterIP-only and reachable solely via the fe-gateway's same-origin
+# /bff/admin/** route, which enforces ROLE_ADMIN from the route DB.
+route:
+  gateway: hugmesh-fe-gateway
+  path: /bff/admin/**
+  stripPrefix: 0

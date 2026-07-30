@@ -1,0 +1,123 @@
+# Image-gen Job — TEMPLATE. The admin BFF (ImageBuildOrchestrator.renderManifest)
+# substitutes the ${...} placeholders and applies it with the image-gen
+# ServiceAccount (jobs/image-gen-rbac.yaml) when imagegen.launch.enabled=true.
+# One Job per build (admin POST /bff/admin/image-builds).
+#
+# SHIPS DARK: with imagegen.launch.enabled=false (the default) the BFF NEVER applies
+# this manifest (the NoopImageJobLauncher just logs intent), so no real build runs.
+#
+# The runner image bundles the hugmesh-generator (debootstrap/partition/kernel/
+# mesh-seed/package/finalize). It writes the built image + a NON-SECRET keys bundle
+# (public host key, dial PUBLIC-key fingerprint, Vault pointer) to the shared
+# image-artifacts PVC under build-<id>/, AND POSTs a single terminal completion event
+# back to the BFF ingest endpoint (POST /bff/internal/image-builds/${BUILD_ID}/ingest)
+# over the in-cluster mTLS surface with its app-layer internal token — so the BFF's
+# bounded SSE sink + the durable image_build row are closed out by the REAL build.
+#
+# SECRET DISCIPLINE: the per-device dial PRIVATE key is NEVER baked into this manifest
+# and NEVER returned to the BFF. The generator writes it to Vault directly; an
+# ESO-synced k8s Secret (referenced below, READ FROM THE MOUNT) carries it into this
+# Job pod only. The ingest payload carries only the NON-SECRET pointer/fingerprints.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: hugmesh-image-gen-${BUILD_ID}
+  namespace: hugmesh-backend
+  labels:
+    app.kubernetes.io/part-of: hugmesh
+    app.kubernetes.io/component: image-gen
+    hugmesh.systems/image-build-id: "${BUILD_ID}"
+    hugmesh.systems/image-type: "${IMAGE_TYPE}"
+spec:
+  ttlSecondsAfterFinished: 86400   # keep the finished Job 24h for log inspection, then reap
+  backoffLimit: 0                  # a failed build is a result, not something to retry blindly
+  activeDeadlineSeconds: 7200      # a hung build ERRORs rather than running forever
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: image-gen
+        hugmesh.systems/image-build-id: "${BUILD_ID}"
+    spec:
+      serviceAccountName: image-gen
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        fsGroup: 65532
+      containers:
+        - name: builder
+          image: registry.hugmesh.systems/hugmesh/image-gen:latest
+          command: ["/bin/sh", "/builder/build-image.sh"]
+          env:
+            - { name: BUILD_ID,       value: "${BUILD_ID}" }
+            - { name: TARGET_USER,    value: "${TARGET_USER}" }
+            - { name: DOMAIN,         value: "${DOMAIN}" }
+            - { name: IMAGE_TYPE,     value: "${IMAGE_TYPE}" }      # primary | mesh-extension | client
+            - { name: HARDWARE_CLASS, value: "${HARDWARE_CLASS}" }
+            - { name: SSH_KEYS_ALLOWED, value: "${SSH_KEYS_ALLOWED}" }
+            # The BFF internal ingest endpoint the build POSTs its terminal report to.
+            - { name: INGEST_URL, value: "https://hugmesh-admin-bff-api.hugmesh-backend.svc.cluster.local:8443/bff/internal/image-builds/${BUILD_ID}/ingest" }
+            # OPTIONAL non-terminal progress side channel (worklist redesign item 8): the builder's
+            # docker/build-image.sh (progress_tap_run, gated on this var being non-empty) tees the
+            # builder's stdout through docker/progress-tap.py and POSTs throttled phase->percent
+            # frames here. Same in-cluster DNS + mTLS + internal-token boundary as INGEST_URL, just
+            # the /progress sub-route (ImageBuildIngestController). Never touches the terminal
+            # COMPLETED/FAILED contract, which stays owned by INGEST_URL alone.
+            - { name: PROGRESS_URL, value: "https://hugmesh-admin-bff-api.hugmesh-backend.svc.cluster.local:8443/bff/internal/image-builds/${BUILD_ID}/progress" }
+            # App-layer internal token (env-injected, NEVER in git) the InternalTokenWebFilter
+            # checks on the /bff/internal/** surface; the mTLS handshake is the primary boundary.
+            - name: INTERNAL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: image-gen-internal-token
+                  key: token
+                  optional: true
+            # The PVC-relative build dir the builder writes the image + NON-SECRET keys bundle to.
+            - { name: ARTIFACT_DIR, value: "/artifacts/build-${BUILD_ID}" }
+            # FULL per-image spec channel (item 1b): the MATERIALIZED flat ImageConfig (secrets
+            # blanked) mounted from the per-build hugmesh-image-spec-${BUILD_ID} ConfigMap.
+            # PER-BUILD VALUE: the BFF substitutes ${IMAGE_SPEC_PATH} to /image-spec/spec.json
+            # ONLY when the build row carries a spec (BUILD_MODE=spec, last-wins server overrides
+            # applied AFTER the spec flags), and to "" (empty) for a legacy build. The worker
+            # branches on IMAGE_SPEC_JSON being NON-EMPTY and then HARD-FAILS if the file is
+            # missing ([ -f ] || die), while a missing OPTIONAL ConfigMap volume mounts as an
+            # EMPTY dir — so a constant path here would kill every legacy build instead of
+            # letting it fall back to the 6 env vars above (BUILD_MODE=legacy). Empty value =>
+            # legacy; a SPEC build whose ConfigMap somehow vanished still fails CLOSED worker-side.
+            - { name: IMAGE_SPEC_JSON, value: "${IMAGE_SPEC_PATH}" }
+          volumeMounts:
+            - { name: artifacts, mountPath: /artifacts }
+            # The per-build materialized spec (item 1b), mounted READ-ONLY from the ConfigMap the
+            # BFF prepends to this Job. optional volume => a legacy (no-spec) build has no ConfigMap
+            # and simply sees no file here. Mirrors the dial-key optional Secret mount below.
+            - { name: image-spec, mountPath: /image-spec, readOnly: true }
+            # The per-device dial PRIVATE key, synced by ESO from Vault into a k8s Secret and
+            # mounted READ-ONLY. The builder seeds the matching PUBLIC key into the image's
+            # authorized_keys and READS the private key ONLY from this mount — it is never
+            # written to an artifact, never returned to the BFF, never logged.
+            - { name: dial-key, mountPath: /secrets/dial, readOnly: true }
+          resources:
+            requests: { cpu: "500m", memory: "1Gi" }
+            limits:   { cpu: "2",    memory: "4Gi" }
+      volumes:
+        - name: artifacts
+          persistentVolumeClaim: { claimName: hugmesh-image-artifacts }
+        # The per-build materialized spec (item 1b). The BFF PREPENDS this ConfigMap as a second
+        # YAML doc when the build carries a spec; optional:true so a legacy (no-spec) build — where
+        # the BFF emits the Job alone — mounts nothing and the builder uses the 6-env fallback
+        # (IMAGE_SPEC_JSON is templated EMPTY for that build; a missing optional ConfigMap still
+        # mounts an EMPTY dir, so the env value — not this volume — is the legacy/spec switch).
+        # SECURITY REVIEW (resolved 2026-07): the launcher Role now grants the admin-bff SA
+        # namespaced configmaps create/get/patch/delete (NO list/watch — no enumeration) in
+        # jobs/image-gen-rbac.yaml; see the full blast-radius write-up there. The launcher
+        # creates this ConfigMap BEFORE the Job (a rejection leaves no orphan Job) and then
+        # PATCHes it with an ownerReference to the created Job, so the Job's
+        # ttlSecondsAfterFinished reap GC-cascades the ConfigMap — no leak.
+        - name: image-spec
+          configMap:
+            name: hugmesh-image-spec-${BUILD_ID}
+            optional: true
+        - name: dial-key
+          secret:
+            secretName: image-gen-dial-${BUILD_ID}   # ESO-synced from Vault; absent => no SSH seed
+            optional: true

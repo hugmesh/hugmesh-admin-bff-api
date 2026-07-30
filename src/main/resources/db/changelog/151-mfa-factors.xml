@@ -1,0 +1,215 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+      151 — MFA FACTOR STORAGE (D6+D8 enrollment leg, within the 150-159 MFA reserve;
+      150 added the opaque-session columns + role_mfa_policy, 151 adds the BFF-OWNED
+      factor lifecycle storage). The web path CANNOT use Casdoor's MFA endpoints
+      (no standalone factor-verify API; WebAuthn is session-bound; the TOTP secret is
+      masked forever after setup) — so the BFF owns the factor lifecycle: it GENERATES
+      the TOTP secret itself + stores it AES-256-GCM ENCRYPTED, runs its OWN WebAuthn
+      ceremony, and generates+HASHES recovery codes. THREE tables:
+
+        - mfa_factor          — one row per enrolled TOTP/WebAuthn factor. owner_subject
+                                is the authenticated bff_session subject (NEVER a body
+                                field). totp_secret_enc holds the AES-256-GCM
+                                nonce||ciphertext||tag (base64) — NEVER plaintext, NEVER
+                                returned after enroll. enabled DEFAULTS false (a mid-enroll
+                                factor never satisfies a challenge). last_counter is the
+                                last-accepted TOTP step (replay guard).
+        - mfa_recovery_code   — one row per recovery code, storing ONLY a salted HMAC hash
+                                (never the plaintext). used flips one-time on consume.
+        - webauthn_credential — one row per registered WebAuthn credential: credentialId
+                                + COSE public key + sign_count (clone detection) + transports.
+
+      SHIPS DARK: nothing here is reachable while app.casdoor.mfa.enabled=false (every
+      /bff/mfa/* endpoint 503s). The tables exist so the enrollment + verifier code has a
+      home; no enforcement is wired off them in this band.
+
+      Portable DDL mirrors the 011/150/172 idioms (app-UUID varchar(36) PK, one changeSet
+      per table/index/GRANT, PG-only index + GRANT gated dbms=postgresql onFail=MARK_RAN;
+      the H2 test path runs the table creates + relies on the service guards). Appended
+      LAST at the include site, AFTER the 150 include — bff_session already exists by here.
+    -->
+
+    <!-- ═══════════════════════════════ mfa_factor ═══════════════════════════════════ -->
+
+    <changeSet id="151-mfa-factor" author="hugmesh">
+        <comment>mfa_factor — one enrolled second factor (TOTP or WEBAUTHN) owned by an
+                 authenticated subject. totp_secret_enc is AES-256-GCM
+                 (nonce||ciphertext||tag, base64); NULL for WEBAUTHN. enabled DEFAULTS
+                 false so a mid-enroll factor never satisfies a challenge. last_counter is
+                 the last-accepted TOTP step (replay guard).</comment>
+        <createTable tableName="mfa_factor">
+            <column name="id" type="varchar(36)">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <!-- the authenticated bff_session subject (jwt sub / auth name) — NEVER a body field. -->
+            <column name="owner_subject" type="varchar(400)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- TOTP | WEBAUTHN. -->
+            <column name="type" type="varchar(16)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- AES-256-GCM nonce||ciphertext||tag (base64) of the TOTP shared secret; NULL for WEBAUTHN. -->
+            <column name="totp_secret_enc" type="clob"/>
+            <!-- last-accepted TOTP step counter (replay guard); NULL until first verify. -->
+            <column name="last_counter" type="bigint"/>
+            <column name="enabled" type="boolean" defaultValueBoolean="false">
+                <constraints nullable="false"/>
+            </column>
+            <column name="created_at" type="timestamp" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+        <rollback>
+            <dropTable tableName="mfa_factor"/>
+        </rollback>
+    </changeSet>
+
+    <changeSet id="151-mfa-factor-owner-index" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>Index the per-owner read predicate (list/verify scan the caller's factors).</comment>
+        <sql>CREATE INDEX idx_mfa_factor_owner ON mfa_factor (owner_subject)</sql>
+        <rollback>DROP INDEX idx_mfa_factor_owner</rollback>
+    </changeSet>
+
+    <changeSet id="151-mfa-factor-grant" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>GRANT SELECT,INSERT,UPDATE,DELETE on mfa_factor to admin_bff (a user may
+                 remove their own factor — DELETE is intentional here, step-up gated).</comment>
+        <sql>GRANT SELECT, INSERT, UPDATE, DELETE ON mfa_factor TO admin_bff</sql>
+        <rollback>REVOKE SELECT, INSERT, UPDATE, DELETE ON mfa_factor FROM admin_bff</rollback>
+    </changeSet>
+
+    <!-- ════════════════════════════ mfa_recovery_code ══════════════════════════════ -->
+
+    <changeSet id="151-mfa-recovery-code" author="hugmesh">
+        <comment>mfa_recovery_code — one row per recovery code, storing ONLY a salted HMAC
+                 hash (never the plaintext code). used flips one-time on consume; a
+                 regenerate hard-deletes the prior set.</comment>
+        <createTable tableName="mfa_recovery_code">
+            <column name="id" type="varchar(36)">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="owner_subject" type="varchar(400)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- salted HMAC-SHA256 hash (base64) of the recovery code; NEVER the plaintext. -->
+            <column name="code_hash" type="varchar(256)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="used" type="boolean" defaultValueBoolean="false">
+                <constraints nullable="false"/>
+            </column>
+            <column name="created_at" type="timestamp" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+        <rollback>
+            <dropTable tableName="mfa_recovery_code"/>
+        </rollback>
+    </changeSet>
+
+    <changeSet id="151-mfa-recovery-code-owner-index" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>Index the per-owner recovery-code scan (verify + regenerate-delete).</comment>
+        <sql>CREATE INDEX idx_mfa_recovery_owner ON mfa_recovery_code (owner_subject)</sql>
+        <rollback>DROP INDEX idx_mfa_recovery_owner</rollback>
+    </changeSet>
+
+    <changeSet id="151-mfa-recovery-code-grant" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>GRANT SELECT,INSERT,UPDATE,DELETE on mfa_recovery_code to admin_bff (consume
+                 = UPDATE used=true; regenerate = DELETE old set then INSERT).</comment>
+        <sql>GRANT SELECT, INSERT, UPDATE, DELETE ON mfa_recovery_code TO admin_bff</sql>
+        <rollback>REVOKE SELECT, INSERT, UPDATE, DELETE ON mfa_recovery_code FROM admin_bff</rollback>
+    </changeSet>
+
+    <!-- ═══════════════════════════ webauthn_credential ═════════════════════════════ -->
+
+    <changeSet id="151-webauthn-credential" author="hugmesh">
+        <comment>webauthn_credential — one registered WebAuthn credential owned by a subject:
+                 the credentialId (base64url), the COSE public key (base64), the running
+                 sign_count (clone detection — must advance monotonically), and the
+                 transports CSV. enabled DEFAULTS true (a registration verify already proved
+                 the ceremony before the row is written).</comment>
+        <createTable tableName="webauthn_credential">
+            <column name="id" type="varchar(36)">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="owner_subject" type="varchar(400)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- base64url-encoded WebAuthn credentialId — UNIQUE (no dup registration). -->
+            <column name="credential_id" type="varchar(512)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- base64-encoded COSE-encoded public key (verifies the assertion signature). -->
+            <column name="public_key_cose" type="clob">
+                <constraints nullable="false"/>
+            </column>
+            <!-- the authenticator sign count; an assertion MUST advance it (clone detection). -->
+            <column name="sign_count" type="bigint" defaultValueNumeric="0">
+                <constraints nullable="false"/>
+            </column>
+            <!-- CSV of authenticator transports (usb,nfc,ble,internal,hybrid); diagnostic. -->
+            <column name="transports" type="varchar(128)"/>
+            <column name="enabled" type="boolean" defaultValueBoolean="true">
+                <constraints nullable="false"/>
+            </column>
+            <column name="created_at" type="timestamp" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+        <rollback>
+            <dropTable tableName="webauthn_credential"/>
+        </rollback>
+    </changeSet>
+
+    <changeSet id="151-webauthn-credential-id-unique" author="hugmesh">
+        <comment>UNIQUE credential_id: a WebAuthn credentialId is globally unique; the
+                 registration verify rejects a dup, and this UNIQUE constraint is the race
+                 backstop. Portable plain UNIQUE (Postgres + H2).</comment>
+        <addUniqueConstraint tableName="webauthn_credential"
+                             columnNames="credential_id"
+                             constraintName="uq_webauthn_credential_id"/>
+        <rollback>
+            <dropUniqueConstraint tableName="webauthn_credential"
+                                  constraintName="uq_webauthn_credential_id"/>
+        </rollback>
+    </changeSet>
+
+    <changeSet id="151-webauthn-credential-owner-index" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>Index the per-owner credential scan (assertion verify loads the caller's creds).</comment>
+        <sql>CREATE INDEX idx_webauthn_credential_owner ON webauthn_credential (owner_subject)</sql>
+        <rollback>DROP INDEX idx_webauthn_credential_owner</rollback>
+    </changeSet>
+
+    <changeSet id="151-webauthn-credential-grant" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>GRANT SELECT,INSERT,UPDATE,DELETE on webauthn_credential to admin_bff
+                 (register = INSERT; assertion = UPDATE sign_count; remove = DELETE, step-up gated).</comment>
+        <sql>GRANT SELECT, INSERT, UPDATE, DELETE ON webauthn_credential TO admin_bff</sql>
+        <rollback>REVOKE SELECT, INSERT, UPDATE, DELETE ON webauthn_credential FROM admin_bff</rollback>
+    </changeSet>
+
+</databaseChangeLog>

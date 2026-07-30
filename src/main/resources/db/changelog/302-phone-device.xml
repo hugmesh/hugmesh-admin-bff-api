@@ -1,0 +1,122 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+      phone_device — the MDM PHONE REGISTRY: one row per operator-onboarded managed
+      phone (GrapheneOS or stock Android), the phone-ingest/v1 record scripts/phone-wizard.sh
+      emits and POSTs at the end of the onboarding flow (mTLS, NO JWT — the same in-cluster
+      service transport as the node device_enrollment self-report). A SUPERADMIN queries the
+      resulting fleet from the /bff/superadmin control plane.
+
+      ── Distinct from the NODE tables ────────────────────────────────────────────────
+      This is NOT device_registry (011, the node SSH-authority table) nor device_enrollment
+      (130, the node liveness-reconciliation channel). Those key on machine_key_fp (a mesh
+      node's headscale key). A phone keys on device_id (phone-[sanitized-serial]) and carries
+      the phone-specific onboarding facts (codename/os/attestation/enterprise-profile). Like
+      device_enrollment it carries NO AUTHORIZING COLUMNS an SSH layer would honour — it is
+      an inventory/telemetry record a superadmin reads, never an access grant. device_id is
+      UNIQUE so a re-ingest (the operator re-runs the wizard's ingest verb) UPSERTs one row
+      per phone and bumps ingest_count (a re-ingest / investigable-churn signal, mirroring
+      device_enrollment.report_count).
+
+      ── Numbering: band 302 ──────────────────────────────────────────────────────────
+      Next free above 301 (account-issuer). Appended LAST at the include site in
+      db.changelog-master.xml.
+
+      ── Portable DDL (mirrors 300-node-radio-device) ─────────────────────────────────
+      id is a varchar(36) UUID string with the org-wide DB-generated DEFAULT
+      ((gen_random_uuid())::text, the changelog-200 idiom; pgcrypto installed by changelog
+      200, which runs first): the repository INSERT omits id and reads it back via
+      RETURNING id. timestamptz via the portable 'timestamp with time zone' generic type +
+      defaultValueComputed="now()". One changeSet per DDL unit (independent redeploy +
+      rollback); PG-only GRANT gated with a dbms=postgresql precondition (MARK_RAN off-PG).
+    -->
+
+    <!-- ════════════════════════════ phone_device ══════════════════════════════════ -->
+    <changeSet id="302-phone-device-table" author="hugmesh">
+        <comment>MDM phone registry (phone-ingest/v1). Inventory/telemetry only — NO
+                 authorizing columns; device_id UNIQUE so a re-ingest UPSERTs one row.</comment>
+        <createTable tableName="phone_device">
+            <column name="id" type="varchar(36)" defaultValueComputed="(gen_random_uuid())::text">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <!-- The onboarding-stable device identity (phone-[sanitized-serial]). UNIQUE so a
+                 re-ingest UPSERTs one inventory row per phone. -->
+            <column name="device_id" type="varchar(128)">
+                <constraints nullable="false" unique="true"
+                             uniqueConstraintName="uq_phone_device_device_id"/>
+            </column>
+            <!-- Constant discriminator "phone" (the phone-ingest/v1 device_class). -->
+            <column name="device_class" type="varchar(32)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="serial" type="varchar(128)"/>
+            <column name="codename" type="varchar(64)"/>
+            <column name="marketing_name" type="varchar(128)"/>
+            <!-- OS classification ("GrapheneOS" | "unknown" | ...) + build version. -->
+            <column name="os" type="varchar(64)"/>
+            <column name="os_version" type="varchar(64)"/>
+            <column name="superdomain" type="varchar(253)"/>
+            <column name="login_server" type="varchar(512)"/>
+            <!-- The tailnet address; may be NULL for a no-USB (operator-attested) onboarding
+                 where no device was tethered to read it. -->
+            <column name="tailscale_ip" type="varchar(64)"/>
+            <column name="tailscale_hostname" type="varchar(253)"/>
+            <column name="role" type="varchar(64)"/>
+            <column name="attached_domain" type="varchar(253)"/>
+            <!-- The separately-encrypted on-device enterprise (work) profile, if provisioned.
+                 credential_custody records where the profile passphrase is escrowed
+                 ("vault-seed"); user_id is the AOSP secondary-user id (NULL when absent). -->
+            <column name="enterprise_profile_present" type="boolean" defaultValueBoolean="false">
+                <constraints nullable="false"/>
+            </column>
+            <column name="enterprise_profile_user_id" type="bigint"/>
+            <column name="enterprise_profile_credential_custody" type="varchar(64)"/>
+            <!-- Attestation facts folded in from the attest step (advisory; never blocking). -->
+            <column name="attestation_url" type="varchar(512)"/>
+            <column name="auditor_package" type="varchar(253)"/>
+            <column name="attestation_verdict" type="varchar(64)"/>
+            <!-- Operator-reported onboarding timestamps (ISO-8601 from the wizard). enrolled_at
+                 may be absent (NULL) on an emit-only / operator-attested record. -->
+            <column name="enrolled_at" type="timestamp with time zone"/>
+            <column name="generated_at" type="timestamp with time zone"/>
+            <column name="first_ingested_at" type="timestamp with time zone" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+            <column name="last_ingested_at" type="timestamp with time zone" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+            <!-- How many times this device_id has been ingested (re-ingest / churn signal). -->
+            <column name="ingest_count" type="bigint" defaultValueNumeric="1">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+    </changeSet>
+
+    <changeSet id="302-phone-device-class-check" author="hugmesh">
+        <comment>CHECK: device_class is the constant 'phone' — the DB backstop to the DTO's
+                 pattern validation (a node/other record can never land in this table).</comment>
+        <sql>
+            ALTER TABLE phone_device
+                ADD CONSTRAINT ck_phone_device_class
+                CHECK (device_class = 'phone')
+        </sql>
+        <rollback>ALTER TABLE phone_device DROP CONSTRAINT ck_phone_device_class</rollback>
+    </changeSet>
+
+    <changeSet id="302-phone-device-grant" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>GRANT SELECT,INSERT,UPDATE on phone_device to the admin_bff role (a
+                 re-ingest is an UPDATE bump; rows are never DELETEd — the fleet inventory
+                 is the audit trail). PG only; MARK_RAN elsewhere.</comment>
+        <sql>GRANT SELECT, INSERT, UPDATE ON phone_device TO admin_bff</sql>
+        <rollback>REVOKE SELECT, INSERT, UPDATE ON phone_device FROM admin_bff</rollback>
+    </changeSet>
+
+</databaseChangeLog>

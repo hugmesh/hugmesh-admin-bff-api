@@ -1,0 +1,21 @@
+// TIER 1 — the host's OWN build-time SCSS design tokens (the exemplar's
+// styles/_tokens.scss slot). These drive the shell's visual theme and are
+// consumed via `@use 'tokens' as t` (angular.json stylePreprocessorOptions
+// includePaths: src/styles). They are HOST-LOCAL: remotes never see SCSS
+// variables — the cross-repo contract is tier 2, the runtime --sd-* custom
+// properties in styles.scss. Keep the two tiers aligned: a tier-1 retheme must
+// update the matching --sd-* values (and re-check the recorded contrast ratios).
+$black:       #0a0a12;
+$dark:        #12121e;
+$border:      #1e1e32;
+$offwhite:    #e8e8f0;
+$muted:       #a8acc4;
+$accent:      #7c4dff;
+$accent-soft: #b388ff;
+
+$font-sans: system-ui, sans-serif;
+
+$radius-sm: 0.25rem;
+
+$z-content: 1;
+$z-nav:     10;

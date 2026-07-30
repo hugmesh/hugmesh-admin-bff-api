@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+      band-330 — access_suspension role vocabulary: add ROLE_MESH.
+
+      The platform gained a ROLE_MESH access role (the gateway route-access FLOOR for
+      /bff/mesh/**, seeded in Casdoor). Every OTHER access role in the platform's
+      suspension vocabulary — ROLE_MATRIX, ROLE_MASTODON — can be banned and
+      temp-banned through the access_suspension desired-state machinery; ROLE_MESH
+      could not, so a mesh abuser could only be handled by an operator manually
+      stripping the Casdoor role: no audit row, no expiry clock, no restore path.
+      This widens the closed role vocabulary so the SAME ban / timed-suspend /
+      auto-restore machinery covers the mesh surface.
+
+      The suspension EFFECT for ROLE_MESH is the Casdoor role-membership drop ALONE
+      (MeshAccessSyncAction) — see that class's own doc for why there is deliberately
+      no downstream service leg: mesh has no homeserver, so removing the role makes
+      every gateway allow-predicate on /bff/mesh/** false, which is
+      governed-but-ungranted -> DENY.
+
+      Additive — every value previously allowed is still allowed. Done as a NEW
+      changeset rather than editing the immutable 008-access-suspension-role-check
+      changeSet, so an already-applied deployment migrates forward cleanly.
+
+      ── Numbering: 330 ───────────────────────────────────────────────────────
+      The highest band wired in db.changelog-master.xml today is 320
+      (320-service-scaffold, the Service-Store scaffold record); 330 is the next free
+      band above it and leaves the customary 10-wide gap for that band to grow into.
+      Appended LAST at the include site — access_suspension (008) and its named
+      ck_access_suspension_role constraint already exist by here, so the drop +
+      re-add applies cleanly.
+
+      ── Portable DDL ─────────────────────────────────────────────────────────
+      Plain ALTER TABLE … DROP/ADD CONSTRAINT in a <sql> block with a <rollback>
+      that restores the exact pre-330 three-value CHECK — the SAME shape
+      063-notification-delivery-skipped uses to widen the 062 status CHECK. NOT
+      Postgres-gated: unlike the partial indexes and the runtime GRANTs in 008 (both
+      dbms=postgresql onFail=MARK_RAN), a named CHECK constraint is portable, so the
+      widened vocabulary must apply on EVERY store the changelog runs against — a
+      gated version would leave a test/dev store rejecting ROLE_MESH inserts that
+      production accepts.
+    -->
+
+    <changeSet id="330-access-suspension-role-add-mesh" author="hugmesh">
+        <comment>Widen the access_suspension role CHECK to add ROLE_MESH (the
+                 /bff/mesh/** access role) alongside ROLE_MATRIX, ROLE_MASTODON and
+                 PROFILE. Additive — drops then re-creates the named CHECK with the
+                 superset of values. SuspensionRequest / AdminController @Pattern
+                 parity.</comment>
+        <sql>ALTER TABLE access_suspension DROP CONSTRAINT ck_access_suspension_role</sql>
+        <sql>
+            ALTER TABLE access_suspension
+                ADD CONSTRAINT ck_access_suspension_role
+                CHECK (role IN ('ROLE_MATRIX', 'ROLE_MASTODON', 'ROLE_MESH', 'PROFILE'))
+        </sql>
+        <rollback>
+            ALTER TABLE access_suspension DROP CONSTRAINT ck_access_suspension_role;
+            ALTER TABLE access_suspension
+                ADD CONSTRAINT ck_access_suspension_role
+                CHECK (role IN ('ROLE_MATRIX', 'ROLE_MASTODON', 'PROFILE'))
+        </rollback>
+    </changeSet>
+
+</databaseChangeLog>

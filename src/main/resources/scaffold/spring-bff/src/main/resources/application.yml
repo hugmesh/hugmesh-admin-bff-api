@@ -1,0 +1,44 @@
+spring:
+  application:
+    # Per-repo CODE identity (the repos[].identity app_slug) — literal, like
+    # every fleet BFF's spring.application.name. NOT an env seam.
+    name: "{{APP_SLUG}}-bff"
+
+  # The org parent injects the full data stack (R2DBC + Liquibase) into every
+  # BFF, but this SKELETON declares no persistence yet: with no tables there is
+  # no changelog to run and no ConnectionFactory URL to build, so both
+  # auto-configs are excluded (same idiom as admin-bff-api's Cassandra exclude —
+  # startup must never depend on a datastore the service does not use). When
+  # this service grows real tables, DELETE these two excludes and add the fleet
+  # spring.r2dbc.* + spring.liquibase.* env-default blocks from the exemplar.
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.r2dbc.autoconfigure.R2dbcAutoConfiguration
+      - org.springframework.boot.liquibase.autoconfigure.LiquibaseAutoConfiguration
+
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: "${CASDOOR_ISSUER_URI:https://id.{{CLUSTER_DOMAIN}}{{!}}}"
+          # Explicit JWKS so the resource server does NOT do OIDC discovery against
+          # issuer-uri (unreachable in-container when issuer-uri is the browser-facing
+          # host). Mirrors the fleet BFFs; compose sets
+          # CASDOOR_JWKS_URI=http://casdoor:8000/.well-known/jwks. iss is still
+          # validated via issuer-uri.
+          jwk-set-uri: "${CASDOOR_JWKS_URI:${CASDOOR_ISSUER_URI:https://id.{{CLUSTER_DOMAIN}}{{!}}}/.well-known/jwks}"
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: "${MANAGEMENT_ENDPOINTS_INCLUDE:health,info}"
+  endpoint:
+    health:
+      probes:
+        # Expose /actuator/health/{liveness,readiness} for the k8s probes in
+        # deploy/deployment.yaml (fleet convention).
+        enabled: true
+
+server:
+  port: "${SERVER_PORT:8080}"

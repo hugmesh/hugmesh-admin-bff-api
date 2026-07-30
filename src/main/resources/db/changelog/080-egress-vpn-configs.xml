@@ -1,0 +1,328 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+      egress-vpn — the control plane for the DEFAULT-OFF egress-VPN optional service.
+      Admins/superadmins import provider-downloaded VPN configs (ProtonVPN WireGuard
+      .conf first-class; OpenVPN .ovpn fallback) that mesh NODES use for OUTGOING /
+      egress traffic on PUBLIC-facing flows (coturn UDP, made-public services, and —
+      only on explicit assignment — akkoma/matrix federation). Two tables, CLONING the
+      011 device-license-registry idioms EXACTLY:
+
+        vpn_config          — one imported provider config per (domain, name). It holds
+                              ONLY a secret_ref + metadata — NEVER the .conf bytes / the
+                              private VPN key (those ride a K8s Secret via ESO, or the
+                              key-USB at provision time). Revoke is a CAS active->revoked
+                              (never deleted = audit).
+        vpn_node_assignment — the explicit (config x NODE|DOMAIN) assignment that marks
+                              which public pods egress via the VPN. DUAL SCOPE like
+                              device_ssh_license: scope_type DEVICE (target_node_id joins
+                              device_registry.machine_key_fp) or DOMAIN (target_domain).
+                              An optional service_slug narrows it to one service
+                              (akkoma/tuwunel/coturn); NULL = all public services in the
+                              target. CAS active->revoked audit.
+
+      ── Portable DDL (mirrors 011 EXACTLY) ──────────────────────────────────────────
+      id is an app-generated varchar(36) UUID string (NOT a Postgres uuid column), so
+      the INSERT is portable across Postgres + the H2 (PostgreSQL-compat, NON_KEYWORDS)
+      test store and the app can return the new row id. timestamptz -> the portable
+      'timestamp with time zone' generic type, defaultValueComputed="now()". One
+      changeSet per CHECK / partial-unique / FK / index / GRANT. PG-gated partial-uniques
+      + GRANT via a dbms=postgresql precondition (onFail/onError=MARK_RAN) — the H2 path
+      enforces the at-most-one-active invariant with the service findActive-before-insert
+      guard, exactly like 011.
+
+      ── FIX-NODEFAULT ───────────────────────────────────────────────────────────────
+      vpn_config.domain (and an assignment's home domain) is NOT NULL with NO DEFAULT;
+      the service rejects domain=='default' (the ADMIN cross-domain-deny wall would be
+      vacuous otherwise). Residency is issuer-keyed, never a silent default. A bad/blank
+      domain surfaces as a clean 422, never a silent default.
+
+      ── secret_ref, NOT the secret ─────────────────────────────────────────────────
+      vpn_config.secret_ref names the K8s Secret (ESO-materialised) carrying the actual
+      .conf/.ovpn; Postgres holds metadata + the ref ONLY. NO private VPN key ever lands
+      in this database (SECRETS-OFF-GIT / off-DB).
+
+      ── generation + propagation_state (mirrors 011 FIX-REVOKE) ─────────────────────
+      Each row carries a monotonic `generation` (bumped on every mutate) so the signed
+      export's monotonic rollback guard (PR5) can reject a replayed payload, plus a
+      propagation_state (pending/applied/failed/degraded) the UI surfaces as the
+      reconcile pushes-with-ack to the node.
+
+      ── Numbering: 080 ──────────────────────────────────────────────────────────────
+      Band 080-084 (egress-vpn). APPENDED LAST at the include site in
+      db.changelog-master.xml.
+    -->
+
+    <!-- ════════════════════════ vpn_config ═══════════════════════════════════════ -->
+
+    <changeSet id="080-vpn-config" author="hugmesh">
+        <comment>vpn_config — one imported provider VPN config per (domain, name). Holds
+                 a secret_ref + metadata ONLY (NEVER the private key). Revoke is a CAS
+                 active->revoked (never deleted = audit); generation + propagation_state
+                 drive the ACK-reconcile.</comment>
+        <createTable tableName="vpn_config">
+            <column name="id" type="varchar(36)">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <!-- FIX-NODEFAULT: the owning brand; NOT NULL, NO default; the service rejects
+                 'default'. A scoped admin reads only their brand's configs. -->
+            <column name="domain" type="varchar(64)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- Operator-facing name (e.g. "proton-us"); unique per active (domain,name). -->
+            <column name="name" type="varchar(128)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- 'wireguard' (first-class) | 'openvpn' (fallback). -->
+            <column name="kind" type="varchar(16)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- Free-text provider label (e.g. "protonvpn"); metadata only. -->
+            <column name="provider" type="varchar(64)"/>
+            <!-- The remote endpoint host:port, parsed from the config for display ONLY
+                 (the actual config is in the K8s Secret). -->
+            <column name="endpoint" type="varchar(256)"/>
+            <!-- The K8s Secret name (ESO-materialised) carrying the .conf/.ovpn. The
+                 secret VALUE never lands in this table. -->
+            <column name="secret_ref" type="varchar(256)"/>
+            <column name="state" type="varchar(16)" defaultValue="active">
+                <constraints nullable="false"/>
+            </column>
+            <column name="created_by" type="varchar(400)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="created_at" type="timestamp with time zone" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+            <column name="revoked_at" type="timestamp with time zone"/>
+            <column name="revoked_by" type="varchar(400)"/>
+            <column name="propagation_state" type="varchar(16)" defaultValue="pending">
+                <constraints nullable="false"/>
+            </column>
+            <column name="generation" type="bigint" defaultValueNumeric="0">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+    </changeSet>
+
+    <changeSet id="080-vpn-config-kind-check" author="hugmesh">
+        <comment>CHECK: kind is wireguard (first-class) or openvpn (fallback).</comment>
+        <sql>
+            ALTER TABLE vpn_config
+                ADD CONSTRAINT ck_vpn_config_kind
+                CHECK (kind IN ('wireguard', 'openvpn'))
+        </sql>
+        <rollback>ALTER TABLE vpn_config DROP CONSTRAINT ck_vpn_config_kind</rollback>
+    </changeSet>
+
+    <changeSet id="080-vpn-config-state-check" author="hugmesh">
+        <comment>CHECK: state is one of the two lifecycle values (active or revoked).</comment>
+        <sql>
+            ALTER TABLE vpn_config
+                ADD CONSTRAINT ck_vpn_config_state
+                CHECK (state IN ('active', 'revoked'))
+        </sql>
+        <rollback>ALTER TABLE vpn_config DROP CONSTRAINT ck_vpn_config_state</rollback>
+    </changeSet>
+
+    <changeSet id="080-vpn-config-propagation-check" author="hugmesh">
+        <comment>CHECK: propagation_state is one of the four push-with-ack outcomes.</comment>
+        <sql>
+            ALTER TABLE vpn_config
+                ADD CONSTRAINT ck_vpn_config_propagation
+                CHECK (propagation_state IN ('pending', 'applied', 'failed', 'degraded'))
+        </sql>
+        <rollback>ALTER TABLE vpn_config DROP CONSTRAINT ck_vpn_config_propagation</rollback>
+    </changeSet>
+
+    <changeSet id="080-vpn-config-active-name-unique" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>Partial UNIQUE: at most one ACTIVE config per (domain, name).</comment>
+        <sql>
+            CREATE UNIQUE INDEX uq_vpn_config_active_name
+                ON vpn_config (domain, name)
+                WHERE state = 'active'
+        </sql>
+        <rollback>DROP INDEX uq_vpn_config_active_name</rollback>
+    </changeSet>
+
+    <changeSet id="080-vpn-config-domain-index" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>Index the per-tenant read predicate on vpn_config.</comment>
+        <sql>CREATE INDEX idx_vpn_config_domain ON vpn_config (domain)</sql>
+        <rollback>DROP INDEX idx_vpn_config_domain</rollback>
+    </changeSet>
+
+    <changeSet id="080-vpn-config-grant" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>GRANT SELECT,INSERT,UPDATE on vpn_config to the admin_bff role
+                 (revoke is a CAS UPDATE, never a DELETE = audit).</comment>
+        <sql>GRANT SELECT, INSERT, UPDATE ON vpn_config TO admin_bff</sql>
+        <rollback>REVOKE SELECT, INSERT, UPDATE ON vpn_config FROM admin_bff</rollback>
+    </changeSet>
+
+    <!-- ════════════════════════ vpn_node_assignment ═════════════════════════════ -->
+
+    <changeSet id="080-vpn-node-assignment" author="hugmesh">
+        <comment>vpn_node_assignment — the explicit (config x NODE|DOMAIN) assignment that
+                 marks which public pods egress via the VPN. DUAL scope (mirrors
+                 device_ssh_license): DEVICE (target_node_id joins
+                 device_registry.machine_key_fp) or DOMAIN (target_domain). Optional
+                 service_slug narrows it to one public service. Revoke is a CAS
+                 active->revoked (never deleted = audit).</comment>
+        <createTable tableName="vpn_node_assignment">
+            <column name="id" type="varchar(36)">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="config_id" type="varchar(36)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="scope_type" type="varchar(16)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- NOT NULL iff scope_type='DEVICE'; the node's machine_key_fp (joins
+                 device_registry.machine_key_fp). The chk_vpn_scope_shape XOR enforces it. -->
+            <column name="target_node_id" type="varchar(128)"/>
+            <!-- NOT NULL iff scope_type='DOMAIN'; the chk_vpn_scope_shape XOR enforces it. -->
+            <column name="target_domain" type="varchar(64)"/>
+            <!-- Optional per-service opt-in (akkoma/tuwunel/coturn). NULL = all public
+                 services in the target egress via the VPN. -->
+            <column name="service_slug" type="varchar(64)"/>
+            <column name="state" type="varchar(16)" defaultValue="active">
+                <constraints nullable="false"/>
+            </column>
+            <column name="assigned_by" type="varchar(400)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="assigned_at" type="timestamp with time zone" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+            <column name="revoked_at" type="timestamp with time zone"/>
+            <column name="revoked_by" type="varchar(400)"/>
+            <!-- home/tenant discriminator for the ADMIN read view (FIX-NODEFAULT — stamped
+                 from the config's residency, never the caller). -->
+            <column name="domain" type="varchar(64)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="propagation_state" type="varchar(16)" defaultValue="pending">
+                <constraints nullable="false"/>
+            </column>
+            <column name="generation" type="bigint" defaultValueNumeric="0">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+    </changeSet>
+
+    <changeSet id="080-vpn-assignment-scope-type-check" author="hugmesh">
+        <comment>CHECK: scope_type is DEVICE or DOMAIN.</comment>
+        <sql>
+            ALTER TABLE vpn_node_assignment
+                ADD CONSTRAINT ck_vpn_assignment_scope_type
+                CHECK (scope_type IN ('DEVICE', 'DOMAIN'))
+        </sql>
+        <rollback>ALTER TABLE vpn_node_assignment DROP CONSTRAINT ck_vpn_assignment_scope_type</rollback>
+    </changeSet>
+
+    <changeSet id="080-vpn-assignment-state-check" author="hugmesh">
+        <comment>CHECK: state is one of the two lifecycle values (active or revoked).</comment>
+        <sql>
+            ALTER TABLE vpn_node_assignment
+                ADD CONSTRAINT ck_vpn_assignment_state
+                CHECK (state IN ('active', 'revoked'))
+        </sql>
+        <rollback>ALTER TABLE vpn_node_assignment DROP CONSTRAINT ck_vpn_assignment_state</rollback>
+    </changeSet>
+
+    <changeSet id="080-vpn-assignment-propagation-check" author="hugmesh">
+        <comment>CHECK: propagation_state is one of the four push-with-ack outcomes.</comment>
+        <sql>
+            ALTER TABLE vpn_node_assignment
+                ADD CONSTRAINT ck_vpn_assignment_propagation
+                CHECK (propagation_state IN ('pending', 'applied', 'failed', 'degraded'))
+        </sql>
+        <rollback>ALTER TABLE vpn_node_assignment DROP CONSTRAINT ck_vpn_assignment_propagation</rollback>
+    </changeSet>
+
+    <changeSet id="080-vpn-assignment-scope-shape-check" author="hugmesh">
+        <comment>CHECK (chk_vpn_scope_shape): the XOR tying the scope shape to its target.</comment>
+        <sql>
+            ALTER TABLE vpn_node_assignment
+                ADD CONSTRAINT chk_vpn_scope_shape
+                CHECK (
+                    (scope_type = 'DEVICE' AND target_node_id IS NOT NULL AND target_domain IS NULL)
+                 OR (scope_type = 'DOMAIN' AND target_domain IS NOT NULL AND target_node_id IS NULL)
+                )
+        </sql>
+        <rollback>ALTER TABLE vpn_node_assignment DROP CONSTRAINT chk_vpn_scope_shape</rollback>
+    </changeSet>
+
+    <changeSet id="080-vpn-assignment-config-fk" author="hugmesh">
+        <comment>FK: an assignment's config_id references a real vpn_config row.</comment>
+        <addForeignKeyConstraint
+                constraintName="fk_vpn_assignment_config"
+                baseTableName="vpn_node_assignment" baseColumnNames="config_id"
+                referencedTableName="vpn_config" referencedColumnNames="id"/>
+        <rollback>
+            <dropForeignKeyConstraint baseTableName="vpn_node_assignment"
+                                      constraintName="fk_vpn_assignment_config"/>
+        </rollback>
+    </changeSet>
+
+    <changeSet id="080-vpn-assignment-active-node-unique" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>Partial UNIQUE: at most one ACTIVE assignment per (target_node_id,
+                 service_slug). COALESCE the nullable service_slug to '*' so the
+                 "all services" assignment is also single-active.</comment>
+        <sql>
+            CREATE UNIQUE INDEX uq_vpn_assignment_active_node
+                ON vpn_node_assignment (target_node_id, COALESCE(service_slug, '*'))
+                WHERE state = 'active' AND scope_type = 'DEVICE'
+        </sql>
+        <rollback>DROP INDEX uq_vpn_assignment_active_node</rollback>
+    </changeSet>
+
+    <changeSet id="080-vpn-assignment-active-domain-unique" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>Partial UNIQUE: at most one ACTIVE assignment per (target_domain,
+                 service_slug).</comment>
+        <sql>
+            CREATE UNIQUE INDEX uq_vpn_assignment_active_domain
+                ON vpn_node_assignment (target_domain, COALESCE(service_slug, '*'))
+                WHERE state = 'active' AND scope_type = 'DOMAIN'
+        </sql>
+        <rollback>DROP INDEX uq_vpn_assignment_active_domain</rollback>
+    </changeSet>
+
+    <changeSet id="080-vpn-assignment-domain-index" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>Index the per-tenant read predicate on vpn_node_assignment.</comment>
+        <sql>CREATE INDEX idx_vpn_assignment_domain ON vpn_node_assignment (domain)</sql>
+        <rollback>DROP INDEX idx_vpn_assignment_domain</rollback>
+    </changeSet>
+
+    <changeSet id="080-vpn-assignment-grant" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>GRANT SELECT,INSERT,UPDATE on vpn_node_assignment to the admin_bff role.</comment>
+        <sql>GRANT SELECT, INSERT, UPDATE ON vpn_node_assignment TO admin_bff</sql>
+        <rollback>REVOKE SELECT, INSERT, UPDATE ON vpn_node_assignment FROM admin_bff</rollback>
+    </changeSet>
+</databaseChangeLog>

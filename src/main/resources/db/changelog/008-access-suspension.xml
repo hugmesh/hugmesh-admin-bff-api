@@ -1,0 +1,177 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+      access_suspension — the DESIRED-STATE table + sole source of truth for the
+      account-states FOUNDATION (matrix / mastodon / profile access suspension).
+
+      Removing a Casdoor role on a ban/suspension leaves NO record in Casdoor, so
+      this table is authoritative: the single-writer reconcile loop computes, per
+      role, desired_active = CasdoorMembers(role) MINUS active-suspensions, and
+      drives the homeserver active/suspended state + the Casdoor membership from it
+      (a Casdoor clobber therefore self-heals on the next tick). Timed suspensions
+      auto-restore when expires_at passes (the SuspensionExpiryAction CAS
+      active->restored), so expires_at is the single clock; expires_at NULL = a
+      permanent ban.
+
+      ── Numbering: 008 ───────────────────────────────────────────────────────
+      Sits ABOVE the current max porting changeset (007) on main. The open
+      announcements PR appends 060-announcement.xml at the SAME include site in
+      db.changelog-master.xml — expect a TRIVIAL include-order conflict there; keep
+      BOTH includes (008 then 060, order does not matter — independent tables).
+
+      ── Portable DDL ─────────────────────────────────────────────────────────
+      id is a varchar(36) holding an app-generated UUID string (NOT a Postgres uuid
+      column with gen_random_uuid()): the same pattern RouteAccessRepository uses,
+      so the INSERT is portable across Postgres and the H2 (PostgreSQL-compat,
+      NON_KEYWORDS) test store WITHOUT a pgcrypto/gen_random_uuid dependency and the
+      app can return the new row id. timestamptz -> the portable Liquibase
+      'timestamp with time zone' generic type so the same DDL applies on H2.
+      Reserved column words (role / state) are covered by the test store's
+      NON_KEYWORDS=ROLE,... pragma and are plain ALTER-friendly identifiers on PG.
+
+      ── Constraints (each its own changeSet, independent redeploy + rollback) ──
+        - role   CHECK IN ('ROLE_MATRIX','ROLE_MASTODON','PROFILE')  [SuspensionRequest
+                 @Pattern parity; PROFILE drives federation_override scope=user later]
+        - state  CHECK IN ('active','restored')                       [the loop CASes
+                 active->restored at expiry; never deletes — the row is the audit]
+        - propagation_state CHECK IN ('pending','applied','failed')   [the homeserver
+                 leg result; the loop reconciles 'pending'/'failed' forward]
+        - uq_access_suspension_active PARTIAL UNIQUE (casdoor_user, role) WHERE
+                 state='active'                                        [at most ONE
+                 active suspension per (user,role); a re-ban while active is a no-op]
+        - idx_access_suspension_expiry (expires_at) WHERE state='active'  [the
+                 expiry scan: expires_at<=now AND state='active']
+      GRANT SELECT,INSERT,UPDATE ON access_suspension TO admin_bff (PG-only; the
+      grant changeSet is guarded onError=MARK_RAN so the H2 test store — which has
+      no admin_bff role — never fails the changelog).
+    -->
+
+    <changeSet id="008-access-suspension" author="hugmesh">
+        <comment>access_suspension desired-state table (sole source of truth for the
+                 single-writer reconcile loop).</comment>
+        <createTable tableName="access_suspension">
+            <column name="id" type="varchar(36)">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="casdoor_user" type="varchar(400)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="localpart" type="varchar(255)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="role" type="varchar(32)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="state" type="varchar(16)" defaultValue="active">
+                <constraints nullable="false"/>
+            </column>
+            <column name="suspended_at" type="timestamp with time zone" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+            <!-- NULL = permanent. -->
+            <column name="expires_at" type="timestamp with time zone"/>
+            <column name="restore_role" type="boolean" defaultValueBoolean="true">
+                <constraints nullable="false"/>
+            </column>
+            <column name="propagation_state" type="varchar(16)" defaultValue="pending">
+                <constraints nullable="false"/>
+            </column>
+            <column name="reason" type="varchar(1024)"/>
+            <column name="set_by" type="varchar(400)">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+    </changeSet>
+
+    <changeSet id="008-access-suspension-role-check" author="hugmesh">
+        <comment>CHECK: role is one of the three suspendable access roles
+                 (SuspensionRequest @Pattern parity).</comment>
+        <sql>
+            ALTER TABLE access_suspension
+                ADD CONSTRAINT ck_access_suspension_role
+                CHECK (role IN ('ROLE_MATRIX', 'ROLE_MASTODON', 'PROFILE'))
+        </sql>
+        <rollback>ALTER TABLE access_suspension DROP CONSTRAINT ck_access_suspension_role</rollback>
+    </changeSet>
+
+    <changeSet id="008-access-suspension-state-check" author="hugmesh">
+        <comment>CHECK: state is one of the two lifecycle values the loop writes.</comment>
+        <sql>
+            ALTER TABLE access_suspension
+                ADD CONSTRAINT ck_access_suspension_state
+                CHECK (state IN ('active', 'restored'))
+        </sql>
+        <rollback>ALTER TABLE access_suspension DROP CONSTRAINT ck_access_suspension_state</rollback>
+    </changeSet>
+
+    <changeSet id="008-access-suspension-propagation-check" author="hugmesh">
+        <comment>CHECK: propagation_state is one of the three homeserver-leg outcomes.</comment>
+        <sql>
+            ALTER TABLE access_suspension
+                ADD CONSTRAINT ck_access_suspension_propagation
+                CHECK (propagation_state IN ('pending', 'applied', 'failed'))
+        </sql>
+        <rollback>ALTER TABLE access_suspension DROP CONSTRAINT ck_access_suspension_propagation</rollback>
+    </changeSet>
+
+    <!--
+      The two indexes below are PARTIAL (… WHERE state='active'). PostgreSQL supports
+      partial indexes; the H2 (PG-compat) slice-test store does NOT, so each is gated
+      with a dbms=postgresql precondition (onFail=MARK_RAN) and applies only on
+      Postgres. On H2 the at-most-one-active-suspension-per-(user,role) invariant is
+      enforced by the service (findActive-before-insert) instead of the DB index — the
+      reconcile loop's idempotent diff means a stray duplicate would self-heal anyway.
+      (This resolves the openDecision flag about the partial-unique-index dialect.)
+    -->
+    <changeSet id="008-access-suspension-active-unique" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>Partial UNIQUE: at most one ACTIVE suspension per (casdoor_user, role).
+                 Restored rows (state='restored') are excluded so the audit trail can
+                 hold many historical suspensions for the same user+role.</comment>
+        <sql>
+            CREATE UNIQUE INDEX uq_access_suspension_active
+                ON access_suspension (casdoor_user, role)
+                WHERE state = 'active'
+        </sql>
+        <rollback>DROP INDEX uq_access_suspension_active</rollback>
+    </changeSet>
+
+    <changeSet id="008-access-suspension-expiry-index" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>Partial index for the expiry scan (expires_at &lt;= now AND
+                 state='active').</comment>
+        <sql>
+            CREATE INDEX idx_access_suspension_expiry
+                ON access_suspension (expires_at)
+                WHERE state = 'active'
+        </sql>
+        <rollback>DROP INDEX idx_access_suspension_expiry</rollback>
+    </changeSet>
+
+    <changeSet id="008-access-suspension-grant" author="hugmesh">
+        <!-- PostgreSQL-only runtime grant. The H2 test store has no admin_bff role,
+             so GRANT would error there; the dbms precondition skips this changeSet
+             entirely off-Postgres (onFail=MARK_RAN records it as run) so the H2
+             changelog continues. On a real Postgres deployment the grant applies. -->
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>GRANT SELECT,INSERT,UPDATE on access_suspension to the admin_bff role
+                 (the loop never DELETEs — restore is a CAS update).</comment>
+        <sql>
+            GRANT SELECT, INSERT, UPDATE ON access_suspension TO admin_bff
+        </sql>
+        <rollback>
+            REVOKE SELECT, INSERT, UPDATE ON access_suspension FROM admin_bff
+        </rollback>
+    </changeSet>
+</databaseChangeLog>

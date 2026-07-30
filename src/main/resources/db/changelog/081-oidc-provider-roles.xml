@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+                        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.27.xsd">
+
+    <!--
+      080 — oidc_provider_default_roles: per-domain default role assignments for
+      OIDC identity providers set up by admin/superadmin. When a new user registers
+      via a configured provider (Google, GitHub, custom OIDC), the roles listed here
+      are automatically assigned to their Casdoor account.
+
+      Columns:
+        domain       — brand/tenant discriminator (mirrors route_access domain column).
+        provider     — Casdoor identity provider name (e.g. 'google', 'github',
+                       'custom-oidc-<slug>'). Case-folded to lowercase on insert.
+        role_name    — Casdoor role to assign (e.g. 'user', 'mod', 'admin').
+        created_at   — audit timestamp.
+
+      Usage: admin selects provider + roles in the admin-UI; admin-bff-api writes a
+      row per role; on new-user registration (Casdoor webhook or first-login probe in
+      hugmesh-actions), the registration path calls
+      GET /bff/admin/oidc-providers/roles and applies the matching rows.
+    -->
+    <changeSet id="080-oidc-provider-default-roles" author="hugmesh">
+        <createTable tableName="oidc_provider_default_roles">
+            <column name="domain" type="VARCHAR(64)" defaultValue="default">
+                <constraints nullable="false"/>
+            </column>
+            <column name="provider" type="VARCHAR(64)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="role_name" type="VARCHAR(64)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="created_at" type="TIMESTAMP WITH TIME ZONE" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+        <addPrimaryKey tableName="oidc_provider_default_roles"
+                       columnNames="domain, provider, role_name"
+                       constraintName="pk_oidc_provider_default_roles"/>
+        <createIndex tableName="oidc_provider_default_roles"
+                     indexName="idx_oidc_provider_default_roles_domain">
+            <column name="domain"/>
+        </createIndex>
+    </changeSet>
+
+</databaseChangeLog>

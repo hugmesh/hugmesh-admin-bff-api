@@ -1,0 +1,27 @@
+# Test-profile overrides for the FULL-context boot (OpenApiSpecDumpTest spec dump +
+# RawApiDenyMatrixTest, which boot the whole AdminBffApplication). The Testcontainers
+# Postgres wiring (real spring.r2dbc.* + spring.liquibase.* + the Liquibase changelog
+# applied over a fresh per-class Postgres database) is supplied dynamically by the
+# AdminBffPostgresTestSupport / commons PostgresTestSupport base — so this profile
+# carries ONLY the one knob the aggregate context needs, and DELIBERATELY sets no
+# spring.autoconfigure.exclude list (a profile-specific list REPLACES the base one; the
+# base application.yml already excludes the Cassandra auto-config the app never dials in
+# test, and we must NOT exclude the R2DBC/Liquibase auto-config any more — that is now
+# the REAL Postgres path the converted full-context tests run on).
+# The broker service password is now MANDATORY with no baked default in application.yml
+# (a missing SVC_PASSWORD fails prod startup rather than falling back to the known
+# "hugmesh-svc-pw" credential). The full-context boots that instantiate
+# ServiceTokenBroker resolve broker.svc-password from here; this is a throwaway test
+# literal that never leaves the test JVM (no real Synapse/Mastodon is dialed in test).
+broker:
+  svc-password: "test-svc-pw"
+
+spring:
+  main:
+    # The full-context boot registers each Spring Data R2DBC repository factory bean via
+    # the auto-config repository registrar; in this aggregate context the identical
+    # definition (e.g. accessSuspensionRowRepository) is contributed twice, which Boot's
+    # default (overriding disabled) rejects with a BeanDefinitionOverrideException. The two
+    # definitions are byte-identical R2dbcRepositoryFactoryBean roots, so permitting
+    # override is inert. Test profile ONLY — production keeps Boot's strict default.
+    allow-bean-definition-overriding: true

@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+        240 — mastodon_appearance_default: the ADMIN-CONFIGURED, per-domain PLATFORM-WIDE
+        default appearance/preferences fallback for the hugmesh-mastodon-ui remote's
+        PreferencesService (theme/accent/layout/density/media-corners/font/text-size/
+        high-contrast/reduced-motion). A non-customised user inherits this default (ahead
+        of the client's built-in default) via GET /bff/mastodon/appearance-default; an
+        ADMIN sets it via PUT /bff/admin/mastodon/appearance-default.
+
+        One durable key/value row per (domain, pref_key) — same idiom as
+        hugmesh-user-bff-api's 011-user-preferences-store (a key per
+        AppearancePreferences TS-union field, dotted alnum token; the value validated
+        against that field's known values at the SERVICE layer, mirroring the paired
+        per-USER mastodon.appearance.* keys in user-bff-api). domain-FIRST because this is
+        an org-wide default per brand, never a per-user row: an ADMIN in brand X can never
+        see or set brand Y's default (SUPERADMIN unscoped via the coarse /bff/admin/**
+        gate + PrincipalDomain).
+
+        Columns:
+          • domain      — the brand/tenant (DOMAIN_<x>), DEFAULT 'default', NOT NULL.
+          • pref_key    — the appearance field key (e.g. 'theme'). Bounded dotted/alnum
+                          token (API-validated).
+          • pref_value  — the field's value (portable text; an enum value or 'true'/
+                          'false' for the two boolean fields).
+          • updated_by  — the acting admin's JWT subject (audit; never exposed as an
+                          authorization input).
+          • updated_at  — last upsert time.
+
+        DEFAULT 'default' + NOT NULL + plain ANSI DDL runs identically on production
+        Postgres AND the H2 PostgreSQL-compat slice DB. Band 240: the NEXT FREE band above
+        the 230 include. Appended LAST.
+    -->
+
+    <changeSet id="240-1-mastodon-appearance-default" author="hugmesh">
+        <createTable tableName="mastodon_appearance_default">
+            <column name="domain" type="varchar(64)" defaultValue="default">
+                <constraints nullable="false"/>
+            </column>
+            <column name="pref_key" type="varchar(128)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="pref_value" type="varchar(255)"/>
+            <column name="updated_by" type="varchar(255)"/>
+            <column name="updated_at" type="timestamp" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+        <!-- one durable row per brand per appearance field: the upsert is a real PK
+             upsert (UPDATE-first, INSERT-if-absent), never a race-prone find-then-insert. -->
+        <addPrimaryKey tableName="mastodon_appearance_default"
+                       columnNames="domain, pref_key"
+                       constraintName="pk_mastodon_appearance_default"/>
+    </changeSet>
+
+</databaseChangeLog>

@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!-- allowlist: the admin-managed Gmail/Discord invite gate. Durable +
+         shared across replicas (was an in-memory ConcurrentHashMap.newKeySet()).
+         One row per invited identity; (provider, handle) is the natural key.
+         provider = 'google' | 'discord'; handle stored lowercased. -->
+    <changeSet id="003-allowlist" author="hugmesh">
+        <createTable tableName="allowlist">
+            <column name="provider" type="varchar(32)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="handle" type="varchar(320)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="created_at" type="timestamp" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+        <addPrimaryKey tableName="allowlist" columnNames="provider, handle"
+                       constraintName="pk_allowlist"/>
+    </changeSet>
+</databaseChangeLog>

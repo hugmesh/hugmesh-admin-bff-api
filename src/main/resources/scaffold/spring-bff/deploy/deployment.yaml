@@ -1,0 +1,45 @@
+# {{APP_SLUG}}-bff — minimal fleet-convention Deployment for the spring-bff
+# skeleton. ClusterIP-reachable inside the backend namespace only; the fe-gateway
+# routes /api/{{APP_SLUG}}/** here AND enforces the route-access role rules first.
+# Defence in depth: this BFF independently re-validates the Casdoor JWT (OAuth2
+# resource server, CASDOOR_ISSUER_URI) — see SecurityConfig.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{APP_SLUG}}-bff
+  namespace: hugmesh-backend
+  labels: { app: {{APP_SLUG}}-bff, app.kubernetes.io/part-of: {{CLUSTER_DOMAIN}} }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: {{APP_SLUG}}-bff } }
+  template:
+    metadata: { labels: { app: {{APP_SLUG}}-bff } }
+    spec:
+      nodeSelector: { hugmesh.systems/backend: "true" }
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: {{APP_SLUG}}-bff
+          # Rewritten by deploy/kustomization.yaml images: to the in-cluster
+          # registry (registry.{{CLUSTER_DOMAIN}}).
+          image: hugmesh-systems/{{APP_SLUG}}-bff:main
+          ports:
+            - { containerPort: 8080, name: http }
+          env:
+            - name: CASDOOR_ISSUER_URI
+              value: "https://id.{{CLUSTER_DOMAIN}}"
+            - name: CASDOOR_JWKS_URI
+              value: "http://casdoor.hugmesh-backend.svc.cluster.local:8000/.well-known/jwks"
+          readinessProbe:
+            httpGet: { path: /actuator/health/readiness, port: http }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /actuator/health/liveness, port: http }
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          resources:
+            requests: { cpu: 100m, memory: 384Mi }
+            limits: { memory: 768Mi }

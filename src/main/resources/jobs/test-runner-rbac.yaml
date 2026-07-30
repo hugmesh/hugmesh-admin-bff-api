@@ -1,0 +1,63 @@
+# RBAC the operator must apply ONCE so the admin BFF can launch test-runner Jobs and
+# the runner can write reports + reach the in-cluster services. Apply with:
+#   kubectl apply -f test-runner-rbac.yaml
+#
+# Least privilege: the BFF (admin-bff ServiceAccount) can create/observe/delete ONLY
+# the test-runner Jobs in hugmesh-backend; the runner itself needs no cluster API
+# access (it drives the services over HTTP), only the report PVC + its ingest token.
+# This is the mirror of jobs/rbac.yaml (the backup-worker grant), scoped to the
+# test-runner component.
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: test-runner
+  namespace: hugmesh-backend
+---
+# The BFF's namespaced access to manage the test-runner Jobs. The BFF runs as the
+# admin-bff ServiceAccount; bind this Role to THAT SA.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: hugmesh-test-runner-launcher
+  namespace: hugmesh-backend
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "get", "list", "watch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs: ["get", "list", "watch"]   # tail runner progress (belt-and-braces; the
+                                       # primary event path is the runner's HTTP ingest)
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: hugmesh-test-runner-launcher
+  namespace: hugmesh-backend
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: hugmesh-test-runner-launcher
+subjects:
+  - kind: ServiceAccount
+    name: admin-bff          # the BFF's ServiceAccount — adjust to your deployment
+    namespace: hugmesh-backend
+---
+# The shared report PVC the runner writes the artifact bundle to and the BFF reads
+# for download. RWX so both the BFF pod and the short-lived runner Jobs mount it.
+# (hugmesh-local default StorageClass; size per retention appetite.)
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: hugmesh-test-reports
+  namespace: hugmesh-backend
+  labels:
+    app.kubernetes.io/part-of: hugmesh
+    app.kubernetes.io/component: test-reports
+spec:
+  accessModes: ["ReadWriteMany"]
+  storageClassName: hugmesh-local
+  resources:
+    requests:
+      storage: 5Gi

@@ -1,0 +1,371 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+      workload-console-grants — the WORKLOAD CONSOLE (podman/OpenShift-equivalent
+      pod-management + live-log + interactive-terminal) access-control source of truth.
+      THREE tables; ALL SHIP DARK (no grants exist, the GLOBAL config row is OFF):
+
+        workload_console_grant  — the LEASE rows a SUPERADMIN issues so a brand ADMIN may
+                                   read-only-view their OWN-domain app-tier workloads.
+                                   CLONES device_ssh_license (011) verbatim: app-generated
+                                   varchar(36) UUID PK, CAS active->revoked (never deleted =
+                                   audit), monotonic generation, propagation_state, domain
+                                   stamped from the validated issuer. NEW vs 011:
+                                     - access_level CHECK-constrained to READ_ONLY only
+                                       (an admin grant can NEVER be more than read-only);
+                                     - log_access boolean default FALSE (log BODIES are
+                                       UN-bundled from the status/topology/metrics read —
+                                       a separate opt-in, DECISION 4);
+                                     - expires_at NOT NULL (every grant is a TTL LEASE,
+                                       ~24h; a scheduled expiry sweep returns the admin to
+                                       dark automatically, DECISION 4/6).
+        workload_console_config — the master kill-switch table. One row per domain plus a
+                                   GLOBAL ' global' sentinel row (a leading space, like
+                                   PrincipalDomain.NO_DOMAIN, so it can never collide with a
+                                   real issuer-derived domain). admin_enabled default FALSE
+                                   (ships dark) and dangerous_tier_enabled default FALSE
+                                   (DECISION 5 — the GLOBAL kill of exec / log-stream /
+                                   mutations that applies EVEN to a SUPERADMIN, evaluated
+                                   BEFORE the superadmin short-circuit in the WebFilter).
+        workload_console_intent — the GitOps-PR OUTBOX. The lifecycle verbs that are
+                                   GitOps-authoritative (scale/deploy/service-removal/
+                                   export-manifest) are NOT live k8s mutations; they are
+                                   recorded here as a desired-state intent row (kind +
+                                   target + digest-pinned image + propagation_state) and
+                                   SHIP DARK exactly like service_deployment (102): the
+                                   ArgoCD-PR effect is STUBBED/LOGGED. The UI surfaces the
+                                   pending intent ("pending sync"). NEVER an "apply YAML"
+                                   path — ArgoCD-sync-of-Git is the only apply.
+
+      ── Portable DDL (mirrors 011-device-license-registry.xml EXACTLY) ───────────────
+      id is an app-generated varchar(36) UUID string; timestamptz -> the portable generic
+      'timestamp with time zone' with defaultValueComputed="now()". One changeSet per
+      CHECK / partial-unique / index / GRANT. PG-gated partial-uniques + GRANT via a
+      dbms=postgresql precondition (onFail/onError=MARK_RAN) — H2 enforces the
+      at-most-one-active invariant via the service findActive-before-insert guard.
+
+      ── Numbering: 110-band ──────────────────────────────────────────────────────────
+      The consolidation branch carries changesets through 102 (service-deployment); the
+      110 band is FREE and APPENDED LAST at the include site in db.changelog-master.xml.
+    -->
+
+    <!-- ════════════════════════ workload_console_grant ═══════════════════════════ -->
+
+    <changeSet id="110-workload-console-grant" author="hugmesh">
+        <comment>workload_console_grant — the READ_ONLY-only, TTL-leased, log-opt-in grant
+                 a SUPERADMIN issues so a brand ADMIN may read-only-view their own-domain
+                 app-tier workloads. Clone of device_ssh_license (011): CAS active->revoked,
+                 monotonic generation, propagation_state, domain from validated issuer.</comment>
+        <createTable tableName="workload_console_grant">
+            <column name="id" type="varchar(36)">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <!-- The admin principal (Casdoor subject) the grant is FOR. -->
+            <column name="grantee" type="varchar(400)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- The brand/domain the grant scopes the admin to. CHECK domain=target_domain
+                 (the grant is honoured ONLY for the grantee's own issuer-derived domain). -->
+            <column name="target_domain" type="varchar(64)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- DECISION 4: an admin grant can NEVER be more than READ_ONLY (CHECK). -->
+            <column name="access_level" type="varchar(16)" defaultValue="READ_ONLY">
+                <constraints nullable="false"/>
+            </column>
+            <!-- DECISION 4: log BODIES are a SEPARATE opt-in, default FALSE (status/
+                 topology/metrics read does NOT include logs). -->
+            <column name="log_access" type="boolean" defaultValueBoolean="false">
+                <constraints nullable="false"/>
+            </column>
+            <column name="state" type="varchar(16)" defaultValue="active">
+                <constraints nullable="false"/>
+            </column>
+            <column name="granted_by" type="varchar(400)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="granted_at" type="timestamp with time zone" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+            <!-- DECISION 4/6: every grant is a TTL LEASE (~24h). NOT NULL — a scheduled
+                 expiry sweep CASes active->expired at expires_at, returning the admin to
+                 dark automatically. -->
+            <column name="expires_at" type="timestamp with time zone">
+                <constraints nullable="false"/>
+            </column>
+            <column name="revoked_at" type="timestamp with time zone"/>
+            <column name="revoked_by" type="varchar(400)"/>
+            <!-- home/tenant discriminator for the read view (defaults 'default' like the
+                 010 tenant discriminator). CHECK domain=target_domain below. -->
+            <column name="domain" type="varchar(64)" defaultValue="default">
+                <constraints nullable="false"/>
+            </column>
+            <column name="propagation_state" type="varchar(16)" defaultValue="pending">
+                <constraints nullable="false"/>
+            </column>
+            <!-- monotonic generation bumped on every mutate; every stream re-reads it to
+                 tear down on a revoke/expiry (multi-replica invalidation). -->
+            <column name="generation" type="bigint" defaultValueNumeric="0">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+    </changeSet>
+
+    <changeSet id="110-workload-console-grant-access-level-check" author="hugmesh">
+        <comment>CHECK: an admin grant is READ_ONLY and ONLY READ_ONLY (DECISION 4) — there
+                 is no admin grant that can mutate / stream / exec. The schema itself forbids
+                 widening an admin grant.</comment>
+        <sql>
+            ALTER TABLE workload_console_grant
+                ADD CONSTRAINT ck_workload_console_grant_access_level
+                CHECK (access_level IN ('READ_ONLY'))
+        </sql>
+        <rollback>ALTER TABLE workload_console_grant DROP CONSTRAINT ck_workload_console_grant_access_level</rollback>
+    </changeSet>
+
+    <changeSet id="110-workload-console-grant-state-check" author="hugmesh">
+        <comment>CHECK: state is active (grants view) | revoked (CAS by superadmin) | expired
+                 (CAS by the expiry sweep). Never deleted = audit trail.</comment>
+        <sql>
+            ALTER TABLE workload_console_grant
+                ADD CONSTRAINT ck_workload_console_grant_state
+                CHECK (state IN ('active', 'revoked', 'expired'))
+        </sql>
+        <rollback>ALTER TABLE workload_console_grant DROP CONSTRAINT ck_workload_console_grant_state</rollback>
+    </changeSet>
+
+    <changeSet id="110-workload-console-grant-propagation-check" author="hugmesh">
+        <comment>CHECK: propagation_state is one of the four invalidation-propagation
+                 outcomes (the multi-replica predicate-cache invalidation ACK).</comment>
+        <sql>
+            ALTER TABLE workload_console_grant
+                ADD CONSTRAINT ck_workload_console_grant_propagation
+                CHECK (propagation_state IN ('pending', 'applied', 'failed', 'degraded'))
+        </sql>
+        <rollback>ALTER TABLE workload_console_grant DROP CONSTRAINT ck_workload_console_grant_propagation</rollback>
+    </changeSet>
+
+    <changeSet id="110-workload-console-grant-domain-shape-check" author="hugmesh">
+        <comment>CHECK: the grant is honoured ONLY for the grantee's own issuer-derived
+                 domain (domain = target_domain). A grant can never span domains.</comment>
+        <sql>
+            ALTER TABLE workload_console_grant
+                ADD CONSTRAINT ck_workload_console_grant_domain_shape
+                CHECK (domain = target_domain)
+        </sql>
+        <rollback>ALTER TABLE workload_console_grant DROP CONSTRAINT ck_workload_console_grant_domain_shape</rollback>
+    </changeSet>
+
+    <changeSet id="110-workload-console-grant-active-unique" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>Partial UNIQUE: at most one ACTIVE grant per (grantee, target_domain).
+                 Revoked/expired rows are excluded so the audit trail can hold many
+                 historical grant cycles. On H2 enforced by the service
+                 findActive-before-insert guard.</comment>
+        <sql>
+            CREATE UNIQUE INDEX uq_workload_console_grant_active
+                ON workload_console_grant (grantee, target_domain)
+                WHERE state = 'active'
+        </sql>
+        <rollback>DROP INDEX uq_workload_console_grant_active</rollback>
+    </changeSet>
+
+    <changeSet id="110-workload-console-grant-domain-index" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>Index the per-tenant read predicate on workload_console_grant.</comment>
+        <sql>CREATE INDEX idx_workload_console_grant_domain ON workload_console_grant (domain)</sql>
+        <rollback>DROP INDEX idx_workload_console_grant_domain</rollback>
+    </changeSet>
+
+    <changeSet id="110-workload-console-grant-expiry-index" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>Index the expiry-sweep working set (state, expires_at).</comment>
+        <sql>CREATE INDEX idx_workload_console_grant_expiry ON workload_console_grant (state, expires_at)</sql>
+        <rollback>DROP INDEX idx_workload_console_grant_expiry</rollback>
+    </changeSet>
+
+    <changeSet id="110-workload-console-grant-grant" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>GRANT SELECT,INSERT,UPDATE on workload_console_grant to admin_bff (revoke
+                 is a CAS UPDATE — never DELETEd = the audit trail).</comment>
+        <sql>GRANT SELECT, INSERT, UPDATE ON workload_console_grant TO admin_bff</sql>
+        <rollback>REVOKE SELECT, INSERT, UPDATE ON workload_console_grant FROM admin_bff</rollback>
+    </changeSet>
+
+    <!-- ════════════════════════ workload_console_config ══════════════════════════ -->
+
+    <changeSet id="110-workload-console-config" author="hugmesh">
+        <comment>workload_console_config — the master kill-switch table. One row per domain
+                 plus a GLOBAL ' global' sentinel row. admin_enabled ships dark (false);
+                 dangerous_tier_enabled ships dark (false) and is the GLOBAL kill of
+                 exec/log-stream/mutations that applies EVEN to a SUPERADMIN.</comment>
+        <createTable tableName="workload_console_config">
+            <column name="id" type="varchar(36)">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <!-- ' global' (leading space) = the cluster-wide kill row; otherwise a real
+                 issuer-derived domain for a per-domain master toggle. UNIQUE. -->
+            <column name="domain" type="varchar(64)">
+                <constraints nullable="false" unique="true"
+                             uniqueConstraintName="uq_workload_console_config_domain"/>
+            </column>
+            <!-- ships DARK: even a granted admin sees nothing until a superadmin flips this. -->
+            <column name="admin_enabled" type="boolean" defaultValueBoolean="false">
+                <constraints nullable="false"/>
+            </column>
+            <!-- DECISION 5: ships DARK. The GLOBAL row's dangerous_tier_enabled is the kill
+                 of exec / log-stream / runtime-mutations that applies EVEN to a SUPERADMIN,
+                 evaluated BEFORE the superadmin short-circuit. -->
+            <column name="dangerous_tier_enabled" type="boolean" defaultValueBoolean="false">
+                <constraints nullable="false"/>
+            </column>
+            <column name="updated_by" type="varchar(400)"/>
+            <column name="updated_at" type="timestamp with time zone" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+            <column name="generation" type="bigint" defaultValueNumeric="0">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+    </changeSet>
+
+    <changeSet id="110-workload-console-config-seed-global" author="hugmesh">
+        <comment>Seed the GLOBAL ' global' sentinel row OFF (admin_enabled=false,
+                 dangerous_tier_enabled=false). The whole feature ships dark regardless of
+                 the generator gate. The leading space matches PrincipalDomain.NO_DOMAIN so it
+                 cannot collide with a real issuer-derived domain.</comment>
+        <insert tableName="workload_console_config">
+            <column name="id" value="00000000-0000-0000-0000-0000000000g0"/>
+            <column name="domain" value=" global"/>
+            <column name="admin_enabled" valueBoolean="false"/>
+            <column name="dangerous_tier_enabled" valueBoolean="false"/>
+            <column name="generation" valueNumeric="0"/>
+        </insert>
+        <rollback>
+            <delete tableName="workload_console_config">
+                <where>domain = ' global'</where>
+            </delete>
+        </rollback>
+    </changeSet>
+
+    <changeSet id="110-workload-console-config-grant" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>GRANT SELECT,INSERT,UPDATE on workload_console_config to admin_bff.</comment>
+        <sql>GRANT SELECT, INSERT, UPDATE ON workload_console_config TO admin_bff</sql>
+        <rollback>REVOKE SELECT, INSERT, UPDATE ON workload_console_config FROM admin_bff</rollback>
+    </changeSet>
+
+    <!-- ════════════════════════ workload_console_intent ══════════════════════════ -->
+
+    <changeSet id="110-workload-console-intent" author="hugmesh">
+        <comment>workload_console_intent — the GitOps-PR OUTBOX for the GitOps-authoritative
+                 lifecycle verbs (scale/deploy/service-removal/export-manifest). Records a
+                 desired-state intent (kind + target + digest-pinned image), propagation_state
+                 self-heal. SHIPS DARK like service_deployment (102): the ArgoCD-PR effect is
+                 STUBBED/LOGGED. The UI surfaces the pending intent.</comment>
+        <createTable tableName="workload_console_intent">
+            <column name="id" type="varchar(36)">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <!-- SCALE | DEPLOY | REMOVE_SERVICE | EXPORT_MANIFEST -->
+            <column name="kind" type="varchar(24)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="namespace" type="varchar(253)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="workload" type="varchar(253)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- DEPLOY only: digest-pinned own-registry image ref (CHECK contains '@sha256:'
+                 — DECISION/PROVENANCE: own-registry digest-only, tags rejected). -->
+            <column name="image_ref" type="varchar(512)"/>
+            <!-- SCALE only: target replica count. -->
+            <column name="replicas" type="int"/>
+            <column name="requested_by" type="varchar(400)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="requested_at" type="timestamp with time zone" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+            <column name="domain" type="varchar(64)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="propagation_state" type="varchar(16)" defaultValue="pending">
+                <constraints nullable="false"/>
+            </column>
+            <column name="generation" type="bigint" defaultValueNumeric="0">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+    </changeSet>
+
+    <changeSet id="110-workload-console-intent-kind-check" author="hugmesh">
+        <comment>CHECK: kind is one of the four GitOps-authoritative verbs.</comment>
+        <sql>
+            ALTER TABLE workload_console_intent
+                ADD CONSTRAINT ck_workload_console_intent_kind
+                CHECK (kind IN ('SCALE', 'DEPLOY', 'REMOVE_SERVICE', 'EXPORT_MANIFEST'))
+        </sql>
+        <rollback>ALTER TABLE workload_console_intent DROP CONSTRAINT ck_workload_console_intent_kind</rollback>
+    </changeSet>
+
+    <changeSet id="110-workload-console-intent-propagation-check" author="hugmesh">
+        <comment>CHECK: propagation_state is one of the four self-heal outcomes.</comment>
+        <sql>
+            ALTER TABLE workload_console_intent
+                ADD CONSTRAINT ck_workload_console_intent_propagation
+                CHECK (propagation_state IN ('pending', 'applied', 'failed', 'degraded'))
+        </sql>
+        <rollback>ALTER TABLE workload_console_intent DROP CONSTRAINT ck_workload_console_intent_propagation</rollback>
+    </changeSet>
+
+    <changeSet id="110-workload-console-intent-digest-check" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>CHECK (PG only): a DEPLOY intent's image_ref MUST be digest-pinned
+                 (contains '@sha256:') — own-registry digest-only provenance. The service
+                 validator enforces this on every store (H2 + PG); the DB CHECK is
+                 defence-in-depth on PG.</comment>
+        <sql>
+            ALTER TABLE workload_console_intent
+                ADD CONSTRAINT ck_workload_console_intent_digest
+                CHECK (kind &lt;&gt; 'DEPLOY' OR image_ref LIKE '%@sha256:%')
+        </sql>
+        <rollback>ALTER TABLE workload_console_intent DROP CONSTRAINT ck_workload_console_intent_digest</rollback>
+    </changeSet>
+
+    <changeSet id="110-workload-console-intent-domain-index" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>Index the per-tenant read predicate on workload_console_intent.</comment>
+        <sql>CREATE INDEX idx_workload_console_intent_domain ON workload_console_intent (domain)</sql>
+        <rollback>DROP INDEX idx_workload_console_intent_domain</rollback>
+    </changeSet>
+
+    <changeSet id="110-workload-console-intent-grant" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>GRANT SELECT,INSERT,UPDATE on workload_console_intent to admin_bff.</comment>
+        <sql>GRANT SELECT, INSERT, UPDATE ON workload_console_intent TO admin_bff</sql>
+        <rollback>REVOKE SELECT, INSERT, UPDATE ON workload_console_intent FROM admin_bff</rollback>
+    </changeSet>
+</databaseChangeLog>

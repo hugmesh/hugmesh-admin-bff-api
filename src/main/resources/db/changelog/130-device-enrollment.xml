@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+      device_enrollment — the LIVENESS-RECONCILIATION channel for the machine_key_fp
+      AUTO-CAPTURE flow (headscale-anchored hybrid). NOT an authority. A node POSTs a
+      one-shot self-report (mTLS, NO JWT) at first boot after `tailscale up`, recording
+      the fingerprint IT believes it baked + its hostname/meshId, so a superadmin can
+      cross-check "the node reports fp X; headscale reports fp Y; they agree" when picking
+      from the pending list. The TRUST GATE is headscale (it MINTS the keys); a node
+      self-claim is trivially spoofable from userspace, so this table carries NO
+      AUTHORIZING COLUMNS — no owner, no domain, no license, no role. It is reconciliation
+      telemetry only. Authorization is governed exclusively by device_registry (011) +
+      device_ssh_license (011), assigned by a SUPERADMIN.
+
+      ── Numbering: band 130+ ────────────────────────────────────────────────────────
+      Deliberately in the 130 band to avoid colliding with the device-license-registry
+      011, the domain-registry 012, and the 100/101/102 + 110/120 service/console bands.
+      Appended LAST at the include site in db.changelog-master.xml.
+
+      ── Portable DDL (mirrors 011 EXACTLY) ──────────────────────────────────────────
+      app-generated varchar(36) UUID id; timestamptz via the generic
+      'timestamp with time zone' + defaultValueComputed="now()"; one changeSet per
+      constraint/index/GRANT; PG-gated GRANT via a dbms=postgresql precondition
+      (onFail/onError=MARK_RAN). UNIQUE on machine_key_fp so a re-report UPSERTs (the
+      service does findByFp-then-update|insert, like 011's H2 findActive-before-insert).
+    -->
+
+    <!-- ════════════════════════ device_enrollment ════════════════════════════════ -->
+    <changeSet id="130-device-enrollment-table" author="hugmesh">
+        <comment>Liveness-reconciliation self-reports from nodes (NO authorizing columns).</comment>
+        <createTable tableName="device_enrollment">
+            <column name="id" type="varchar(36)">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <!-- The fingerprint the NODE believes it baked (self-claimed; cross-checked
+                 against headscale by a superadmin, NEVER trusted as authorization). UNIQUE
+                 so a periodic re-report UPSERTs one liveness row per node. -->
+            <column name="machine_key_fp" type="varchar(128)">
+                <constraints nullable="false" unique="true"
+                             uniqueConstraintName="uq_device_enrollment_machine_key_fp"/>
+            </column>
+            <!-- Self-reported hostname (display/reconciliation hint only). -->
+            <column name="hostname" type="varchar(253)"/>
+            <!-- Self-reported mesh id (reconciliation hint only). -->
+            <column name="mesh_id" type="varchar(64)"/>
+            <!-- Self-reported tailnet id (reconciliation hint only). -->
+            <column name="tailnet_id" type="varchar(128)"/>
+            <column name="first_reported_at" type="timestamp with time zone" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+            <column name="last_reported_at" type="timestamp with time zone" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+            <!-- How many times this fp self-reported (DoS-visibility — the mTLS principal
+                 breadth is a known residual; a runaway counter is an investigable signal). -->
+            <column name="report_count" type="bigint" defaultValueNumeric="1">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+    </changeSet>
+
+    <changeSet id="130-device-enrollment-grant" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>App role privileges (PG only; H2 test store needs no GRANT).</comment>
+        <sql>GRANT SELECT, INSERT, UPDATE ON device_enrollment TO admin_bff</sql>
+    </changeSet>
+
+</databaseChangeLog>

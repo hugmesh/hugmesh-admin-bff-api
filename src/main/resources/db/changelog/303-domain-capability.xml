@@ -1,0 +1,144 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+      domain_capability — the PER-DOMAIN CAPABILITY GATE control plane. First consumer:
+      `user-mesh-devices` (a user may register a mesh radio under their own name only if
+      BOTH keys are on), but the table is generic (one row per (domain, capability) pair)
+      so a future capability reuses it rather than growing a bespoke kill-switch table.
+      CLONES the workload_console_config (110) master-kill-switch idioms verbatim:
+
+        domain_capability — TWO independent boolean keys per (domain, capability) row:
+          granted — the SUPERADMIN key: has this domain been granted the capability at
+                    all. On a normal domain row this is the per-domain grant. On the
+                    GLOBAL ' global' sentinel row (same leading-space idiom as
+                    WorkloadConsoleConfig#GLOBAL_DOMAIN / PrincipalDomain.NO_DOMAIN, so it
+                    can never collide with a real issuer-derived domain) this SAME column
+                    IS the platform-wide kill switch — reusing one column for both
+                    purposes exactly mirrors how workload_console_config's GLOBAL row
+                    reuses dangerous_tier_enabled as the cluster-wide kill.
+          enabled — the domain ADMIN key: has THIS domain's admin opted in. Meaningless
+                    on the GLOBAL row (nothing reads it there); superadmin may still set
+                    it for bookkeeping symmetry.
+        Both default FALSE (SHIPS DARK): a fresh domain row, and the seeded GLOBAL row,
+        start fully off. The active predicate (DomainCapabilityService#isActive) is:
+        GLOBAL(capability).granted AND perDomain(domain, capability).granted AND
+        perDomain(domain, capability).enabled — absent row or any error is FALSE
+        (fail-closed).
+
+      ── Portable DDL (mirrors 110-workload-console-grants.xml / 300-node-radio-device) ──
+      id is a varchar(36) UUID string with the org-wide DB-generated DEFAULT
+      ((gen_random_uuid())::text, the changelog-200 idiom): the INSERT omits id and reads
+      it back via RETURNING id. timestamptz -> the portable generic 'timestamp with time
+      zone' type, defaultValueComputed="now()". One changeSet per constraint / index /
+      GRANT (independent redeploy + rollback). PG-gated index + GRANT via a
+      dbms=postgresql precondition (onFail/onError=MARK_RAN); UNIQUE(domain, capability)
+      is portable (H2 + PG both support addUniqueConstraint) since it is the primary
+      idempotency guard the upsert relies on.
+
+      ── Numbering: 303 ──────────────────────────────────────────────────────────────
+      Current max on this branch (post node-radio-attachments + phone-ingest merges) is
+      302 (phone_device). 303 is the NEXT FREE band. Appended LAST at the include site in
+      db.changelog-master.xml, after the 302 include. Independent of every other
+      changeSet (a net-new table).
+    -->
+
+    <!-- ════════════════════════ domain_capability ═══════════════════════════════ -->
+
+    <changeSet id="303-domain-capability" author="hugmesh">
+        <comment>domain_capability — the per-(domain, capability) two-key gate row:
+                 granted (SUPERADMIN key; on the ' global' sentinel row it IS the
+                 platform-wide kill) + enabled (domain ADMIN key). Both ship DARK
+                 (default false).</comment>
+        <createTable tableName="domain_capability">
+            <column name="id" type="varchar(36)" defaultValueComputed="(gen_random_uuid())::text">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <!-- A real issuer-derived brand, or the ' global' (leading space) sentinel —
+                 the platform-wide kill row. varchar(255) (wider than the usual
+                 varchar(64) brand column) per this table's own spec; a capability gate
+                 is intentionally NOT bound to the narrower brand-name convention. -->
+            <column name="domain" type="varchar(255)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- The capability key, e.g. 'user-mesh-devices'. No CHECK vocabulary —
+                 deliberately generic so a future capability reuses this table without a
+                 migration. -->
+            <column name="capability" type="varchar(64)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- SUPERADMIN key: has this domain been granted the capability (or, on the
+                 GLOBAL row, the platform-wide kill). Ships DARK. -->
+            <column name="granted" type="boolean" defaultValueBoolean="false">
+                <constraints nullable="false"/>
+            </column>
+            <!-- Domain ADMIN key: has this domain's admin opted in. Ships DARK. -->
+            <column name="enabled" type="boolean" defaultValueBoolean="false">
+                <constraints nullable="false"/>
+            </column>
+            <column name="updated_by" type="varchar(400)"/>
+            <column name="updated_at" type="timestamp with time zone" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+            <column name="generation" type="bigint" defaultValueNumeric="0">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+    </changeSet>
+
+    <changeSet id="303-domain-capability-domain-capability-unique" author="hugmesh">
+        <comment>UNIQUE(domain, capability) — at most one gate row per (domain, capability)
+                 pair; the idempotency guard the find-then-upsert facade relies on.
+                 Portable (H2 + PG).</comment>
+        <addUniqueConstraint tableName="domain_capability" columnNames="domain, capability"
+                              constraintName="uq_domain_capability_domain_capability"/>
+        <rollback>
+            <dropUniqueConstraint tableName="domain_capability"
+                                   constraintName="uq_domain_capability_domain_capability"/>
+        </rollback>
+    </changeSet>
+
+    <changeSet id="303-domain-capability-seed-global" author="hugmesh">
+        <comment>Seed the GLOBAL ' global' sentinel row OFF (granted=false) for
+                 'user-mesh-devices' — the platform-wide kill starts closed regardless of
+                 any per-domain grant/enable state. The leading space matches
+                 WorkloadConsoleConfig#GLOBAL_DOMAIN / PrincipalDomain.NO_DOMAIN so it can
+                 never collide with a real issuer-derived domain.</comment>
+        <insert tableName="domain_capability">
+            <column name="id" value="00000000-0000-0000-0000-0000000000c0"/>
+            <column name="domain" value=" global"/>
+            <column name="capability" value="user-mesh-devices"/>
+            <column name="granted" valueBoolean="false"/>
+            <column name="enabled" valueBoolean="false"/>
+            <column name="generation" valueNumeric="0"/>
+        </insert>
+        <rollback>
+            <delete tableName="domain_capability">
+                <where>domain = ' global' AND capability = 'user-mesh-devices'</where>
+            </delete>
+        </rollback>
+    </changeSet>
+
+    <changeSet id="303-domain-capability-domain-index" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>Index the per-domain read predicate on domain_capability.</comment>
+        <sql>CREATE INDEX idx_domain_capability_domain ON domain_capability (domain)</sql>
+        <rollback>DROP INDEX idx_domain_capability_domain</rollback>
+    </changeSet>
+
+    <changeSet id="303-domain-capability-grant" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>GRANT SELECT,INSERT,UPDATE on domain_capability to admin_bff (a row is
+                 never DELETEd — upsert only, exactly like workload_console_config).</comment>
+        <sql>GRANT SELECT, INSERT, UPDATE ON domain_capability TO admin_bff</sql>
+        <rollback>REVOKE SELECT, INSERT, UPDATE ON domain_capability FROM admin_bff</rollback>
+    </changeSet>
+</databaseChangeLog>

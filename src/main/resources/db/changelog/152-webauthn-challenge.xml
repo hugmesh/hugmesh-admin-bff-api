@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+      152 — WEBAUTHN PENDING CHALLENGE (D6+D8 multi-replica leg, within the 150-159 MFA
+      reserve; 150 added the opaque-session columns + role_mfa_policy, 151 added the BFF-owned
+      factor lifecycle storage, 152 makes the PENDING WebAuthn challenge DURABLE + MULTI-
+      REPLICA-SAFE). The WebAuthnChallengeStore was an in-process ConcurrentHashMap: the
+      server generates a challenge in a .../options endpoint and the matching .../verify must
+      consume it, but with >1 admin-bff replica a cross-node ceremony misses the in-memory
+      challenge and fails closed (the client re-runs options). This table replaces that map so
+      a challenge issued on replica A is consumable on replica B sharing the same Postgres.
+
+        - webauthn_challenge — one PENDING challenge bound to an owner_subject + ceremony_type
+                               (REGISTER | ASSERT). owner_subject is the authenticated subject
+                               (the bff_session subject for REGISTER, the JWT sub for ASSERT) —
+                               NEVER a body field. challenge is the base64url server nonce.
+                               expires_at is the ~5m TTL absolute deadline (the consume rejects
+                               an expired row). used flips one-time on consume so a replay or a
+                               second concurrent verify against the same challenge fails closed.
+
+      SINGLE-USE / ATOMIC CONSUME: consume is a CAS UPDATE (used=false -> true) guarded on
+      (owner_subject, ceremony_type, used=false, expires_at > now); a SELECT-after-CAS returns
+      the challenge ONLY when this caller flipped the row, so a replay / concurrent double-verify
+      loses (0 rows -> no challenge). Expired rows are pruned lazily on each put for the owner.
+
+      SHIPS DARK: nothing here is reachable while app.casdoor.mfa.enabled=false (every /bff/mfa/*
+      endpoint 503s). The table exists so the durable store has a home; the durable store only
+      matters when MFA is enabled and admin-bff runs multi-replica.
+
+      Portable DDL mirrors the 151 idiom (app-UUID varchar(36) PK, one changeSet per table/
+      index/GRANT, PG-only index + GRANT gated dbms=postgresql onFail=MARK_RAN; the H2 test path
+      runs the table create + relies on the consume CAS guard). Appended LAST at the include site,
+      AFTER the 151 include — bff_session already exists by here.
+    -->
+
+    <changeSet id="152-webauthn-challenge" author="hugmesh">
+        <comment>webauthn_challenge — one PENDING WebAuthn challenge bound to an owner_subject +
+                 ceremony_type (REGISTER | ASSERT). challenge is the base64url server nonce;
+                 expires_at is the ~5m absolute deadline; used flips one-time on consume
+                 (single-use, atomic CAS) so a replay / concurrent double-verify fails closed.
+                 Durable + multi-replica-safe (replaces the in-process ConcurrentHashMap).</comment>
+        <createTable tableName="webauthn_challenge">
+            <column name="id" type="varchar(36)">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <!-- the authenticated subject (bff_session subject for REGISTER, JWT sub for ASSERT) — NEVER a body field. -->
+            <column name="owner_subject" type="varchar(400)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- base64url server-generated challenge nonce. -->
+            <column name="challenge" type="varchar(512)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- REGISTER | ASSERT — the ceremony purpose this challenge was issued for. -->
+            <column name="ceremony_type" type="varchar(16)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- absolute ~5m TTL deadline; the consume rejects a row past this instant. -->
+            <column name="expires_at" type="timestamp">
+                <constraints nullable="false"/>
+            </column>
+            <column name="used" type="boolean" defaultValueBoolean="false">
+                <constraints nullable="false"/>
+            </column>
+            <column name="created_at" type="timestamp" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+        <rollback>
+            <dropTable tableName="webauthn_challenge"/>
+        </rollback>
+    </changeSet>
+
+    <changeSet id="152-webauthn-challenge-owner-index" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>Index the per-(owner, ceremony) lookup predicate the put/consume both key on.</comment>
+        <sql>CREATE INDEX idx_webauthn_challenge_owner ON webauthn_challenge (owner_subject, ceremony_type)</sql>
+        <rollback>DROP INDEX idx_webauthn_challenge_owner</rollback>
+    </changeSet>
+
+    <changeSet id="152-webauthn-challenge-grant" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>GRANT SELECT,INSERT,UPDATE,DELETE on webauthn_challenge to admin_bff (put =
+                 INSERT + prune DELETE of expired rows; consume = UPDATE used=true CAS + SELECT).</comment>
+        <sql>GRANT SELECT, INSERT, UPDATE, DELETE ON webauthn_challenge TO admin_bff</sql>
+        <rollback>REVOKE SELECT, INSERT, UPDATE, DELETE ON webauthn_challenge FROM admin_bff</rollback>
+    </changeSet>
+
+</databaseChangeLog>

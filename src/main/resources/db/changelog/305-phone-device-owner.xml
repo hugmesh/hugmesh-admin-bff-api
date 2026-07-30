@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+      phone_device owner columns — the OPERATOR-AUTHORITATIVE fleet-ownership discriminators
+      that let a non-superadmin FLEET_ADMIN manage ONLY their own phones on the PUBLIC
+      fe-gateway surface (/bff/admin/phone-fleet/**). Strictly additive over 302/303/304.
+
+      physical_owner: the Casdoor subject who owns this fleet device.
+      owner_domain:   the brand/domain the device belongs to.
+
+      TRUST BOUNDARY (identical posture to the changeset-304 management/lock columns):
+      both are OPERATOR-AUTHORITATIVE and are set ONLY on the /bff/superadmin/** control
+      plane (SUPERADMIN + step-up, via PUT /bff/superadmin/phone-devices/{id}/owner). The
+      spoofable device-reported ingest channel writes them NEVER — the ingest INSERT + REFRESH
+      column lists (PhoneDeviceRowRepository) OMIT them exactly as they omit the seven 304
+      columns, so a re-ingest of an owned device can never set or overwrite its owner (proven
+      in the repository test). Together physical_owner AND owner_domain form the SOLE tenancy
+      wall for the fleet-admin surface: every non-superadmin read/mutation is predicated
+      WHERE physical_owner = caller-subject AND owner_domain = caller-domain (both), so a
+      cross-owner or cross-domain device is simply not visible/lockable (a clean 404, no
+      enumeration). A spoofable owner column would let a device self-assign an owner and
+      cross the wall, which is the exact attack this boundary exists to stop.
+
+      Numbering: band 305 (next free above 304-phone-device-management). Appended LAST at
+      the include site in db.changelog-master.xml.
+
+      Modeling (mirrors 302/303): both nullable (a pre-305 row and a fresh BYOD ingest carry
+      NULL owner until a superadmin assigns one; a NULL owner never matches the fleet-admin
+      predicate, so an unassigned device is fleet-invisible = fail-closed). Varchar sizes
+      mirror the comparable columns: physical_owner like device_registry.physical_owner /
+      lock_actor band trimmed to a Casdoor subject (400, the account.subject width);
+      owner_domain like superdomain / attached_domain (a DNS domain, 253). The 302 GRANT
+      already covers table-level SELECT/INSERT/UPDATE, so addColumn needs NO new grant; an
+      owner assignment is an UPDATE. Liquibase auto-generates the dropColumn rollback.
+    -->
+
+    <!-- ════════════════════════ phone_device owner columns ════════════════════════ -->
+    <changeSet id="305-phone-device-owner-columns" author="hugmesh">
+        <comment>Operator-authoritative fleet-ownership columns (physical_owner + owner_domain).
+                 Set ONLY via /bff/superadmin (SUPERADMIN + step-up); the ingest path never
+                 writes them, so a re-ingest preserves ownership. Both nullable — an unassigned
+                 device never matches the fleet-admin owner+domain predicate (fail-closed).</comment>
+        <addColumn tableName="phone_device">
+            <!-- AUTHORITATIVE fleet owner: the Casdoor subject a superadmin assigned the
+                 device to. Written ONLY via /bff/superadmin/phone-devices/{id}/owner
+                 (SUPERADMIN + step-up); NEVER by the ingest channel. Sized like
+                 device_registry.physical_owner / the account subject band (400). -->
+            <column name="physical_owner" type="varchar(400)"/>
+            <!-- AUTHORITATIVE fleet owner-domain: the brand/domain the device belongs to;
+                 the second half of the fleet-admin tenancy predicate (owner AND domain).
+                 A DNS domain, sized like superdomain / attached_domain (253). -->
+            <column name="owner_domain" type="varchar(253)"/>
+        </addColumn>
+    </changeSet>
+
+</databaseChangeLog>

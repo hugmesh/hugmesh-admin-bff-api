@@ -1,0 +1,63 @@
+# Restore worker Job — TEMPLATE. Same shape as backup-job.yaml but MODE=restore:
+# the worker reads the backup blob at ${LOCATION_REF}, decrypts it with the
+# password from the ephemeral Secret (when ENCRYPTED=true — the BFF has ALREADY
+# verified the password against the stored PBKDF2 verifier before applying this
+# Job, so a wrong password never reaches here), then restores the requested
+# scopes. The BFF substitutes the ${...} placeholders and applies it with the
+# backup-worker ServiceAccount (jobs/rbac.yaml).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: hugmesh-restore-${JOB_ID}
+  namespace: hugmesh-backend
+  labels:
+    app.kubernetes.io/part-of: hugmesh
+    app.kubernetes.io/component: backup-worker
+    hugmesh.systems/restore-of: "${JOB_ID}"
+spec:
+  ttlSecondsAfterFinished: 3600
+  backoffLimit: 1
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: backup-worker
+    spec:
+      serviceAccountName: backup-worker
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        fsGroup: 65532
+      containers:
+        - name: worker
+          image: registry.hugmesh.systems/hugmesh/backup-worker:latest
+          command: ["/bin/sh", "/scripts/backup-worker.sh"]
+          env:
+            - { name: JOB_ID,       value: "${JOB_ID}" }
+            - { name: MODE,         value: "restore" }
+            - { name: SCOPE,        value: "${SCOPE}" }
+            - { name: TARGET,       value: "${TARGET}" }
+            - { name: ENCRYPTED,    value: "${ENCRYPTED}" }
+            - { name: LOCATION_REF, value: "${LOCATION_REF}" }
+            - { name: CLOUD_DIR,    value: "/work" }
+            - { name: USB_MOUNT,    value: "/mnt/usb" }
+            - { name: PASSWORD_FILE, value: "/run/backup/password" }
+          volumeMounts:
+            - { name: work, mountPath: /work }
+            - { name: scripts, mountPath: /scripts, readOnly: true }
+            - { name: usb, mountPath: /mnt/usb }
+            - { name: password, mountPath: /run/backup, readOnly: true }
+          resources:
+            requests: { cpu: "100m", memory: "256Mi" }
+            limits:   { cpu: "500m", memory: "1Gi" }
+      volumes:
+        - name: scripts
+          configMap: { name: backup-worker-script, defaultMode: 0555 }
+        - name: work
+          persistentVolumeClaim: { claimName: hugmesh-backup-staging }
+        - name: usb
+          hostPath: { path: /mnt/hugmesh-usb, type: DirectoryOrCreate }
+        - name: password
+          secret:
+            secretName: backup-pw-${JOB_ID}
+            optional: true

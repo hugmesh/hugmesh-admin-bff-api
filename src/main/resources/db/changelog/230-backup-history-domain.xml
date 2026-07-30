@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+      backup_history domain-scope — closes the cross-tenant read IDOR (a brand-X
+      ADMIN could list every brand's backup inventory) and the cross-tenant RESTORE
+      hole (resolve another brand's backupId). Changeset 050 created backup_history
+      WITHOUT a domain column; this adds it, defaulting existing rows to 'default'
+      (single-tenant back-compat, the 010/220 pattern). PK stays single-column `id`,
+      so NO PK change is needed — only the column + a read-path index. `domain` (the
+      tenant/brand) is DISTINCT from the existing `scope` column (the backup
+      DOMAIN/TOTAL vocabulary).
+    -->
+
+    <changeSet id="230-backup-history-add-domain" author="hugmesh">
+        <comment>Add per-brand tenant discriminator to backup_history (default
+                 'default' for single-tenant back-compat).</comment>
+        <addColumn tableName="backup_history">
+            <column name="domain" type="varchar(64)" defaultValue="default">
+                <constraints nullable="false"/>
+            </column>
+        </addColumn>
+    </changeSet>
+
+    <changeSet id="230-backup-history-domain-index" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>Index the per-tenant history read predicate (domain, created_at).</comment>
+        <sql>CREATE INDEX idx_backup_history_domain ON backup_history (domain, created_at DESC)</sql>
+        <rollback>DROP INDEX idx_backup_history_domain</rollback>
+    </changeSet>
+
+</databaseChangeLog>

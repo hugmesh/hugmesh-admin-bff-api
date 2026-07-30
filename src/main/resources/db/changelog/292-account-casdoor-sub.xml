@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+      292 — account.casdoor_sub: the A5 part-B cross-carrier route-pin fix.
+
+      GAP: the gateway's GatewayRouteAccessFilter builds a per-user identity set
+      (userIds) to match casdoor_user route pins (targeted allow/deny rows). For a
+      REAL Casdoor-JWT carrier that set includes the raw UUID `sub` claim
+      (Roles.casdoorIdOf). For a native-login bff_ session carrier the set is built
+      from admin-bff's /bff/internal/session/introspect response, which only carries
+      the durable account id — "casdoor:<handle>" with the handle drawn from the
+      id_token as email > preferred_username > sub (InternalAccountController
+      .SUBJECT_CLAIMS). When the subject came from `email` or `preferred_username`,
+      the Casdoor UUID is NOT derivable from the account id AT ALL, so a route pin
+      written in UUID form matches the JWT carrier but silently never matches the
+      SAME HUMAN arriving via a bff_ session: a UUID-form ALLOW pin wrongly denies
+      them, and — worse — a UUID-form DENY pin (a targeted ban) FAILS OPEN for the
+      native-login carrier (the A5 part-B asymmetry from the native-login authz
+      audit).
+
+      FIX (enrichment, this changeset + the InternalAccountController stamp/read):
+      persist the raw Casdoor `sub` on the account row, captured at the ONE place
+      the raw id_token is decoded (InternalAccountController#ensureAccount's
+      provider="casdoor" branch — the native-login mint path; the session mint at
+      POST /sessions only ever receives the accountId, so the account row is the
+      only in-repo place the UUID can be captured). Introspect then surfaces it as
+      a nullable `casdoorSub` field for the gateway to fold into userIds.
+
+      DELIBERATELY NULLABLE, NO DEFAULT, NO backfill: the UUID is not derivable
+      from any existing column (that is the bug), so legacy rows CANNOT be
+      backfilled here — they self-heal on the account's next native login, because
+      ensureAccount re-runs (and re-stamps) on EVERY sign-in, exactly like the
+      roles re-sync. Until then introspect returns casdoorSub=null and the gateway
+      degrades to exactly today's behavior. Like changeset 290, auth-core's
+      AccountStore INSERT path knows nothing of this column (its AccountRow entity
+      has no such field), so NOT NULL would fail every account creation.
+
+      DELIBERATELY NOT UNIQUE (unlike 290/291): the localpart columns gate a
+      shared-password homeserver identity, where a collision IS an account
+      takeover. casdoor_sub is only ever ADDED to the gateway's pin-match identity
+      set under deny-wins semantics (an extra id can only make a matching pin
+      APPLY, never remove a deny), and one human's Casdoor UUID can legitimately
+      back more than one account row over time (the account id is keyed on the
+      email/preferred_username-derived subject, which Casdoor lets the user
+      change; the UUID does not change with it). A UNIQUE constraint would turn
+      that legitimate re-keying into a login-breaking 500 for zero security gain.
+
+      Portable DDL mirrors the 180-band idiom: addColumn with a
+      <rollback><dropColumn>. varchar(64): Casdoor subs are 36-char UUIDs; small
+      headroom, no clob. Band 292: next free above 291. Appended LAST.
+    -->
+
+    <changeSet id="292-account-casdoor-sub-add-column" author="hugmesh">
+        <comment>account.casdoor_sub — the raw Casdoor `sub` UUID captured from the
+                 native-login id_token at InternalAccountController#ensureAccount
+                 (provider="casdoor"). Nullable (legacy rows self-heal on next
+                 native login), NOT unique (see rationale above). Read back by
+                 /bff/internal/session/introspect as the nullable casdoorSub field
+                 so the gateway can match UUID-form casdoor_user route pins for
+                 bff_ session carriers.</comment>
+        <addColumn tableName="account">
+            <column name="casdoor_sub" type="varchar(64)"/>
+        </addColumn>
+        <rollback>
+            <dropColumn tableName="account" columnName="casdoor_sub"/>
+        </rollback>
+    </changeSet>
+
+</databaseChangeLog>

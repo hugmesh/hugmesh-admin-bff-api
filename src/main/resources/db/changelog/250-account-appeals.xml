@@ -1,0 +1,129 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+      account_appeal — the structured ACCOUNT-BAN appeal record. Distinct from
+      federation-api's ModerationRequest (CONTENT moderation of posts/profiles): this
+      table is the ACCOUNT-level ban/suspension appeal a curtailed principal files
+      against their own {@code access_suspension} (changeset 008, role=PROFILE) state.
+
+      CLONES the 142-desktop-install-request submit/decide shape (owner == subject,
+      domain from the validated issuer, status CHECK, decided_by/decided_at stamped on
+      a decision, NEVER deleted = audit) — same idiom, different domain.
+
+      Columns:
+        • id             — app-generated varchar(36) UUID (DB-generated via the
+                            (gen_random_uuid())::text DEFAULT below, changelog-200 style).
+        • user_sub       — the appellant's own resolved account id
+                            (Account.id(), e.g. "google:alice@x.com"). owner == subject:
+                            a user only ever sees/creates THEIR OWN appeal rows.
+        • handle         — the appellant's Account.handle() (bare email/discord
+                            username) — the SAME identity string SuspensionService
+                            reads/writes for the PROFILE ban this appeal is against.
+                            An APPROVE decide calls SuspensionService.clear("PROFILE",
+                            handle, ...) to actually restore access; never a bare
+                            status flip.
+        • domain         — the brand/tenant (DOMAIN_<x>), DEFAULT 'default', stamped
+                            from the validated issuer at submit time.
+        • reason         — the appellant's own free-text appeal message.
+        • contact_email  — OPTIONAL alternate contact (the appellant may already be
+                            unable to sign in by the time it's reviewed).
+        • status         — PENDING / APPROVED / DENIED.
+        • submitted_at   — insert time.
+        • decided_at     — stamped on a decision.
+        • decided_by     — the deciding admin's JWT subject (audit; never an
+                            authorization input).
+
+      Portable DDL (mirrors 140-desktop-app-governance / 008-access-suspension): id is
+      an app-generated varchar(36) UUID string with a (gen_random_uuid())::text DEFAULT
+      (Postgres-only via a dbms precondition) so the INSERT is portable to the H2 slice
+      test store too (the app can still mint a UUID there if ever needed, though the
+      repository always omits id and reads RETURNING id back).
+
+      Band 250: next free above the 240 include. Appended LAST.
+    -->
+
+    <changeSet id="250-account-appeal" author="hugmesh">
+        <comment>account_appeal — the structured ACCOUNT-ban appeal record (owner ==
+                 subject; an APPROVE decide reverses the underlying access_suspension
+                 PROFILE row via SuspensionService.clear, never a bare status flip).</comment>
+        <createTable tableName="account_appeal">
+            <column name="id" type="varchar(36)">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="user_sub" type="varchar(400)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="handle" type="varchar(400)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="domain" type="varchar(64)" defaultValue="default">
+                <constraints nullable="false"/>
+            </column>
+            <column name="reason" type="varchar(2000)"/>
+            <column name="contact_email" type="varchar(320)"/>
+            <column name="status" type="varchar(16)" defaultValue="PENDING">
+                <constraints nullable="false"/>
+            </column>
+            <column name="submitted_at" type="timestamp with time zone" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+            <column name="decided_at" type="timestamp with time zone"/>
+            <column name="decided_by" type="varchar(400)"/>
+        </createTable>
+    </changeSet>
+
+    <changeSet id="250-account-appeal-status-check" author="hugmesh">
+        <comment>CHECK: status is one of the three lifecycle values.</comment>
+        <sql>
+            ALTER TABLE account_appeal
+                ADD CONSTRAINT ck_account_appeal_status
+                CHECK (status IN ('PENDING', 'APPROVED', 'DENIED'))
+        </sql>
+        <rollback>ALTER TABLE account_appeal DROP CONSTRAINT ck_account_appeal_status</rollback>
+    </changeSet>
+
+    <changeSet id="250-account-appeal-domain-index" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>Index the per-tenant admin-inbox read predicate on account_appeal.</comment>
+        <sql>CREATE INDEX idx_account_appeal_domain ON account_appeal (domain)</sql>
+        <rollback>DROP INDEX idx_account_appeal_domain</rollback>
+    </changeSet>
+
+    <changeSet id="250-account-appeal-user-sub-index" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>Index the owner==subject "my appeals" read predicate.</comment>
+        <sql>CREATE INDEX idx_account_appeal_user_sub ON account_appeal (user_sub)</sql>
+        <rollback>DROP INDEX idx_account_appeal_user_sub</rollback>
+    </changeSet>
+
+    <changeSet id="250-account-appeal-gen-uuid" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>DB-generate account_appeal.id ((gen_random_uuid())::text) — the
+                 changelog-200 idiom applied at creation instead of a follow-up
+                 migration. INSERT omits id, RETURNING id reads it back.</comment>
+        <addDefaultValue tableName="account_appeal" columnName="id"
+                         columnDataType="varchar(36)"
+                         defaultValueComputed="(gen_random_uuid())::text"/>
+    </changeSet>
+
+    <changeSet id="250-account-appeal-grant" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>GRANT SELECT,INSERT,UPDATE on account_appeal to admin_bff (a decision
+                 is a CAS UPDATE — the row is never DELETEd = the audit trail).</comment>
+        <sql>GRANT SELECT, INSERT, UPDATE ON account_appeal TO admin_bff</sql>
+        <rollback>REVOKE SELECT, INSERT, UPDATE ON account_appeal FROM admin_bff</rollback>
+    </changeSet>
+</databaseChangeLog>

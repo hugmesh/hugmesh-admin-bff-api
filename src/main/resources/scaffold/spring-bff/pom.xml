@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <!-- Minimal-but-REAL {{BRAND_TITLE}} Spring Boot WebFlux BFF — the base-absent
+       skeleton the spring-bff archetype renders when the Tier-2 base is not
+       pullable. Same org metapom every fleet BFF inherits (Spring Boot 4 /
+       Java 25 reactive baseline: WebFlux + actuator + security + OAuth2 resource
+       server, shared test stack, compiler/surefire/spring-boot plugin wiring,
+       GitLab Maven publishing). The version below tracks what admin-bff-api
+       (the archetype exemplar) pins on main. -->
+  <parent>
+    <groupId>systems.hugmesh</groupId>
+    <artifactId>hugmesh-parent</artifactId>
+    <version>2.8.0</version>
+    <relativePath/>
+  </parent>
+
+  <!-- Per-repo CODE identity from the repos[].identity row (APP_SLUG). The
+       skeleton REQUIRES app_slug to match [a-z0-9]+ (lowercase alphanumeric, NO
+       hyphens): it is also the Java package segment systems.hugmesh.<slug>,
+       and package names cannot contain '-'. See README.md, "APP_SLUG constraint". -->
+  <artifactId>{{APP_SLUG}}-bff</artifactId>
+  <version>0.1.0</version>
+
+  <!-- No <dependencies> block: the entire reactive stack (webflux/actuator/
+       security/oauth2-resource-server/validation + R2DBC/Liquibase + the shared
+       test stack) is INJECTED by hugmesh-parent's shared <dependencies>. The
+       skeleton declares no persistence, so application.yml excludes the R2DBC +
+       Liquibase auto-configs until this service grows real tables. (The parent's
+       bare spring-jdbc + postgresql leave JDBC DataSourceAutoConfiguration inert
+       at runtime — no Hikari/embedded driver is on the classpath — so `java -jar`
+       boots with no DB and no datasource exclude is needed.) -->
+
+  <!-- The spring-boot-maven-plugin is configured (no executions of its own) in
+       hugmesh-parent's pluginManagement, so declaring it here — config-free —
+       BINDS the managed config and wires its default `repackage` execution to the
+       `package` phase. WITHOUT this the reactor produces a plain library jar (no
+       Main-Class manifest), so `java -jar target/*.jar` and the Dockerfile
+       ENTRYPOINT both die with "no main manifest attribute" — the artifact would
+       build green yet never run. Mirrors the admin-bff-api exemplar (which also
+       binds native-maven-plugin; the skeleton ships a plain JRE image, not a
+       native one, so only the boot plugin is needed here). -->
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-maven-plugin</artifactId>
+      </plugin>
+    </plugins>
+  </build>
+</project>

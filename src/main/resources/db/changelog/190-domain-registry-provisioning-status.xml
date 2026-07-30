@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+      190 — DOMAIN-REGISTRY PROVISIONING-STATUS columns (the runtime add-domain provisioning
+      bridge). Band 190 is the NEXT FREE band above the 181 route-access-mfa-required include
+      and the 150-159 MFA reserve / 160 cloud-backups / 170-172 ssh-terminal / 180-181
+      custody+route-access bands (the current max on main is 181). This adds the ONE missing
+      symmetry for runtime add-domain provisioning: domain_registry (012) is the SUPERADMIN-
+      registered brand list, but a registered domain has no recorded PROVISIONING state, so
+      neither the (later) generator domain-reconcile effector nor the admin-ui console can tell
+      a "registered but not yet provisioned" brand from a live one. These three columns record
+      that state alongside the signed domain_registry /export this PR also adds.
+
+      THREE columns added to domain_registry, ALL SHIPPING DARK with a DB-default floor:
+        - ca_provisioned              boolean NOT NULL DEFAULT false — whether the per-domain CA
+                                      has been provisioned (the ProvisionCa effector's write).
+        - appset_registered           boolean NOT NULL DEFAULT false — whether the brand-list
+                                      ArgoCD ApplicationSet entry has been registered (the
+                                      ProvisionBrand effector's write).
+        - last_reconciled_generation  bigint  NOT NULL DEFAULT 0     — the monotonic per-row
+                                      reconcile generation the effector bumps + the agent's
+                                      rollback guard reads at the row grain.
+
+      SHIPS DARK: NOT NULL DEFAULT false/false/0, so every EXISTING row reads the unprovisioned
+      floor and every NEW row (the CRUD create never sets them) inserts at the floor. NOTHING in
+      this band flips them — only the not-yet-built generator domain-reconcile effector
+      (internal-mTLS) ever writes them. Zero behaviour change at defaults. ADDITIVE +
+      backward-safe for live rows (a NOT NULL with a DEFAULT back-fills existing rows; no CHECK
+      that would reject existing data).
+
+      Portable DDL mirrors the 180-bff-jwt-custody / 150-mfa-substrate idiom EXACTLY: one
+      changeSet per addColumn with a <rollback><dropColumn>; the PG-only GRANT gated
+      dbms=postgresql onFail=MARK_RAN onError=MARK_RAN (the H2 test store has no admin_bff role,
+      so it skips the GRANT and runs the column adds only). Appended LAST at the include site
+      (AFTER the 181 include) so it runs last regardless of its numeric prefix — the
+      domain_registry table (012) already exists by here, so the addColumn changes apply
+      cleanly. GRANT is SELECT,INSERT,UPDATE only — NEVER DELETE (a domain is soft-disabled via
+      enabled=false, and the status columns are cleared by UPDATE, never a row delete).
+    -->
+
+    <!-- ═══════════════════ domain_registry provisioning-status columns ═══════════════════ -->
+
+    <changeSet id="190-domain-registry-ca-provisioned" author="hugmesh">
+        <comment>domain_registry.ca_provisioned — whether the per-domain CA has been provisioned.
+                 SHIPS DARK: NOT NULL DEFAULT false; flipped ONLY by the later generator
+                 domain-reconcile effector. The CRUD create/update never sets it.</comment>
+        <addColumn tableName="domain_registry">
+            <column name="ca_provisioned" type="boolean" defaultValueBoolean="false">
+                <constraints nullable="false"/>
+            </column>
+        </addColumn>
+        <rollback>
+            <dropColumn tableName="domain_registry" columnName="ca_provisioned"/>
+        </rollback>
+    </changeSet>
+
+    <changeSet id="190-domain-registry-appset-registered" author="hugmesh">
+        <comment>domain_registry.appset_registered — whether the brand-list ArgoCD ApplicationSet
+                 entry has been registered. SHIPS DARK: NOT NULL DEFAULT false; flipped ONLY by
+                 the later generator domain-reconcile effector.</comment>
+        <addColumn tableName="domain_registry">
+            <column name="appset_registered" type="boolean" defaultValueBoolean="false">
+                <constraints nullable="false"/>
+            </column>
+        </addColumn>
+        <rollback>
+            <dropColumn tableName="domain_registry" columnName="appset_registered"/>
+        </rollback>
+    </changeSet>
+
+    <changeSet id="190-domain-registry-last-reconciled-generation" author="hugmesh">
+        <comment>domain_registry.last_reconciled_generation — the monotonic per-row reconcile
+                 generation the effector bumps + the signed export's rollback guard reads.
+                 SHIPS DARK: NOT NULL DEFAULT 0.</comment>
+        <addColumn tableName="domain_registry">
+            <column name="last_reconciled_generation" type="bigint" defaultValueNumeric="0">
+                <constraints nullable="false"/>
+            </column>
+        </addColumn>
+        <rollback>
+            <dropColumn tableName="domain_registry" columnName="last_reconciled_generation"/>
+        </rollback>
+    </changeSet>
+
+    <!-- ═══════════════════════════════ GRANT (PG only) ══════════════════════════════ -->
+
+    <changeSet id="190-domain-registry-status-grant" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>GRANT SELECT,INSERT,UPDATE on domain_registry to admin_bff — the later reconcile
+                 effector writes the status columns by UPDATE; the CRUD inserts at the DB default.
+                 Idempotent at table level — matches the 012/180 GRANT idiom. NEVER DELETE
+                 (soft-disable via enabled=false).</comment>
+        <sql>GRANT SELECT, INSERT, UPDATE ON domain_registry TO admin_bff</sql>
+        <rollback>REVOKE SELECT, INSERT, UPDATE ON domain_registry FROM admin_bff</rollback>
+    </changeSet>
+
+</databaseChangeLog>

@@ -1,0 +1,126 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+      service_curation — the per-domain, TWO-TIER offered catalog for the Superadmin
+      App-Store (PR1 = the data/accounting layer ONLY). It records, per brand/domain,
+      the set of services a SUPERADMIN has OFFERED to that domain's admins.
+
+      ── The two tiers ─────────────────────────────────────────────────────────
+        * SUPERADMIN (the infra control plane) WRITES this table — offer/withdraw a
+          service_key FOR a specific {domain} (it targets any brand; it is unscoped).
+        * a brand ADMIN READS only the rows for THEIR OWN issuer-derived domain (the
+          /bff/admin/service-store surface): an admin sees ONLY services the
+          superadmin offered to THEIR domain, never another domain's catalog. The
+          per-row `domain` discriminator (the 010 pattern) + Roles.domainOf +
+          PrincipalDomain enforce this.
+
+      ── Desired-state, never-hard-delete (the 008 access_suspension convention) ──
+      state IN ('offered','withdrawn'); a withdrawal is a CAS offered->withdrawn (the
+      row is kept as the audit trail), and a partial UNIQUE (domain, service_key)
+      WHERE state='offered' guarantees at most ONE live offer per (domain, service)
+      while letting the table hold the historical withdrawn rows.
+
+      ── Portable DDL (mirrors 012-domain-registry.xml) ─────────────────────────
+      id is an app-generated varchar(36) UUID string (NOT a Postgres uuid column with
+      gen_random_uuid()), so the INSERT is portable across Postgres and the H2
+      (PostgreSQL-compat, NON_KEYWORDS) test store with no pgcrypto dependency and the
+      app can return the new row id. `state` is covered by no reserved-word issue;
+      timestamptz -> the portable Liquibase 'timestamp with time zone' generic type,
+      defaultValueComputed="now()". The partial UNIQUE index is PG-only (the H2 test
+      store has no partial-index support), gated dbms=postgresql onFail=MARK_RAN — on
+      H2 the at-most-one-offered invariant is enforced by the service
+      (findOffered-before-insert), exactly as 008 does. The PG-only GRANT is gated the
+      same way so the H2 changelog never fails.
+
+      ── Numbering: 100 ─────────────────────────────────────────────────────────
+      Picks a FREE band >=100 (existing changesets go to ~070; concurrent agents use
+      080[egress]/085[node-storage]/090-099[games]) — 100/101/102 avoid every
+      collision. Appended LAST at the include site after 063.
+    -->
+
+    <changeSet id="100-service-curation" author="hugmesh">
+        <comment>service_curation — the per-domain two-tier offered catalog
+                 (superadmin offers; admin reads own-domain only).</comment>
+        <createTable tableName="service_curation">
+            <column name="id" type="varchar(36)">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <!-- Per-row tenant discriminator (the 010 pattern). NOT NULL — every offer
+                 is targeted at exactly one brand by the superadmin. -->
+            <column name="domain" type="varchar(253)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="service_key" type="varchar(128)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="state" type="varchar(16)" defaultValue="offered">
+                <constraints nullable="false"/>
+            </column>
+            <!-- The SUPERADMIN subject (jwt.getSubject()) who offered/withdrew. -->
+            <column name="curated_by_subject" type="varchar(400)"/>
+            <column name="created_at" type="timestamp with time zone" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+            <column name="updated_at" type="timestamp with time zone" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+    </changeSet>
+
+    <changeSet id="100-service-curation-state-check" author="hugmesh">
+        <comment>CHECK: state is one of the two lifecycle values (offered/withdrawn).</comment>
+        <sql>
+            ALTER TABLE service_curation
+                ADD CONSTRAINT ck_service_curation_state
+                CHECK (state IN ('offered', 'withdrawn'))
+        </sql>
+        <rollback>ALTER TABLE service_curation DROP CONSTRAINT ck_service_curation_state</rollback>
+    </changeSet>
+
+    <changeSet id="100-service-curation-offered-unique" author="hugmesh">
+        <!-- PG-only partial UNIQUE: at most one OFFERED row per (domain, service_key).
+             Withdrawn rows are excluded so the audit trail keeps historical offers. The
+             H2 test store has no partial indexes; the dbms precondition skips it there
+             (onFail=MARK_RAN) and the service's findOffered-before-insert enforces the
+             same invariant. -->
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>Partial UNIQUE: at most one OFFERED service per (domain, service_key).</comment>
+        <sql>
+            CREATE UNIQUE INDEX uq_service_curation_offered
+                ON service_curation (domain, service_key)
+                WHERE state = 'offered'
+        </sql>
+        <rollback>DROP INDEX uq_service_curation_offered</rollback>
+    </changeSet>
+
+    <changeSet id="100-service-curation-domain-index" author="hugmesh">
+        <comment>Index on (domain) for the admin own-domain read (/bff/admin/service-store).</comment>
+        <createIndex tableName="service_curation" indexName="idx_service_curation_domain">
+            <column name="domain"/>
+        </createIndex>
+        <rollback>
+            <dropIndex tableName="service_curation" indexName="idx_service_curation_domain"/>
+        </rollback>
+    </changeSet>
+
+    <changeSet id="100-service-curation-grant" author="hugmesh">
+        <!-- PostgreSQL-only runtime grant. The H2 test store has no admin_bff role, so
+             GRANT would error there; the dbms precondition skips this changeSet entirely
+             off-Postgres (onFail=MARK_RAN records it as run) so the H2 changelog
+             continues. No DELETE — a withdrawal is a CAS offered->withdrawn. -->
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>GRANT SELECT,INSERT,UPDATE on service_curation to the admin_bff role
+                 (no DELETE — withdraw is a CAS update, the row is the audit).</comment>
+        <sql>GRANT SELECT, INSERT, UPDATE ON service_curation TO admin_bff</sql>
+        <rollback>REVOKE SELECT, INSERT, UPDATE ON service_curation FROM admin_bff</rollback>
+    </changeSet>
+</databaseChangeLog>

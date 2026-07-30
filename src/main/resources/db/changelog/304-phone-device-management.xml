@@ -1,0 +1,121 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+      phone_device management + lockout — the OPERATOR-AUTHORITATIVE control-plane columns
+      layered over the 302/303 inventory: a managed/BYOD discriminator and a reversible,
+      SUPERADMIN-gated device lockout with a monotonic generation + push-with-ack
+      propagation. Strictly additive over 302 + 303.
+
+      TRUST BOUNDARY (the crux, asserted here at the schema and again in the code):
+      management_mode is AUTHORITATIVE and written ONLY on the /bff/superadmin/** control
+      plane (a SUPERADMIN JWT + step-up). The 303 mdm_enrolled / mdm_set_via facts are
+      DEVICE-reported over the spoofable mTLS ingest channel and confer NO access; they are
+      an ADVISORY promotion HINT, never the authority. The ingest INSERT + REFRESH do NOT
+      touch ANY of the seven columns below, so a re-ingest of a managed/locked device never
+      resets its operator state (proven in the repository test). Default management_mode is
+      'unmanaged' so a brand-new BYOD ingest lands unmanaged, and lock is permitted ONLY on
+      management_mode='mesh_owned' (a BYOD lock is a clean 409 in the service).
+
+      Lockout mirrors device_ssh_license (changeset 011): lock_state is a reversible CAS
+      value, lock_generation is monotonic across BOTH lock and unlock (a rolled-back
+      enforcement payload is rejected by max(generation)), lock_propagation_state carries
+      the same four push-with-ack outcomes, and rows are NEVER deleted (the inventory is the
+      audit trail).
+
+      Numbering: band 304 (next free above 303-phone-device-mdm). Appended LAST at the
+      include site in db.changelog-master.xml.
+
+      Modeling (mirrors 302 + 303): NOT NULL discriminators carry a defaultValue so the
+      column backfills the pre-304 rows unambiguously (the mdm_enrolled / ingest_count
+      pattern); the nullable lock detail columns default NULL. Varchar sizes mirror the
+      comparable columns: lock_reason like login_server/attestation_url band (a sentence,
+      512); lock_actor like device_ssh_license.granted_by trimmed to a Casdoor subject /
+      e-mail (320). lock_updated_at is a portable timestamptz. CHECK constraints are one
+      changeSet each (independent redeploy + rollback), exactly like the 302 device_class
+      and 011 state/propagation checks. The 302 GRANT already covers table-level
+      SELECT/INSERT/UPDATE, so addColumn needs NO new grant; a lock/unlock is an UPDATE.
+    -->
+
+    <!-- ═════════════════════ phone_device management + lock columns ═══════════════ -->
+    <changeSet id="304-phone-device-management-columns" author="hugmesh">
+        <comment>Operator-authoritative management_mode + reversible lockout columns.
+                 Telemetry-independent operator state; the ingest path never writes them,
+                 so a re-ingest preserves managed/locked status. Defaults land a pre-304
+                 row (and a fresh BYOD ingest) as unmanaged + unlocked + generation 0.</comment>
+        <addColumn tableName="phone_device">
+            <!-- AUTHORITATIVE managed/BYOD discriminator. Written ONLY via /bff/superadmin
+                 (SUPERADMIN + step-up); NEVER by the ingest channel. Default 'unmanaged'
+                 backfills pre-304 rows and lands a fresh BYOD ingest as unmanaged. -->
+            <column name="management_mode" type="varchar(16)" defaultValue="unmanaged">
+                <constraints nullable="false"/>
+            </column>
+            <!-- Reversible lock CAS value (mirrors device_ssh_license.state). A lock is
+                 permitted ONLY when management_mode='mesh_owned' (the service enforces it;
+                 a BYOD lock is a 409). Default 'unlocked'. -->
+            <column name="lock_state" type="varchar(16)" defaultValue="unlocked">
+                <constraints nullable="false"/>
+            </column>
+            <!-- Push-with-ack outcome of the last lock/unlock enforcement, NULL before the
+                 first ever lock (mirrors device_ssh_license.propagation_state's four
+                 values, but nullable because most rows have never been locked). -->
+            <column name="lock_propagation_state" type="varchar(16)"/>
+            <!-- Monotonic generation bumped on EVERY lock AND unlock (mirrors
+                 device_ssh_license.generation): the DPC/mesh-deny enforcement payload
+                 carries it so a rolled-back (generation less-than-or-equal current)
+                 command is rejected. Default 0. -->
+            <column name="lock_generation" type="bigint" defaultValueNumeric="0">
+                <constraints nullable="false"/>
+            </column>
+            <!-- Operator-supplied reason for the current lock (NULL when unlocked); a
+                 sentence, sized like the login_server/attestation_url band. -->
+            <column name="lock_reason" type="varchar(512)"/>
+            <!-- The SUPERADMIN subject who last changed the lock (auth.getName()); sized
+                 like device_ssh_license.granted_by trimmed to a subject / e-mail. -->
+            <column name="lock_actor" type="varchar(320)"/>
+            <!-- When the lock state last changed (DB now()); NULL before the first ever
+                 lock/unlock. -->
+            <column name="lock_updated_at" type="timestamp with time zone"/>
+        </addColumn>
+    </changeSet>
+
+    <changeSet id="304-phone-device-management-mode-check" author="hugmesh">
+        <comment>CHECK: management_mode is the AUTHORITATIVE managed/BYOD discriminator —
+                 'unmanaged' (BYOD, the default) or 'mesh_owned' (operator-provisioned). A
+                 lock is permitted only on 'mesh_owned'.</comment>
+        <sql>
+            ALTER TABLE phone_device
+                ADD CONSTRAINT ck_phone_device_management_mode
+                CHECK (management_mode IN ('unmanaged', 'mesh_owned'))
+        </sql>
+        <rollback>ALTER TABLE phone_device DROP CONSTRAINT ck_phone_device_management_mode</rollback>
+    </changeSet>
+
+    <changeSet id="304-phone-device-lock-state-check" author="hugmesh">
+        <comment>CHECK: lock_state is one of the two reversible lifecycle values
+                 (unlocked = the default; locked = a CAS lock, never deleted = audit).</comment>
+        <sql>
+            ALTER TABLE phone_device
+                ADD CONSTRAINT ck_phone_device_lock_state
+                CHECK (lock_state IN ('unlocked', 'locked'))
+        </sql>
+        <rollback>ALTER TABLE phone_device DROP CONSTRAINT ck_phone_device_lock_state</rollback>
+    </changeSet>
+
+    <changeSet id="304-phone-device-lock-propagation-check" author="hugmesh">
+        <comment>CHECK: lock_propagation_state is NULL (never locked) or one of the four
+                 push-with-ack outcomes (a NULL passes the IN by SQL null semantics, exactly
+                 the never-locked shape).</comment>
+        <sql>
+            ALTER TABLE phone_device
+                ADD CONSTRAINT ck_phone_device_lock_propagation
+                CHECK (lock_propagation_state IN ('pending', 'applied', 'failed', 'degraded'))
+        </sql>
+        <rollback>ALTER TABLE phone_device DROP CONSTRAINT ck_phone_device_lock_propagation</rollback>
+    </changeSet>
+
+</databaseChangeLog>

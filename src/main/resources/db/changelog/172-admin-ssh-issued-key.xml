@@ -1,0 +1,185 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+      admin-ssh-issued-key — the AUDIT trail for admin SSH key-ISSUANCE (SSH PR-4, Option B).
+      One row per Ed25519 keypair the BFF MINTS for an operator to SSH a licensed device.
+
+      ── WHAT THIS TABLE IS (and is NOT) ───────────────────────────────────────────────
+      The platform's SSH-authorization source of truth is the 011 device_ssh_license registry:
+      the node's AuthorizedKeysCommand matches the OFFERED key's SHA256 %f fingerprint against
+      device_ssh_license.key_fingerprints and re-emits the offered key. So "issuing an admin
+      client key" = putting that key's SHA256 fingerprint into a DEVICE-scoped device_ssh_license
+      row (no generator change, no public-key-bytes storage for enforcement — the license drives
+      the existing signed-export -> ~60s node-pull pipeline).
+
+      This table is therefore NOT the enforcement record — it is the ISSUANCE AUDIT record: who
+      issued which (operator x device) credential, when, its SHA256 fingerprint (the same %f the
+      license pins and the node compares), the NON-SECRET issued OpenSSH public line, the backing
+      license row, and the issued/revoked lifecycle. It lets the admin UI list + revoke issued
+      credentials and ties each one back to the license fingerprint it added.
+
+      ── NO PRIVATE KEY, EVER ───────────────────────────────────────────────────────────
+      There is NO private-key column here (or anywhere). The minted private key is held ONLY in a
+      short-TTL, leader-pinned, single-use in-memory store (AdminSshKeyIssuanceService), streamed
+      ONCE to the issuing operator on download, then dropped. It is never persisted, never logged.
+      public_key is the NON-SECRET issued OpenSSH public line; fingerprint is its SHA256:... form.
+
+      ── Portable DDL (mirrors 011-device-license-registry.xml / 170-device-ssh-keys.xml
+         EXACTLY) ─────────────────────────────────────────────────────────────────────
+      id is an app-generated varchar(36) UUID string (NOT a Postgres uuid column), so the INSERT
+      is portable across Postgres and the H2 (PostgreSQL-compat) test store with no pgcrypto
+      dependency. timestamptz -> the portable Liquibase 'timestamp with time zone' generic type,
+      defaultValueComputed="now()". One changeSet per CHECK / FK / index / GRANT (independent
+      redeploy + rollback). The index + GRANT are gated with a dbms=postgresql precondition
+      (onFail/onError=MARK_RAN) so they apply only on Postgres (exactly like 011/170). NEVER a
+      DELETE grant — the row is the audit trail (revoke is a CAS issued->revoked, never a delete).
+
+      ── domain (residency, server-stamped) ─────────────────────────────────────────────
+      domain is the home/tenant discriminator for the ADMIN read view — stamped from the TARGET
+      device's residency (device.domain()), NEVER caller-supplied (so an issued-key row can never
+      claim a brand other than the device it targets), exactly like 011 SshLicenseService.
+
+      ── Band: 172 ────────────────────────────────────────────────────────────────────
+      Current max changelog band on main is 170-171 (ssh-terminal dial + image-build). 172 is the
+      NEXT FREE band. Appended LAST at the include site in db.changelog-master.xml, after the 171
+      include.
+    -->
+
+    <changeSet id="172-admin-ssh-issued-key" author="hugmesh">
+        <comment>admin_ssh_issued_key — the issuance AUDIT record for admin SSH key-issuance
+                 (Option B). One row per minted Ed25519 keypair. NON-SECRET only: the issued
+                 OpenSSH public line + its SHA256 fingerprint (the %f the node pins via the
+                 backing device_ssh_license row). NO private-key column. Revoke is a CAS
+                 issued->revoked, never deleted (= audit).</comment>
+        <createTable tableName="admin_ssh_issued_key">
+            <column name="id" type="varchar(36)">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <!-- the device this credential authorizes SSH to (FK -> device_registry;
+                 ON DELETE CASCADE so de-registering a node reaps its issued-key audit rows). -->
+            <column name="device_id" type="varchar(36)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- the backing device_ssh_license row whose key_fingerprints this credential's
+                 fingerprint was added to (the enforcement record). FK -> device_ssh_license. -->
+            <column name="license_id" type="varchar(36)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- the operator (Casdoor subject) the credential is issued FOR (the license
+                 operator key). -->
+            <column name="operator" type="varchar(400)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- the SSH key algorithm — Ed25519-only in v1 ('ssh-ed25519'). -->
+            <column name="key_type" type="varchar(32)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- the NON-SECRET issued OpenSSH public line ('ssh-ed25519 AAAA...'). NOT secret. -->
+            <column name="public_key" type="varchar(1024)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- the SHA256:... fingerprint of public_key — the EXACT %f form the node computes
+                 from the offered key and matches against the license. NON-SECRET. -->
+            <column name="fingerprint" type="varchar(256)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- the Casdoor subject who issued the credential (provenance/audit). -->
+            <column name="issued_by" type="varchar(400)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="issued_at" type="timestamp with time zone" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+            <!-- when the (single-use) private key was streamed to the operator; NULL until
+                 the one download happens (and the held key is consumed). -->
+            <column name="downloaded_at" type="timestamp with time zone"/>
+            <!-- issued (live: its fingerprint is in the backing license) -> revoked (CAS,
+                 audited: the fingerprint was removed from the backing license). -->
+            <column name="state" type="varchar(16)" defaultValue="issued">
+                <constraints nullable="false"/>
+            </column>
+            <!-- home/tenant discriminator for the ADMIN read view; stamped from the TARGET
+                 device's residency (device.domain()), NEVER caller-supplied. -->
+            <column name="domain" type="varchar(64)" defaultValue="default">
+                <constraints nullable="false"/>
+            </column>
+            <column name="revoked_at" type="timestamp with time zone"/>
+            <column name="revoked_by" type="varchar(400)"/>
+        </createTable>
+    </changeSet>
+
+    <changeSet id="172-admin-ssh-issued-key-state-check" author="hugmesh">
+        <comment>CHECK: state is one of the two lifecycle values (issued = live credential;
+                 revoked = CAS issued->revoked, never deleted).</comment>
+        <sql>
+            ALTER TABLE admin_ssh_issued_key
+                ADD CONSTRAINT ck_admin_ssh_issued_key_state
+                CHECK (state IN ('issued', 'revoked'))
+        </sql>
+        <rollback>ALTER TABLE admin_ssh_issued_key DROP CONSTRAINT ck_admin_ssh_issued_key_state</rollback>
+    </changeSet>
+
+    <changeSet id="172-admin-ssh-issued-key-device-fk" author="hugmesh">
+        <comment>FK: device_id references a real device_registry row; ON DELETE CASCADE so
+                 de-registering a node reaps its issued-key audit rows.</comment>
+        <addForeignKeyConstraint
+                constraintName="fk_admin_ssh_issued_key_device"
+                baseTableName="admin_ssh_issued_key" baseColumnNames="device_id"
+                referencedTableName="device_registry" referencedColumnNames="id"
+                onDelete="CASCADE"/>
+        <rollback>
+            <dropForeignKeyConstraint baseTableName="admin_ssh_issued_key"
+                                      constraintName="fk_admin_ssh_issued_key_device"/>
+        </rollback>
+    </changeSet>
+
+    <changeSet id="172-admin-ssh-issued-key-license-fk" author="hugmesh">
+        <comment>FK: license_id references the backing device_ssh_license row whose
+                 key_fingerprints carries this credential's fingerprint (the enforcement
+                 record). No cascade — the license row outlives a single issued credential
+                 (other credentials/fingerprints may share it) and is itself an audit row.</comment>
+        <addForeignKeyConstraint
+                constraintName="fk_admin_ssh_issued_key_license"
+                baseTableName="admin_ssh_issued_key" baseColumnNames="license_id"
+                referencedTableName="device_ssh_license" referencedColumnNames="id"/>
+        <rollback>
+            <dropForeignKeyConstraint baseTableName="admin_ssh_issued_key"
+                                      constraintName="fk_admin_ssh_issued_key_license"/>
+        </rollback>
+    </changeSet>
+
+    <changeSet id="172-admin-ssh-issued-key-device-index" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>Index the per-device issued-key lookup (the findActiveForDevice predicate the
+                 issuance service + admin list view use).</comment>
+        <sql>CREATE INDEX idx_admin_ssh_issued_key_device ON admin_ssh_issued_key (device_id)</sql>
+        <rollback>DROP INDEX idx_admin_ssh_issued_key_device</rollback>
+    </changeSet>
+
+    <changeSet id="172-admin-ssh-issued-key-domain-index" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>Index the per-tenant ADMIN read predicate (WHERE domain = :domain).</comment>
+        <sql>CREATE INDEX idx_admin_ssh_issued_key_domain ON admin_ssh_issued_key (domain)</sql>
+        <rollback>DROP INDEX idx_admin_ssh_issued_key_domain</rollback>
+    </changeSet>
+
+    <changeSet id="172-admin-ssh-issued-key-grant" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>GRANT SELECT,INSERT,UPDATE on admin_ssh_issued_key to the admin_bff role (issue
+                 = INSERT; downloaded_at stamp + revoke CAS = UPDATE). NEVER DELETE — the row is
+                 the issuance audit trail.</comment>
+        <sql>GRANT SELECT, INSERT, UPDATE ON admin_ssh_issued_key TO admin_bff</sql>
+        <rollback>REVOKE SELECT, INSERT, UPDATE ON admin_ssh_issued_key FROM admin_bff</rollback>
+    </changeSet>
+</databaseChangeLog>

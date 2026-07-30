@@ -1,0 +1,66 @@
+# Backup worker Job — TEMPLATE. The admin BFF (BackupOrchestrator.renderManifest)
+# substitutes the ${...} placeholders and applies it with the backup-worker
+# ServiceAccount (jobs/rbac.yaml). One Job per backup.
+#
+# The password for an encrypted backup is NOT in this template. The BFF creates an
+# EPHEMERAL Secret (backup-pw-${JOB_ID}) with ownerReference -> this Job, mounts it
+# read-only at /run/backup, and the Job's deletion garbage-collects the Secret.
+# The password is therefore never an env var, never in the manifest, never logged.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: hugmesh-backup-${JOB_ID}
+  namespace: hugmesh-backend
+  labels:
+    app.kubernetes.io/part-of: hugmesh
+    app.kubernetes.io/component: backup-worker
+    hugmesh.systems/backup-id: "${JOB_ID}"
+spec:
+  ttlSecondsAfterFinished: 3600   # auto-reap the Job (and its owned ephemeral Secret) 1h after finish
+  backoffLimit: 1
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: backup-worker
+    spec:
+      serviceAccountName: backup-worker
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        fsGroup: 65532
+      containers:
+        - name: worker
+          image: registry.hugmesh.systems/hugmesh/backup-worker:latest  # etcdctl+kubectl+pg_dump+rsync+openssl
+          command: ["/bin/sh", "/scripts/backup-worker.sh"]
+          env:
+            - { name: JOB_ID,       value: "${JOB_ID}" }
+            - { name: MODE,         value: "backup" }
+            - { name: SCOPE,        value: "${SCOPE}" }
+            - { name: TARGET,       value: "${TARGET}" }
+            - { name: ENCRYPTED,    value: "${ENCRYPTED}" }
+            - { name: LOCATION_REF, value: "${LOCATION_REF}" }
+            - { name: CLOUD_DIR,    value: "/work" }
+            - { name: USB_MOUNT,    value: "/mnt/usb" }
+            - { name: PASSWORD_FILE, value: "/run/backup/password" }   # only present when ENCRYPTED=true
+          volumeMounts:
+            - { name: work, mountPath: /work }
+            - { name: scripts, mountPath: /scripts, readOnly: true }
+            # USB target: the device is bind-mounted onto the node and exposed here.
+            - { name: usb, mountPath: /mnt/usb }
+            # Ephemeral password Secret — present only for encrypted jobs.
+            - { name: password, mountPath: /run/backup, readOnly: true }
+          resources:
+            requests: { cpu: "100m", memory: "256Mi" }
+            limits:   { cpu: "500m", memory: "1Gi" }
+      volumes:
+        - name: scripts
+          configMap: { name: backup-worker-script, defaultMode: 0555 }
+        - name: work
+          persistentVolumeClaim: { claimName: hugmesh-backup-staging }
+        - name: usb
+          hostPath: { path: /mnt/hugmesh-usb, type: DirectoryOrCreate }
+        - name: password
+          secret:
+            secretName: backup-pw-${JOB_ID}
+            optional: true   # absent for unencrypted backups

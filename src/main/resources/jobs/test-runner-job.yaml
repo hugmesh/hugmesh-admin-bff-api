@@ -1,0 +1,70 @@
+# Test-runner Job — TEMPLATE. The admin BFF (TestRunOrchestrator.renderManifest)
+# substitutes the ${...} placeholders and applies it with the test-runner
+# ServiceAccount (jobs/test-runner-rbac.yaml) when testreports.launch.enabled=true.
+# One Job per run (admin POST /bff/admin/test-reports/run OR the cluster orchestrator).
+#
+# The runner image bundles the generator's tests/e2e Playwright suite +
+# tests/qemu/seed-accounts.sh (ENV=test only — forbidden in prod by the prod-hygiene
+# gate). It runs the real-services suite against the in-cluster services, writes the
+# artifact bundle (junit.xml + summary.json + sanitized logs/) to the shared
+# test-reports PVC under run-<ts>-<commit>/, AND POSTs per-(suite,role) events back to
+# the BFF ingest endpoint (POST /bff/admin/test-reports/${RUN_ID}/ingest) using its
+# own pre-minted Casdoor token — so the BFF's bounded SSE sink + the durable
+# test_run_result matrix are fed by the REAL run, not a synthetic progression.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: hugmesh-test-runner-${RUN_ID}
+  namespace: hugmesh-backend
+  labels:
+    app.kubernetes.io/part-of: hugmesh
+    app.kubernetes.io/component: test-runner
+    hugmesh.systems/test-run-id: "${RUN_ID}"
+    hugmesh.systems/test-tier: "${TIER}"
+spec:
+  ttlSecondsAfterFinished: 86400   # keep the finished Job 24h for log inspection, then reap
+  backoffLimit: 0                  # a failed run is a result, not something to retry blindly
+  activeDeadlineSeconds: 3600      # a hung suite ERRORs the run rather than running forever
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: test-runner
+        hugmesh.systems/test-run-id: "${RUN_ID}"
+    spec:
+      serviceAccountName: test-runner
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        fsGroup: 65532
+      containers:
+        - name: runner
+          image: registry.hugmesh.systems/hugmesh/test-runner:latest  # Playwright + seed-accounts.sh
+          command: ["/bin/sh", "/runner/run-suite.sh"]
+          env:
+            - { name: RUN_ID,         value: "${RUN_ID}" }
+            - { name: TIER,           value: "${TIER}" }          # LEAN | HEAVY
+            - { name: COMMIT_SHA,     value: "${COMMIT_SHA}" }
+            - { name: TRIGGER_SOURCE, value: "${TRIGGER_SOURCE}" }
+            - { name: SNAP_REAL_SERVICES, value: "1" }             # the spec self-check guard
+            # The BFF ingest endpoint the runner POSTs per-(suite,role) events to.
+            - { name: INGEST_URL, value: "https://hugmesh-admin-bff-api.hugmesh-backend.svc.cluster.local:8443/bff/admin/test-reports/${RUN_ID}/ingest" }
+            # The runner's own pre-minted Casdoor token (client-credentials, ROLE_ADMIN-
+            # scoped to the ingest path) lives in this Secret — NEVER in the manifest.
+            - name: INGEST_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: test-runner-ingest-token
+                  key: token
+                  optional: true
+            # The PVC-relative bundle dir the runner writes + reports back as report_ref.
+            - { name: REPORT_DIR, value: "/reports" }
+          volumeMounts:
+            - { name: reports, mountPath: /reports }
+          resources:
+            # LEAN sizing; the HEAVY tier overlay bumps these (kafka/clickhouse paths).
+            requests: { cpu: "250m", memory: "512Mi" }
+            limits:   { cpu: "1",    memory: "1536Mi" }
+      volumes:
+        - name: reports
+          persistentVolumeClaim: { claimName: hugmesh-test-reports }

@@ -1,0 +1,379 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+      cloud-backups — the admin-bff SOURCE OF TRUTH catalog for the per-domain + superadmin
+      TOTAL-CLOUD encrypted, versioned backups feature (Velero + kopia/restic AES repo). This
+      is the FOUNDATION leg: the durable catalog + the endpoints. The generator (Velero
+      destinations/schedules) and admin-ui legs follow later; this leg SHIPS DARK — the
+      Velero effector is STUBBED behind a Noop (NoopBackupEffector), so creating a backup_set
+      records a PENDING catalog row and emits NO real Velero job yet.
+
+      THREE tables:
+
+        backup_set       — one BACKUP REQUEST / job. scope DOMAIN (a brand admin backs up
+                           their own brand) or TOTAL (superadmin-only, the whole cloud).
+                           VERSIONED: a chain of sets sharing a `set_key` (the logical backup
+                           identity); each new run is a fresh row with an incremented
+                           `version`, so the history is the version chain and restore targets a
+                           specific row. created_by = the JWT SUBJECT (owner == subject,
+                           fail-closed). encryption_meta carries a repo / age-recipient
+                           REFERENCE only — NEVER the key bytes (the AES repo key rides a K8s
+                           Secret via ESO / superadmin Vault custody, never this DB).
+
+        backup_artifact  — the per-SERVICE rows under a backup_set (one row per selected
+                           running service): kind db_dump / pv_snapshot / config, a size, a
+                           per-artifact status. The set's overall status aggregates these.
+
+        backup_destination — the per-domain destination CONFIG (object_store vs node_storage).
+                           node_storage = the superadmin device-attached FDE volume (a
+                           node_storage_pool reference). A secret_ref points at the object-store
+                           credentials Secret; NEVER the credential bytes.
+
+      ── Portable DDL (mirrors 011-device-license-registry.xml / 085-node-storage.xml /
+         140-desktop-app-governance.xml EXACTLY) ────────────────────────────────────────────
+      id is an app-generated varchar(36) UUID string (NOT a Postgres uuid column with
+      gen_random_uuid()), so the INSERT is portable across Postgres and the H2
+      (PostgreSQL-compat, NON_KEYWORDS) test store with no pgcrypto dependency, and the app
+      can return the new row id. timestamptz -> the portable Liquibase 'timestamp with time
+      zone' generic type, defaultValueComputed="now()". One changeSet per CHECK / unique /
+      FK / index / GRANT (independent redeploy + rollback). PG-only partial-uniques + indexes +
+      GRANT are gated with a dbms=postgresql precondition (onFail/onError=MARK_RAN) so they
+      apply only on Postgres; the H2 path relies on the service guards (exactly like 011/085/140).
+
+      ── DOMAIN / TOTAL scope ─────────────────────────────────────────────────────────────
+      Every table carries a per-row `domain` tenant discriminator. For a DOMAIN-scope set it
+      is the brand admin's VALIDATED-ISSUER domain (never client-supplied); a scoped ADMIN
+      reads/writes only their own brand's rows (the 010 pattern). A TOTAL-scope set is
+      SUPERADMIN-only and stamped with the superadmin's home domain for the row it writes; it
+      is read cross-domain by the superadmin. The total-scope vs domain-scope role gate is
+      enforced in the service/controller layer (TOTAL -> hasRole('SUPERADMIN')); the schema
+      only records the scope discriminator + a CHECK on its vocabulary.
+
+      ── Versioning ──────────────────────────────────────────────────────────────────────
+      set_key is the LOGICAL backup identity (stable across runs); version is the monotonic
+      run number within a (domain, set_key). The version-history endpoint lists the chain;
+      restore targets one row id within it. The next version is allocated by the service
+      (MAX(version)+1 within the (domain,set_key)), exactly like the device-license
+      maxGeneration idiom — the H2 path relies on the service guard, the PG path adds a
+      partial-unique-ish ordering index.
+
+      ── Band: 160 (the cloud-backups band) ───────────────────────────────────────────────
+      Current max changelog band on main is 140-142 (desktop-app-governance). 150-159 is
+      RESERVED for the Casdoor MFA build, so this picks the NEXT FREE band ABOVE that reserve:
+      160-162. Appended LAST at the include site in db.changelog-master.xml, after the 140
+      include.
+    -->
+
+    <!-- ════════════════════════════ backup_destination ═════════════════════════════════ -->
+
+    <changeSet id="160-backup-destination" author="hugmesh">
+        <comment>backup_destination — the per-domain destination CONFIG (object_store vs
+                 node_storage). node_storage = the superadmin device-attached FDE volume (a
+                 node_storage_pool reference). secret_ref / pool_ref are REFERENCES only —
+                 never credential bytes. domain stamped from the validated issuer.</comment>
+        <createTable tableName="backup_destination">
+            <column name="id" type="varchar(36)">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <!-- the destination KIND: object_store (S3/MinIO-compatible) or node_storage
+                 (the superadmin device-attached FDE volume = a node_storage_pool). -->
+            <column name="kind" type="varchar(24)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- object_store: the bucket / endpoint reference. node_storage: the
+                 node_storage_pool id (the FDE volume the dump lands on). NEVER credentials. -->
+            <column name="destination_ref" type="varchar(512)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- the object-store credentials Secret REFERENCE (ESO / Vault). NULL for
+                 node_storage (the FDE volume is unlocked at the node, not via this DB).
+                 NEVER the credential bytes. -->
+            <column name="secret_ref" type="varchar(512)"/>
+            <!-- home/tenant discriminator for the ADMIN read view — stamped from the
+                 validated issuer (defaults 'default' for single-issuer clusters, the 010
+                 tenant-discriminator pattern). -->
+            <column name="domain" type="varchar(64)" defaultValue="default">
+                <constraints nullable="false"/>
+            </column>
+            <column name="updated_by" type="varchar(400)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="created_at" type="timestamp with time zone" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+            <column name="updated_at" type="timestamp with time zone"/>
+        </createTable>
+    </changeSet>
+
+    <changeSet id="160-backup-destination-kind-check" author="hugmesh">
+        <comment>CHECK: kind is object_store or node_storage.</comment>
+        <sql>
+            ALTER TABLE backup_destination
+                ADD CONSTRAINT ck_backup_destination_kind
+                CHECK (kind IN ('object_store', 'node_storage'))
+        </sql>
+        <rollback>ALTER TABLE backup_destination DROP CONSTRAINT ck_backup_destination_kind</rollback>
+    </changeSet>
+
+    <changeSet id="160-backup-destination-domain-unique" author="hugmesh">
+        <comment>UNIQUE per domain: at most one destination config row per brand (PUT is an
+                 upsert on the domain). Portable plain UNIQUE (works on Postgres + H2).</comment>
+        <addUniqueConstraint tableName="backup_destination"
+                             columnNames="domain"
+                             constraintName="uq_backup_destination_domain"/>
+        <rollback>
+            <dropUniqueConstraint tableName="backup_destination"
+                                  constraintName="uq_backup_destination_domain"/>
+        </rollback>
+    </changeSet>
+
+    <changeSet id="160-backup-destination-grant" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>GRANT SELECT,INSERT,UPDATE on backup_destination to admin_bff (PUT upserts
+                 the per-domain config; never DELETEd).</comment>
+        <sql>GRANT SELECT, INSERT, UPDATE ON backup_destination TO admin_bff</sql>
+        <rollback>REVOKE SELECT, INSERT, UPDATE ON backup_destination FROM admin_bff</rollback>
+    </changeSet>
+
+    <!-- ════════════════════════════════ backup_set ═════════════════════════════════════ -->
+
+    <changeSet id="161-backup-set" author="hugmesh">
+        <comment>backup_set — one backup REQUEST/job. scope DOMAIN (brand admin, own brand) or
+                 TOTAL (superadmin-only, whole cloud). VERSIONED: a chain sharing set_key, each
+                 run a fresh row with version+1. created_by = JWT SUBJECT (owner == subject).
+                 encryption_meta is a repo / age-recipient REFERENCE only — never the key.</comment>
+        <createTable tableName="backup_set">
+            <column name="id" type="varchar(36)">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <!-- the LOGICAL backup identity, stable across runs (the version chain key). -->
+            <column name="set_key" type="varchar(128)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- monotonic run number within a (domain, set_key). Allocated MAX(version)+1 by
+                 the service (the maxGeneration idiom); the version-history endpoint lists the
+                 chain; restore targets one row id. -->
+            <column name="version" type="bigint" defaultValueNumeric="1">
+                <constraints nullable="false"/>
+            </column>
+            <!-- DOMAIN (brand admin, own brand) or TOTAL (superadmin-only, whole cloud). -->
+            <column name="scope" type="varchar(16)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- home/tenant discriminator. For DOMAIN scope = the validated-issuer brand; for
+                 TOTAL scope = the superadmin's home domain (the row is read cross-domain). -->
+            <column name="domain" type="varchar(64)" defaultValue="default">
+                <constraints nullable="false"/>
+            </column>
+            <!-- the JWT SUBJECT that requested the backup (owner == subject, fail-closed). -->
+            <column name="created_by" type="varchar(400)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- the selected running services, a JSON array of service keys (the per-service
+                 backup menu). Portable: stored as text (JSON), not a PG text[]. -->
+            <column name="services" type="clob"/>
+            <!-- the destination KIND chosen for this run (object_store / node_storage) + the
+                 ref (denormalised from backup_destination at request time so the run is
+                 reproducible even if the config changes later). -->
+            <column name="destination_kind" type="varchar(24)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="destination_ref" type="varchar(512)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- total size in bytes once complete (NULL while pending/running). -->
+            <column name="size_bytes" type="bigint"/>
+            <!-- encryption metadata, a JSON object: { repo, recipientRef, algo } — the AES
+                 repo / age recipient REFERENCE only. NEVER the key bytes. -->
+            <column name="encryption_meta" type="clob"/>
+            <column name="status" type="varchar(16)" defaultValue="pending">
+                <constraints nullable="false"/>
+            </column>
+            <column name="created_at" type="timestamp with time zone" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+            <column name="started_at" type="timestamp with time zone"/>
+            <column name="completed_at" type="timestamp with time zone"/>
+        </createTable>
+    </changeSet>
+
+    <changeSet id="161-backup-set-scope-check" author="hugmesh">
+        <comment>CHECK: scope is DOMAIN or TOTAL (the closed vocabulary the role gate keys on).</comment>
+        <sql>
+            ALTER TABLE backup_set
+                ADD CONSTRAINT ck_backup_set_scope
+                CHECK (scope IN ('DOMAIN', 'TOTAL'))
+        </sql>
+        <rollback>ALTER TABLE backup_set DROP CONSTRAINT ck_backup_set_scope</rollback>
+    </changeSet>
+
+    <changeSet id="161-backup-set-status-check" author="hugmesh">
+        <comment>CHECK: status is one of the four lifecycle values.</comment>
+        <sql>
+            ALTER TABLE backup_set
+                ADD CONSTRAINT ck_backup_set_status
+                CHECK (status IN ('pending', 'running', 'complete', 'failed'))
+        </sql>
+        <rollback>ALTER TABLE backup_set DROP CONSTRAINT ck_backup_set_status</rollback>
+    </changeSet>
+
+    <changeSet id="161-backup-set-destination-kind-check" author="hugmesh">
+        <comment>CHECK: destination_kind is object_store or node_storage (same vocabulary as
+                 backup_destination.kind).</comment>
+        <sql>
+            ALTER TABLE backup_set
+                ADD CONSTRAINT ck_backup_set_destination_kind
+                CHECK (destination_kind IN ('object_store', 'node_storage'))
+        </sql>
+        <rollback>ALTER TABLE backup_set DROP CONSTRAINT ck_backup_set_destination_kind</rollback>
+    </changeSet>
+
+    <changeSet id="161-backup-set-version-check" author="hugmesh">
+        <comment>CHECK: a version is strictly positive (the chain starts at 1).</comment>
+        <sql>
+            ALTER TABLE backup_set
+                ADD CONSTRAINT ck_backup_set_version
+                CHECK (version > 0)
+        </sql>
+        <rollback>ALTER TABLE backup_set DROP CONSTRAINT ck_backup_set_version</rollback>
+    </changeSet>
+
+    <!--
+      Partial-style UNIQUE: one row per (domain, set_key, version) so the version chain is
+      well-ordered and a re-allocated version can't duplicate. Portable plain UNIQUE (works on
+      both Postgres and H2) — NOT partial, so no dbms gate needed. The version allocation
+      (MAX+1) is still the service's job; this is the backstop.
+    -->
+    <changeSet id="161-backup-set-version-unique" author="hugmesh">
+        <comment>UNIQUE per (domain, set_key, version): the version chain is well-ordered.</comment>
+        <addUniqueConstraint tableName="backup_set"
+                             columnNames="domain, set_key, version"
+                             constraintName="uq_backup_set_version"/>
+        <rollback>
+            <dropUniqueConstraint tableName="backup_set"
+                                  constraintName="uq_backup_set_version"/>
+        </rollback>
+    </changeSet>
+
+    <changeSet id="161-backup-set-domain-index" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>Index the per-tenant read predicate on backup_set.</comment>
+        <sql>CREATE INDEX idx_backup_set_domain ON backup_set (domain)</sql>
+        <rollback>DROP INDEX idx_backup_set_domain</rollback>
+    </changeSet>
+
+    <changeSet id="161-backup-set-key-index" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>Index the version-chain scan (MAX(version) within a (domain, set_key)).</comment>
+        <sql>CREATE INDEX idx_backup_set_key ON backup_set (domain, set_key)</sql>
+        <rollback>DROP INDEX idx_backup_set_key</rollback>
+    </changeSet>
+
+    <changeSet id="161-backup-set-grant" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>GRANT SELECT,INSERT,UPDATE on backup_set to admin_bff (status transitions are
+                 UPDATEs; the version chain is the history — rows are never DELETEd).</comment>
+        <sql>GRANT SELECT, INSERT, UPDATE ON backup_set TO admin_bff</sql>
+        <rollback>REVOKE SELECT, INSERT, UPDATE ON backup_set FROM admin_bff</rollback>
+    </changeSet>
+
+    <!-- ════════════════════════════════ backup_artifact ════════════════════════════════ -->
+
+    <changeSet id="162-backup-artifact" author="hugmesh">
+        <comment>backup_artifact — the per-SERVICE rows under a backup_set (one per selected
+                 running service): kind db_dump / pv_snapshot / config, a size, a per-artifact
+                 status. The set's overall status aggregates these.</comment>
+        <createTable tableName="backup_artifact">
+            <column name="id" type="varchar(36)">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <!-- the parent backup_set (FK). -->
+            <column name="set_id" type="varchar(36)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- the running service this artifact captures (a service key from the
+                 per-service backup menu). -->
+            <column name="service" type="varchar(253)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- the artifact KIND: db_dump (pg_dump), pv_snapshot (Velero PV snapshot), or
+                 config (ConfigMap/manifest). -->
+            <column name="kind" type="varchar(16)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="size_bytes" type="bigint"/>
+            <column name="status" type="varchar(16)" defaultValue="pending">
+                <constraints nullable="false"/>
+            </column>
+            <column name="created_at" type="timestamp with time zone" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+            <column name="completed_at" type="timestamp with time zone"/>
+        </createTable>
+    </changeSet>
+
+    <changeSet id="162-backup-artifact-kind-check" author="hugmesh">
+        <comment>CHECK: kind is db_dump, pv_snapshot or config.</comment>
+        <sql>
+            ALTER TABLE backup_artifact
+                ADD CONSTRAINT ck_backup_artifact_kind
+                CHECK (kind IN ('db_dump', 'pv_snapshot', 'config'))
+        </sql>
+        <rollback>ALTER TABLE backup_artifact DROP CONSTRAINT ck_backup_artifact_kind</rollback>
+    </changeSet>
+
+    <changeSet id="162-backup-artifact-status-check" author="hugmesh">
+        <comment>CHECK: status is one of the four lifecycle values (same vocabulary as
+                 backup_set.status).</comment>
+        <sql>
+            ALTER TABLE backup_artifact
+                ADD CONSTRAINT ck_backup_artifact_status
+                CHECK (status IN ('pending', 'running', 'complete', 'failed'))
+        </sql>
+        <rollback>ALTER TABLE backup_artifact DROP CONSTRAINT ck_backup_artifact_status</rollback>
+    </changeSet>
+
+    <changeSet id="162-backup-artifact-set-fk" author="hugmesh">
+        <comment>FK: an artifact's set_id references a real backup_set row (the parent job).</comment>
+        <addForeignKeyConstraint
+                constraintName="fk_backup_artifact_set"
+                baseTableName="backup_artifact" baseColumnNames="set_id"
+                referencedTableName="backup_set" referencedColumnNames="id"/>
+        <rollback>
+            <dropForeignKeyConstraint baseTableName="backup_artifact"
+                                      constraintName="fk_backup_artifact_set"/>
+        </rollback>
+    </changeSet>
+
+    <changeSet id="162-backup-artifact-set-index" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>Index the per-set artifact scan (the artifacts under one backup_set).</comment>
+        <sql>CREATE INDEX idx_backup_artifact_set ON backup_artifact (set_id)</sql>
+        <rollback>DROP INDEX idx_backup_artifact_set</rollback>
+    </changeSet>
+
+    <changeSet id="162-backup-artifact-grant" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>GRANT SELECT,INSERT,UPDATE on backup_artifact to admin_bff (status
+                 transitions are UPDATEs; rows are never DELETEd = audit).</comment>
+        <sql>GRANT SELECT, INSERT, UPDATE ON backup_artifact TO admin_bff</sql>
+        <rollback>REVOKE SELECT, INSERT, UPDATE ON backup_artifact FROM admin_bff</rollback>
+    </changeSet>
+</databaseChangeLog>

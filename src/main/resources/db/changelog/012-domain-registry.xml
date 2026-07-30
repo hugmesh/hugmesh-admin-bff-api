@@ -1,0 +1,128 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+      domain_registry — the RUNTIME source of truth for which brands/domains exist
+      in the cluster, and the SUPERADMIN-managed twin of the BUILD-TIME
+      brands/domains.conf that generator PR #79 introduced (multi-tenancy PR9).
+
+      ONE source of truth, two layers (per the multi-tenancy design):
+        * build-time  : hugmesh-generator/brands/domains.conf — the rows baked
+                        into a USB image at generation (the per-domain CA loop).
+        * runtime     : THIS table — the rows a SUPERADMIN adds later from the
+                        admin-ui superadmin module; later PRs materialise these into
+                        a brand-list ArgoCD ApplicationSet (per-brand namespaces, CA,
+                        Casdoor org, gateway/BFF/UI instances). This PR is ONLY the
+                        table + SUPERADMIN-gated CRUD; NO ApplicationSet / provisioning
+                        effector here.
+
+      ── Column mapping: brands/domains.conf -> domain_registry ──────────────────
+      brands/domains.conf is whitespace-separated `DOMAIN [BRAND] [CA_CERT] [CA_KEY]`.
+      The runtime table is a COMPATIBLE SUPERSET so build-time + runtime stay one
+      source of truth:
+
+        conf column   table column      notes
+        ───────────   ────────────      ─────────────────────────────────────────
+        DOMAIN    ->  cluster_domain    the brand's base domain (the CLUSTER_DOMAIN).
+                                        NOT NULL + UNIQUE (the natural key; the app
+                                        validates non-blank + uniqueness).
+        BRAND     ->  brand             short slug used in names; conf defaults it to
+                                        DOMAIN's first DNS label.
+        CA_CERT   ┐                     conf carries FILE PATHS to the imported CA
+        CA_KEY    ┘-> ca_ref            material (the bring-your-own-CA drop-in). The
+                                        RUNTIME table stores only a CA *REFERENCE*
+                                        (e.g. a Vault PKI path / secret name / 'generate')
+                                        — NEVER the cert/key bytes, NEVER a private-key
+                                        path. The CA private key stays on the key-USB /
+                                        Vault; this column is just the pointer the later
+                                        ProvisionCa effector resolves. (One ca_ref folds
+                                        the conf's CA_CERT+CA_KEY pair: a runtime domain
+                                        is generate-by-default, or references imported
+                                        material out-of-band.)
+
+      Superset columns the runtime registry adds (the design's row shape
+      {BRAND, CLUSTER_DOMAIN, ORG, CA-ref, ns-prefix, Casdoor-org, mesh-tag}):
+        org            the brand's organisation/owner label.
+        ns_prefix      the k8s namespace prefix the ApplicationSet expands into
+                       ${ns_prefix}-pki / -backend / -frontend.
+        casdoor_org    the per-brand Casdoor organisation (separate-Casdoor-per-brand;
+                       the token issuer is the per-domain discriminator).
+        mesh_tag       the headscale/tailnet mesh tag for the brand's nodes.
+        enabled        desired-state on/off. A domain is SOFT-DISABLED (enabled=false),
+                       NEVER hard-deleted — a declarative registry does not drop a
+                       live domain out from under ArgoCD.
+        created_at / created_by_subject / updated_at — audit (created_by_subject is
+                       stamped from the SUPERADMIN's jwt.getSubject()).
+
+      ── Portable DDL (mirrors 011-device-license-registry.xml EXACTLY) ──────────
+      id is an app-generated varchar(36) UUID string (NOT a Postgres uuid column with
+      gen_random_uuid()), so the INSERT is portable across Postgres and the H2
+      (PostgreSQL-compat, NON_KEYWORDS) test store with no pgcrypto dependency and the
+      app can return the new row id. timestamptz -> the portable Liquibase
+      'timestamp with time zone' generic type, defaultValueComputed="now()". The
+      PG-only GRANT is gated with a dbms=postgresql precondition (onFail=MARK_RAN) so
+      the H2 test store — which has no admin_bff role — never fails the changelog.
+
+      NOTE: domain_registry is the REGISTRY OF BRANDS itself, so it carries NO per-row
+      tenant `domain` discriminator (the 010 pattern) — it is inherently CROSS-DOMAIN
+      and only ever read/written by the cross-domain SUPERADMIN infra role.
+
+      ── Numbering: 012 ─────────────────────────────────────────────────────────
+      Sits ABOVE 011 and is APPENDED LAST at the include site in
+      db.changelog-master.xml, immediately after the 011 include.
+    -->
+
+    <changeSet id="012-domain-registry" author="hugmesh">
+        <comment>domain_registry — the RUNTIME source of truth for cluster brands/domains
+                 (SUPERADMIN-managed twin of build-time brands/domains.conf).</comment>
+        <createTable tableName="domain_registry">
+            <column name="id" type="varchar(36)">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <!-- brands/domains.conf DOMAIN. The natural key (NOT NULL + UNIQUE). -->
+            <column name="cluster_domain" type="varchar(253)">
+                <constraints nullable="false" unique="true"
+                             uniqueConstraintName="uq_domain_registry_cluster_domain"/>
+            </column>
+            <!-- brands/domains.conf BRAND (short slug). -->
+            <column name="brand" type="varchar(64)"/>
+            <column name="org" type="varchar(255)"/>
+            <!-- brands/domains.conf CA_CERT/CA_KEY -> a CA *reference* (NEVER the bytes). -->
+            <column name="ca_ref" type="varchar(512)"/>
+            <column name="ns_prefix" type="varchar(64)"/>
+            <column name="casdoor_org" type="varchar(255)"/>
+            <column name="mesh_tag" type="varchar(64)"/>
+            <!-- Desired-state on/off; soft-disable instead of hard-delete. -->
+            <column name="enabled" type="boolean" defaultValueBoolean="true">
+                <constraints nullable="false"/>
+            </column>
+            <column name="created_at" type="timestamp with time zone" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+            <!-- Stamped from the SUPERADMIN's jwt.getSubject(). -->
+            <column name="created_by_subject" type="varchar(400)"/>
+            <column name="updated_at" type="timestamp with time zone" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+    </changeSet>
+
+    <changeSet id="012-domain-registry-grant" author="hugmesh">
+        <!-- PostgreSQL-only runtime grant. The H2 test store has no admin_bff role, so
+             GRANT would error there; the dbms precondition skips this changeSet entirely
+             off-Postgres (onFail=MARK_RAN records it as run) so the H2 changelog
+             continues. On a real Postgres deployment the grant applies. No DELETE — a
+             domain is soft-disabled (enabled=false), never hard-deleted. -->
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>GRANT SELECT,INSERT,UPDATE on domain_registry to the admin_bff role
+                 (no DELETE — soft-disable via enabled=false, never hard-delete).</comment>
+        <sql>GRANT SELECT, INSERT, UPDATE ON domain_registry TO admin_bff</sql>
+        <rollback>REVOKE SELECT, INSERT, UPDATE ON domain_registry FROM admin_bff</rollback>
+    </changeSet>
+</databaseChangeLog>

@@ -1,0 +1,157 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+      150 — Casdoor-MFA SUBSTRATE (band 150-159, the reserve the cloud-backups 160 /
+      ssh-terminal 170 bands were deliberately kept ABOVE). This is the D6+D8 opaque-
+      session MFA substrate leg: the columns + table the BFF stamps/consumes a fresh
+      MFA satisfaction off, and the per-(domain,role) policy table that is read DARK
+      (no enforcement wired here — the role_mfa_policy consumer is a later wave).
+
+      SHIPS DARK: nothing is enforced from these columns yet. mfa_satisfied DEFAULTS
+      FALSE so every MFA-gated path fails CLOSED until a fresh, deliberate MFA stamp is
+      written. The step-up gates (A5) treat a fresh mfa_satisfied stamp as a co-equal
+      satisfier ONLY when app.casdoor.mfa.enabled=true (default false), so on a default
+      deployment this band is inert.
+
+      Two changes:
+        - bff_session gets mfa_satisfied (bool, DEFAULT false) + mfa_satisfied_at
+          (timestamp, NULL until the first stamp) + amr (text, NULL) — the per-session
+          MFA satisfaction the cookie-bridge /bff/session hydration reads and the
+          step-up A5 leg evaluates a freshness window against.
+        - role_mfa_policy — the per-(domain,role) MFA REQUIREMENT policy (domain is the
+          validated-issuer-derived tenant discriminator, the 010 pattern; required flag,
+          allowed methods CSV, a grace window). Consumed DARK.
+
+      NOT ADDED HERE: the gateway_route_access.mfa_required 001-copy column is owned by the
+      001/181 route-access changelogs (the dual-write trio leg), not this MFA-substrate band —
+      adding it here would fork the gateway-owned source-of-truth table. (Band 181 is the
+      trio closing leg that materialises that column in lockstep with the gateway CanonicalSeed
+      + generator 20-schema.sql; the sibling 001b changeSet also adds it idempotently.)
+
+      Portable DDL mirrors the 011/160 idioms (one changeSet per column add / CHECK /
+      index / GRANT; PG-only index + GRANT gated dbms=postgresql onFail=MARK_RAN; the
+      H2 test path runs the column adds + the table create + relies on the service
+      guards). Appended LAST at the include site, after the 172 include.
+    -->
+
+    <!-- ═══════════════════════ bff_session MFA columns ═══════════════════════════════ -->
+
+    <changeSet id="150-bff-session-mfa-satisfied" author="hugmesh">
+        <comment>bff_session.mfa_satisfied — whether this opaque session has a CURRENT MFA
+                 satisfaction. DEFAULT false so MFA-gated paths fail CLOSED until a fresh,
+                 deliberate stamp is written. Ships dark (app.casdoor.mfa.enabled=false).</comment>
+        <addColumn tableName="bff_session">
+            <column name="mfa_satisfied" type="boolean" defaultValueBoolean="false">
+                <constraints nullable="false"/>
+            </column>
+        </addColumn>
+        <rollback>
+            <dropColumn tableName="bff_session" columnName="mfa_satisfied"/>
+        </rollback>
+    </changeSet>
+
+    <changeSet id="150-bff-session-mfa-satisfied-at" author="hugmesh">
+        <comment>bff_session.mfa_satisfied_at — the instant the MFA satisfaction was stamped.
+                 NULL until the first stamp. The A5 step-up freshness window
+                 (app.casdoor.mfa.freshness, default 10m) is measured from here, so a stale
+                 stamp no longer satisfies step-up even though mfa_satisfied stays true.</comment>
+        <addColumn tableName="bff_session">
+            <column name="mfa_satisfied_at" type="timestamp"/>
+        </addColumn>
+        <rollback>
+            <dropColumn tableName="bff_session" columnName="mfa_satisfied_at"/>
+        </rollback>
+    </changeSet>
+
+    <changeSet id="150-bff-session-amr" author="hugmesh">
+        <comment>bff_session.amr — the Authentication Method Reference(s) recorded at the MFA
+                 challenge (e.g. "webauthn", "otp", "mfa"). NULL until set. Diagnostic /
+                 audit only in this band; the step-up A5 leg keys on mfa_satisfied + freshness,
+                 not amr.</comment>
+        <addColumn tableName="bff_session">
+            <column name="amr" type="clob"/>
+        </addColumn>
+        <rollback>
+            <dropColumn tableName="bff_session" columnName="amr"/>
+        </rollback>
+    </changeSet>
+
+    <!-- ═══════════════════════════ role_mfa_policy ══════════════════════════════════ -->
+
+    <changeSet id="150-role-mfa-policy" author="hugmesh">
+        <comment>role_mfa_policy — the per-(domain,role) MFA REQUIREMENT policy. domain is the
+                 validated-issuer-derived tenant discriminator (the 010 pattern, default
+                 'default' for single-issuer clusters); required flips MFA on for the role;
+                 methods is a CSV of allowed methods (webauthn,otp,recovery); grace_seconds is
+                 the re-prompt grace. Consumed DARK — nothing enforces this table in this band;
+                 the per-role-default enforcement is a later wave.</comment>
+        <createTable tableName="role_mfa_policy">
+            <column name="id" type="varchar(36)">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <!-- the validated-issuer-derived tenant discriminator (010 pattern). -->
+            <column name="domain" type="varchar(64)" defaultValue="default">
+                <constraints nullable="false"/>
+            </column>
+            <!-- the role the policy applies to (lowercase, e.g. superadmin/admin/mod/user). -->
+            <column name="role" type="varchar(64)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- whether MFA is REQUIRED for the role in the domain. -->
+            <column name="required" type="boolean" defaultValueBoolean="false">
+                <constraints nullable="false"/>
+            </column>
+            <!-- CSV of allowed MFA methods (e.g. "webauthn,otp,recovery"). NULL = any. -->
+            <column name="methods" type="varchar(256)"/>
+            <!-- re-prompt grace window in seconds (0 = always re-prompt). -->
+            <column name="grace_seconds" type="bigint" defaultValueNumeric="0">
+                <constraints nullable="false"/>
+            </column>
+            <column name="updated_by" type="varchar(400)"/>
+            <column name="created_at" type="timestamp" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+            <column name="updated_at" type="timestamp"/>
+        </createTable>
+        <rollback>
+            <dropTable tableName="role_mfa_policy"/>
+        </rollback>
+    </changeSet>
+
+    <changeSet id="150-role-mfa-policy-domain-role-unique" author="hugmesh">
+        <comment>UNIQUE per (domain, role): at most one policy row per role within a brand
+                 (an upsert keys on this). Portable plain UNIQUE (Postgres + H2).</comment>
+        <addUniqueConstraint tableName="role_mfa_policy"
+                             columnNames="domain, role"
+                             constraintName="uq_role_mfa_policy_domain_role"/>
+        <rollback>
+            <dropUniqueConstraint tableName="role_mfa_policy"
+                                  constraintName="uq_role_mfa_policy_domain_role"/>
+        </rollback>
+    </changeSet>
+
+    <changeSet id="150-role-mfa-policy-domain-index" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>Index the per-tenant read predicate on role_mfa_policy.</comment>
+        <sql>CREATE INDEX idx_role_mfa_policy_domain ON role_mfa_policy (domain)</sql>
+        <rollback>DROP INDEX idx_role_mfa_policy_domain</rollback>
+    </changeSet>
+
+    <changeSet id="150-role-mfa-policy-grant" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>GRANT SELECT,INSERT,UPDATE on role_mfa_policy to admin_bff (upsert per
+                 (domain,role); never DELETEd).</comment>
+        <sql>GRANT SELECT, INSERT, UPDATE ON role_mfa_policy TO admin_bff</sql>
+        <rollback>REVOKE SELECT, INSERT, UPDATE ON role_mfa_policy FROM admin_bff</rollback>
+    </changeSet>
+
+</databaseChangeLog>

@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+      phone_device MDM-PROVIDER columns (wave 2) — Azure Intune as a co-equal provider
+      alongside the sovereign self-hosted Headwind default. Strictly additive over
+      302/303/304/305/306.
+
+      mdm_provider:      which MDM backend the wizard enrolled the device with — 'headwind'
+                         (self-hosted DPC, the sovereign DEFAULT) or 'azure-intune' (Microsoft
+                         Graph / Intune). NOT NULL DEFAULT 'headwind' so pre-307 rows AND a v1
+                         ingest (no provider field) land as 'headwind'.
+      intune_device_id:  the Graph managedDevice id the Intune lock leg targets
+                         (POST .../managedDevices/{id}/remoteLock); NULL for a Headwind device.
+
+      ── TRUST POSTURE (the crux) ────────────────────────────────────────────────────
+      UNLIKE the 304 management/lock and 305 owner columns (OPERATOR-authoritative, set only
+      on /bff/superadmin/**, OMITTED from the ingest path), these two are DEVICE-REPORTED
+      TELEMETRY — the wizard knows which backend it enrolled with, exactly like the 303
+      mdm_dpc_package / mdm_set_via facts — so they ARE written by the phone-ingest INSERT +
+      REFRESH column lists. They are ADVISORY self-report and confer NO access: the enforcer
+      merely fans a lock to the DPC leg matching the reported provider, but the control-plane
+      lock state (lock_state / lock_generation) stays AUTHORITATIVE regardless. An unknown or
+      spoofed provider only DEGRADES enforcement (the matching leg no-ops / is not selected) —
+      it can NEVER block or clear the authoritative lock record.
+
+      Numbering: band 307 (next free above 306-fleet-entitlement). Registered in numeric order
+      BEFORE the pre-existing 310-backing-service-mode include in db.changelog-master.xml.
+
+      Modeling (mirrors 303/304): mdm_provider is NOT NULL with an inline defaultValue so the
+      column backfills the pre-307 rows unambiguously (the mdm_enrolled / management_mode
+      pattern); intune_device_id defaults NULL. Varchar sizes: mdm_provider is a short enum
+      label (32); intune_device_id like a device id band (128, mirroring device_id). The CHECK
+      constraint is its own changeSet (independent redeploy + rollback), exactly like the 302
+      device_class and 304 state/propagation checks. The 302 GRANT already covers table-level
+      SELECT/INSERT/UPDATE, so addColumn needs NO new grant; an ingest writes them via UPDATE.
+    -->
+
+    <!-- ═════════════════════ phone_device mdm-provider columns ════════════════════ -->
+    <changeSet id="307-phone-device-provider-columns" author="hugmesh">
+        <comment>Device-reported MDM-provider telemetry (mdm_provider + intune_device_id).
+                 Written by the ingest path (advisory self-report), UNLIKE the operator
+                 authoritative 304/305 columns. Default 'headwind' backfills pre-307 rows and
+                 a v1 ingest; an unknown/spoofed provider only degrades enforcement, never the
+                 authoritative lock record.</comment>
+        <addColumn tableName="phone_device">
+            <!-- Which MDM backend enrolled the device: 'headwind' (sovereign default) or
+                 'azure-intune'. NOT NULL DEFAULT 'headwind' (the mdm_enrolled/management_mode
+                 model): backfills pre-307 rows and keeps a v1 ingest's fold unambiguous. -->
+            <column name="mdm_provider" type="varchar(32)" defaultValue="headwind">
+                <constraints nullable="false"/>
+            </column>
+            <!-- The Graph managedDevice id the Intune remoteLock leg targets; NULL for a
+                 Headwind device (the DPC lock keys on device_id, not this). Sized like the
+                 device id band. -->
+            <column name="intune_device_id" type="varchar(128)"/>
+        </addColumn>
+    </changeSet>
+
+    <changeSet id="307-phone-device-provider-check" author="hugmesh">
+        <comment>CHECK: mdm_provider is one of the two co-equal providers — 'headwind' (the
+                 sovereign self-hosted default) or 'azure-intune' (Microsoft Graph/Intune). A
+                 spoofed value outside this set is rejected at the row; even so it would only
+                 degrade enforcement, never the authoritative lock state.</comment>
+        <sql>
+            ALTER TABLE phone_device
+                ADD CONSTRAINT ck_phone_device_mdm_provider
+                CHECK (mdm_provider IN ('headwind', 'azure-intune'))
+        </sql>
+        <rollback>ALTER TABLE phone_device DROP CONSTRAINT ck_phone_device_mdm_provider</rollback>
+    </changeSet>
+
+</databaseChangeLog>

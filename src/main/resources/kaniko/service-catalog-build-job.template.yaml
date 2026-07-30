@@ -1,0 +1,66 @@
+# Service-Catalog Kaniko Build Job — TEMPLATE.
+# KanikoBuildLauncher (servicecatalog package) substitutes the ${...} placeholders
+# and creates this Job in the build namespace when app.appstore.builder.enabled=true.
+# One Job per service-catalog DOCKERFILE source build.
+#
+# SHIPS DARK: with app.appstore.builder.enabled=false (the DEFAULT) this template is
+# never applied — KanikoBuildLauncher is not wired, so no real build runs.
+#
+# Placeholders:
+#   ${BUILD_NAME}         — the sanitised <brand>-<service>-<shortSha> Job name
+#   ${BUILD_NAMESPACE}    — the build isolation namespace (app.appstore.builder.namespace)
+#   ${CONTEXT}            — the Kaniko build context (git:// URL for DOCKERFILE sources)
+#   ${DOCKERFILE}         — the Dockerfile path within the context repo
+#   ${DEST_IMAGE}         — the image ref with the SHA tag (brand/service:sha)
+#   ${DEST_IMAGE_MOVING}  — the image ref with the branch/moving tag (brand/service:branch)
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ${BUILD_NAME}
+  namespace: ${BUILD_NAMESPACE}
+  labels:
+    app.kubernetes.io/part-of: hugmesh
+    app.kubernetes.io/component: service-catalog-builder
+    hugmesh.systems/build-name: "${BUILD_NAME}"
+spec:
+  ttlSecondsAfterFinished: 86400   # keep the finished Job 24h for log inspection, then reap
+  backoffLimit: 0                  # a failed build is a result, not something to retry blindly
+  activeDeadlineSeconds: 1800      # 30-minute hard cap — a hung build ERRORs rather than running forever
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: service-catalog-builder
+        hugmesh.systems/build-name: "${BUILD_NAME}"
+    spec:
+      serviceAccountName: service-catalog-builder
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        fsGroup: 65532
+      containers:
+        - name: kaniko
+          image: gcr.io/kaniko-project/executor:latest
+          args:
+            - "--context=${CONTEXT}"
+            - "--dockerfile=${DOCKERFILE}"
+            - "--destination=${DEST_IMAGE}"
+            - "--destination=${DEST_IMAGE_MOVING}"
+            - "--cache=true"
+            - "--cache-repo=${DEST_IMAGE_MOVING}-cache"
+          volumeMounts:
+            - name: registry-credentials
+              mountPath: /kaniko/.docker/
+              readOnly: true
+          resources:
+            requests: { cpu: "500m", memory: "1Gi" }
+            limits:   { cpu: "2",    memory: "4Gi" }
+      volumes:
+        - name: registry-credentials
+          secret:
+            # ESO-synced registry push credentials (config.json format for the HugMesh registry).
+            # Created by the generator's service-catalog-builder bootstrap manifest.
+            secretName: service-catalog-registry-credentials
+            items:
+              - key: config.json
+                path: config.json

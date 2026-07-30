@@ -1,0 +1,302 @@
+# admin-bff — the Backend-For-Frontend that the hugmesh-admin-ui talks to for
+# the /bff/admin/** + /bff/superadmin/** control plane (allowlist, route-access,
+# suspension, device-licenses, app-store, etc.). Note: /bff/login, /bff/register,
+# /bff/provision, /bff/me are in-transition to user-bff (login/session
+# orchestration is being relocated; account data stays in admin-bff-db and is
+# served over /bff/internal).
+#
+# It is the ONLY writer of the gateway_route_access table (Postgres source of
+# truth in hugmesh-pki; the gateways read-cache it in Cassandra). It is a
+# ClusterIP-only service in hugmesh-backend: nothing reaches it from outside
+# except via the fe-gateway, which routes same-origin /bff/** to it AND enforces
+# the Casdoor role rules (/bff/admin/** => ROLE_ADMIN) from the route DB first.
+#
+# Defense in depth: this BFF independently re-validates the Casdoor JWT
+# (OAuth2 resource server, CASDOOR_ISSUER_URI) before mutating the route DB.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hugmesh-admin-bff-api
+  namespace: hugmesh-backend
+  labels: { app: hugmesh-admin-bff-api, app.kubernetes.io/part-of: hugmesh.systems }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: hugmesh-admin-bff-api } }
+  template:
+    metadata: { labels: { app: hugmesh-admin-bff-api } }
+    spec:
+      nodeSelector: { hugmesh.systems/backend: "true" }
+      # ── Cloud-backups effector identity (least-privilege Velero CR apply) ────
+      # The cloudbackup VeleroBackupEffector's fabric8 in-cluster client runs as
+      # THIS pod's ServiceAccount. backups-effector (manifests/velero/rbac.yaml) is
+      # bound ONLY to create/get/list/patch velero.io Backup/Restore CRs in the
+      # `velero` namespace — NOT cluster-admin, NOT the Velero server SA. The token
+      # is unused while the effector ships dark (BACKUPS_EFFECTOR_ENABLED=false
+      # below); enabling backups (a superadmin opt-in) is what lights this seam up.
+      # automount is required so the in-cluster client can read the SA token.
+      serviceAccountName: backups-effector
+      automountServiceAccountToken: true
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile: { type: RuntimeDefault }
+        seLinuxOptions:
+          type: container_t
+          level: "s0:c23"
+      # ── API-to-API mTLS identity (build-keystore) ───────────────────────────
+      # Mirrors the hugmesh-gateway chart's build-keystore initContainer. It
+      # turns the Vault-PKI-issued, ESO-synced TLS Secret
+      # (hugmesh-admin-bff-api-mtls: tls.crt/tls.key/ca.crt) into the PKCS12
+      # keystore.p12 (this service's identity) + truststore.p12 (cluster CA) that
+      # the server-side server.ssl.* config (merged) loads to REQUIRE a client cert
+      # chaining to the cluster CA (client-auth=need). keytool + openssl ship in
+      # the eclipse-temurin JRE image, so we reuse the app image. The store
+      # password is generated HERE, kept only in the tmpfs /stores emptyDir (never
+      # in git / a Secret / Vault), and emitted into application-tls.properties that
+      # the app loads via SPRING_CONFIG_ADDITIONAL_LOCATION=file:/stores/ — so the
+      # SSL_*_PASSWORD env vars stay empty in the pod spec and the secret never
+      # leaves the pod.
+      initContainers:
+        - name: build-keystore
+          image: hugmesh-systems/admin-bff-api:dev
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              P="$(openssl rand -base64 24 | tr -d '/+=' | cut -c1-24)"
+              # mTLS identity: key + cert -> PKCS12 (Spring reads PKCS12 natively).
+              openssl pkcs12 -export -inkey /pki/tls.key -in /pki/tls.crt \
+                -certfile /pki/ca.crt -name hugmesh-admin-bff-api \
+                -out /stores/keystore.p12 -passout "pass:${P}"
+              # Truststore: the issuing (cluster) CA so we trust cluster peers.
+              keytool -importcert -noprompt -alias hugmesh-cluster-ca \
+                -file /pki/ca.crt -keystore /stores/truststore.p12 \
+                -storetype PKCS12 -storepass "${P}"
+              # Spring SSL config picked up from file:/stores/ (added to
+              # SPRING_CONFIG_ADDITIONAL_LOCATION). Sets ONLY the in-pod-generated
+              # store passwords; SSL_ENABLED / SSL_CLIENT_AUTH / paths come from env.
+              umask 077
+              cat > /stores/application-tls.properties <<EOF
+              server.ssl.key-store-password=${P}
+              server.ssl.trust-store-password=${P}
+              EOF
+              echo "keystore + truststore + application-tls.properties built"
+          volumeMounts:
+            - { name: pki,    mountPath: /pki, readOnly: true }
+            - { name: stores, mountPath: /stores }
+      containers:
+        - name: hugmesh-admin-bff-api
+          image: hugmesh-systems/admin-bff-api:dev
+          ports: [{ name: http, containerPort: 8080 }]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          env:
+            # OAuth2 resource server: validate the cluster Casdoor JWT itself.
+            - name: CASDOOR_ISSUER_URI
+              value: "https://id.hugmesh.systems"
+            # ── API-to-API mTLS (server side) ─────────────────────────────────
+            # Enforce a client cert chaining to the cluster CA. The store passwords
+            # come from /stores/application-tls.properties (in-pod generated, loaded
+            # via SPRING_CONFIG_ADDITIONAL_LOCATION) — NOT set here, so the secret
+            # never enters the pod spec. DEPLOY-ORDER: keep this in lockstep with the
+            # gateway/BFF client-cert wave (see PR body) — flipping client-auth=need
+            # before callers present certs rejects in-cluster traffic.
+            - { name: SSL_ENABLED,          value: "true" }
+            - { name: SSL_CLIENT_AUTH,      value: "need" }
+            - { name: SSL_KEY_STORE,        value: "/stores/keystore.p12" }
+            - { name: SSL_KEY_STORE_TYPE,   value: "PKCS12" }
+            - { name: SSL_TRUST_STORE,      value: "/stores/truststore.p12" }
+            - { name: SSL_TRUST_STORE_TYPE, value: "PKCS12" }
+            # Load the in-pod-generated store passwords (application-tls.properties).
+            - { name: SPRING_CONFIG_ADDITIONAL_LOCATION, value: "file:/stores/" }
+            # R2DBC handle to the gateway_route_access Postgres (hugmesh-pki).
+            # Least-privilege: admin-bff is the ONLY writer, so it logs in as its
+            # OWN role `admin_bff` (SELECT/INSERT/UPDATE/DELETE on
+            # gateway_route_access — NOT the DB owner). Password from its OWN ESO
+            # Secret (route-access-admin-bff, key password); k8s interpolates it
+            # into the URL via $(VAR). DEV placeholder secret in test; Vault in prod.
+            - name: ROUTE_ACCESS_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: route-access-admin-bff
+                  key: password
+            - name: ROUTE_ACCESS_R2DBC_URL
+              value: "r2dbc:postgresql://admin_bff:$(ROUTE_ACCESS_DB_PASSWORD)@route-access-db.hugmesh-pki.svc.cluster.local:5432/gateway"
+            # This BFF also owns the usage-analytics aggregation: it consumes the
+            # Kafka usage-event bus into ClickHouse and serves /bff/admin/usage.
+            # Hence the clickhouse profile + Kafka/ClickHouse wiring. The gateway
+            # addresses this BFF by its stable k8s Service DNS
+            # (hugmesh-admin-bff-api.hugmesh-backend.svc) — there is no
+            # client-side service discovery, so the active profiles are exactly
+            # casdoor + clickhouse and no DEFAULTZONE env is set.
+            - name: SPRING_PROFILES_ACTIVE
+              value: "casdoor,clickhouse"
+            - name: SPRING_KAFKA_BOOTSTRAP_SERVERS
+              value: "kafka:9092"
+            - name: CLICKHOUSE_URL
+              value: "http://clickhouse:8123"
+            # Config datastore: the durable accounts / allowlist / sessions /
+            # namespace-grants / iso_artifacts / gateway_route_access tables.
+            # The app's application.yml defaults spring.r2dbc + spring.liquibase to
+            # a literal `hugmesh-pg` host that does NOT exist; OVERRIDE both here
+            # to the dedicated admin-bff-db (mirrors how federation overrides to
+            # federation-db). R2DBC is the runtime handle; the JDBC handle is used
+            # by Liquibase ONCE at startup. (The old dead SPRING_DATASOURCE_URL env
+            # is removed — the app reads spring.r2dbc/spring.liquibase, not
+            # spring.datasource.)  Password sourced from Vault via External Secrets
+            # (ESO Secret admin-bff-db-auth, key password) — the SAME Secret the
+            # admin-bff-db pod's POSTGRES_PASSWORD mounts, so the DB and its consumer
+            # stay in sync. See docs/HANDOFF.md §3.3.
+            # RUNTIME handle: log in as the dedicated NON-OWNER least-privilege role
+            # `adminbff_app` (DML only, no DDL), created by admin-bff-db's
+            # initdb/10-roles.sh. Password from its OWN ESO Secret
+            # admin-bff-db-app-auth (the SAME the DB pod's ADMINBFF_APP_PASSWORD mounts).
+            - name: SPRING_R2DBC_URL
+              value: "r2dbc:postgresql://admin-bff-db.hugmesh-backend.svc.cluster.local:5432/adminbff"
+            - name: SPRING_R2DBC_USERNAME
+              value: "adminbff_app"
+            - name: SPRING_R2DBC_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: admin-bff-db-app-auth
+                  key: password
+            # JDBC handle used ONLY by Liquibase at startup. DDL needs the OWNER, so
+            # Liquibase keeps the owner role `adminbff` + the owner ESO Secret
+            # admin-bff-db-auth (the SAME the DB pod's POSTGRES_PASSWORD mounts).
+            - name: SPRING_LIQUIBASE_URL
+              value: "jdbc:postgresql://admin-bff-db.hugmesh-backend.svc.cluster.local:5432/adminbff"
+            - name: SPRING_LIQUIBASE_USER
+              value: "adminbff"
+            - name: SPRING_LIQUIBASE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: admin-bff-db-auth
+                  key: password
+            # ── Shared internal-service credential — the INBOUND half ────────────
+            # app.internal.token: what the /bff/internal/** ROLE_SERVICE floor in
+            # SecurityConfig admits (promoted to a SERVICE principal) and what
+            # auth-core's InternalTokenWebFilter enforces. Every caller already
+            # mounts this SAME ESO Secret to SEND X-Internal-Token (fe-gateway's
+            # BffSessionAuthFilter + bff-exchange, user-bff's AdminBffInternalClient,
+            # mod-bff's introspect leg, actions' OIDC hook), so the value must match
+            # theirs. REQUIRED in prod: InternalSurfaceTokenBootGuard refuses to boot
+            # without it, because the subtree (session MINTING for any accountId,
+            # custody-JWT exchange, account create/complete) is reachable through the
+            # fe-gateway's /bff/** route — mTLS does NOT separate that traffic, since
+            # the gateway presents its own cluster-CA client cert on the proxy leg.
+            # optional: true so the failure is the guard's explicit message rather
+            # than an opaque kubelet mount error.
+            - name: INTERNAL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: bff-internal-token
+                  key: token
+                  optional: true
+            # Cassandra contact point. NOTE: the code reads
+            # app.mirror.cassandra.contact-point <- ${ROUTE_MIRROR_CASSANDRA}; the old
+            # CASSANDRA_CONTACT_POINTS env matched NO placeholder (dead/no-op) and is
+            # removed for consistency. ROUTE_MIRROR_CASSANDRA is the live override knob.
+            - name: ROUTE_MIRROR_CASSANDRA
+              value: "cassandra.hugmesh-pki.svc.cluster.local:9042"
+            # ── Cassandra connection HARDENING (auth + TLS) — SHIPS DARK ─────────
+            # DEFAULT OFF in application.yml (CASSANDRA_AUTH_ENABLED / CASSANDRA_SSL_ENABLED
+            # default false), so this BFF dials Cassandra plaintext+no-auth until an
+            # operator flips these. DO NOT UNCOMMENT until the Cassandra cluster in
+            # hugmesh-pki actually has auth + TLS enabled (otherwise every dial fails
+            # closed). When the cluster is secured: uncomment, create the ESO-synced
+            # Secret cassandra-admin-bff (keys username/password) + mount the PKCS12
+            # truststore at /stores/cassandra-truststore.p12, then set the store password
+            # via the in-pod application-tls.properties (SPRING_CONFIG_ADDITIONAL_LOCATION),
+            # NEVER in this pod spec.
+            # - { name: CASSANDRA_AUTH_ENABLED, value: "true" }
+            # - name: CASSANDRA_USERNAME
+            #   valueFrom: { secretKeyRef: { name: cassandra-admin-bff, key: username } }
+            # - name: CASSANDRA_PASSWORD
+            #   valueFrom: { secretKeyRef: { name: cassandra-admin-bff, key: password } }
+            # - { name: CASSANDRA_SSL_ENABLED,     value: "true" }
+            # - { name: CASSANDRA_SSL_TRUST_STORE, value: "/stores/cassandra-truststore.p12" }
+            #   # CASSANDRA_SSL_TRUST_STORE_PASSWORD loaded from /stores/application-tls.properties (never here)
+            # ── Anubis PoW anti-scraper sidecar proxy (SUPERADMIN BFF surface) ──
+            # The anubis package (GET /bff/admin/anubis/{status,metrics}) proxies
+            # the Anubis management port. ANUBIS_ENABLED=true wires the BFF surface;
+            # the Anubis component itself (manifests/anubis, hugmesh-frontend) is a
+            # DEFAULT-OFF optional service created via the optional-services
+            # ApplicationSet (apps/13a, installed flag in the installed-services
+            # ConfigMap). MANAGEMENT_URL is the in-cluster Service DNS of the
+            # metrics/health listener (:9090) — NOT the public PoW gate (:8923) —
+            # reachable cross-namespace from this BFF pod once Anubis is enabled.
+            # While Anubis is OFF the BFF's AnubisClient onErrorResume path returns a
+            # structured "unreachable" instead of cascading 503s, so enabling the
+            # proxy here is safe and it lights up the moment the operator flips Anubis on.
+            - { name: ANUBIS_ENABLED,        value: "true" }
+            - { name: ANUBIS_MANAGEMENT_URL, value: "http://anubis.hugmesh-frontend.svc.cluster.local:9090" }
+            # ── Cloud-backups effector (the Velero leg) — SHIPS DARK ───────────
+            # BACKUPS_EFFECTOR_ENABLED gates the REAL VeleroBackupEffector
+            # (app.backups.effector.enabled). DEFAULT-OFF: while false the
+            # foundation's NoopBackupEffector + StubRunningServiceProvider stay the
+            # beans — a created backup_set is written to the catalog but NO Velero
+            # CR is emitted and NO cluster ConfigMap is read, so installing Velero
+            # does NOT silently start real backups. A SUPERADMIN turns backups on by
+            # flipping this to "true" (and un-suspending the sweep CronJob) AFTER
+            # apps/55-velero.yaml + apps/56-velero-config.yaml are synced and the
+            # object store + Vault secret/<brand>/velero are provisioned. See
+            # docs/CLOUD-BACKUPS.md. The other BACKUPS_* values are the effector's
+            # defaults (velero ns, be/fe brand suffixes, 30d TTL, installed-services
+            # ConfigMap ns) and are inert while the flag is off.
+            - { name: BACKUPS_EFFECTOR_ENABLED,            value: "false" }
+            - { name: BACKUPS_VELERO_NAMESPACE,            value: "velero" }
+            - { name: BACKUPS_BRAND_NAMESPACE_SUFFIXES,    value: "be,fe" }
+            - { name: BACKUPS_INSTALLED_SERVICES_NAMESPACE, value: "hugmesh-backend" }
+          # Probes are HTTPS now that server.ssl is enabled. Because client-auth=need
+          # rejects the TLS handshake of any caller WITHOUT a client cert, a plain
+          # kubelet httpGet (which presents none) would fail — so the probe is an
+          # exec'd curl that PRESENTS this pod's own client cert (/pki PEM, same
+          # material the keystore was built from) and validates the server cert
+          # against the cluster CA. --resolve maps the cert SAN (hugmesh-admin-bff-api)
+          # to loopback so hostname verification passes. Exercises mTLS end to end.
+          readinessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -ec
+                - >-
+                  curl -sf --cert /pki/tls.crt --key /pki/tls.key --cacert /pki/ca.crt
+                  --resolve hugmesh-admin-bff-api:8080:127.0.0.1
+                  https://hugmesh-admin-bff-api:8080/actuator/health/readiness
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -ec
+                - >-
+                  curl -sf --cert /pki/tls.crt --key /pki/tls.key --cacert /pki/ca.crt
+                  --resolve hugmesh-admin-bff-api:8080:127.0.0.1
+                  https://hugmesh-admin-bff-api:8080/actuator/health/liveness
+            initialDelaySeconds: 45
+            periodSeconds: 15
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits:   { cpu: "1",  memory: 768Mi }
+          volumeMounts:
+            - { name: tmp,    mountPath: /tmp }
+            - { name: stores, mountPath: /stores, readOnly: true }
+            # PEM identity, read-only — used by the exec probe's curl client cert.
+            - { name: pki,    mountPath: /pki,    readOnly: true }
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        # Vault-PKI-issued mTLS material, synced by ESO (kubernetes.io/tls).
+        - name: pki
+          secret:
+            secretName: hugmesh-admin-bff-api-mtls
+        # tmpfs for the assembled PKCS12 stores + the in-pod SSL properties.
+        - name: stores
+          emptyDir:
+            medium: Memory

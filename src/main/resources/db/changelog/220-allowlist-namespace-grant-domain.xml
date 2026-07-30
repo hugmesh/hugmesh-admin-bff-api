@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+      allowlist + namespace_grant domain-scope — closes the cross-tenant IDOR gap that
+      changeset 010 introduced (it scoped access_suspension / domain_lock /
+      gateway_route_access but SKIPPED these two tables). Without the `domain` column a
+      brand-X ADMIN can read, write, and delete brand-Y's registration allowlist and
+      namespace grants.
+
+      ── Fix ─────────────────────────────────────────────────────────────────────────
+        1. Add `domain VARCHAR(64) NOT NULL DEFAULT 'default'` to allowlist and
+           namespace_grant (back-fills existing rows to 'default', the single-tenant
+           canonical domain — identical to the 010 pattern).
+        2. Drop the old PKs (provider+handle / grantee+namespace) and add the new
+           three-column PKs that include domain (allows the same handle/grantee in
+           multiple brand's allowlists/grants).
+        3. Add Postgres read-path indexes (MARK_RAN on non-Postgres, as in 010).
+
+      ── How the scoping works ────────────────────────────────────────────────────────
+        auth-core AllowlistRepository / NamespaceGrantRepository now expose domain-scoped
+        finder and insert/delete methods. AdminController extracts PrincipalDomain from
+        the validated JWT issuer (the same scope() helper used for access_suspension /
+        domain_lock / route_access) and passes it through:
+          - scoped ADMIN  → WHERE domain = :domain on every read + stamp on write
+          - SUPERADMIN    → no domain predicate on reads; stamp their brand's domain on write
+
+      ── Back-compat ──────────────────────────────────────────────────────────────────
+        Single-issuer clusters: all rows have domain='default'; every read/write still
+        uses 'default' — identical behaviour. The PK change is transparent to the
+        application (it never uses save/findById on these composite-PK tables; only
+        custom derived finders and @Modifying @Query are used).
+
+      ── Numbering: 220 ───────────────────────────────────────────────────────────────
+        The next free band above the 210-mfa-db-generated-uuid-pks include.
+    -->
+
+    <!-- ── allowlist ─────────────────────────────────────────────────── -->
+
+    <changeSet id="220-allowlist-add-domain" author="hugmesh">
+        <comment>Add per-brand domain discriminator to allowlist (default 'default' for
+                 single-tenant back-compat — mirrors the 010 pattern).</comment>
+        <addColumn tableName="allowlist">
+            <column name="domain" type="varchar(64)" defaultValue="default">
+                <constraints nullable="false"/>
+            </column>
+        </addColumn>
+    </changeSet>
+
+    <changeSet id="220-allowlist-pk-domain" author="hugmesh">
+        <comment>Widen the allowlist PK to (provider, handle, domain) so the same invite
+                 can exist independently per brand.</comment>
+        <dropPrimaryKey tableName="allowlist" constraintName="pk_allowlist"/>
+        <addPrimaryKey tableName="allowlist" columnNames="provider, handle, domain"
+                       constraintName="pk_allowlist"/>
+    </changeSet>
+
+    <changeSet id="220-allowlist-domain-index" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>Index the per-tenant read predicate on allowlist.</comment>
+        <sql>CREATE INDEX idx_allowlist_domain ON allowlist (domain)</sql>
+        <rollback>DROP INDEX idx_allowlist_domain</rollback>
+    </changeSet>
+
+    <!-- ── namespace_grant ───────────────────────────────────────────── -->
+
+    <changeSet id="220-namespace-grant-add-domain" author="hugmesh">
+        <comment>Add per-brand domain discriminator to namespace_grant (default 'default').</comment>
+        <addColumn tableName="namespace_grant">
+            <column name="domain" type="varchar(64)" defaultValue="default">
+                <constraints nullable="false"/>
+            </column>
+        </addColumn>
+    </changeSet>
+
+    <changeSet id="220-namespace-grant-pk-domain" author="hugmesh">
+        <comment>Widen namespace_grant PK to (grantee, namespace, domain).</comment>
+        <dropPrimaryKey tableName="namespace_grant" constraintName="pk_namespace_grant"/>
+        <addPrimaryKey tableName="namespace_grant" columnNames="grantee, namespace, domain"
+                       constraintName="pk_namespace_grant"/>
+    </changeSet>
+
+    <changeSet id="220-namespace-grant-domain-index" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>Index the per-tenant read predicate on namespace_grant.</comment>
+        <sql>CREATE INDEX idx_namespace_grant_domain ON namespace_grant (domain)</sql>
+        <rollback>DROP INDEX idx_namespace_grant_domain</rollback>
+    </changeSet>
+
+</databaseChangeLog>

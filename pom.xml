@@ -1,0 +1,345 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <!-- The org metapom — consolidates the Spring Boot 4.0.7 / Java 25 reactive BFF
+       baseline (WebFlux + Casdoor OAuth2 resource server + R2DBC/Liquibase +
+       SpringDoc), the shared <dependencies>, dependencyManagement (hugmesh-commons,
+       AWS SDK BOM, resilience4j, springdoc), pluginManagement (compiler / surefire
+       bytebuddy flag / spring-boot / native) and the GitLab Maven publishing wiring.
+       hugmesh-parent is itself a child of spring-boot-starter-parent:4.0.7, so the
+       Spring Boot dependency + plugin management is inherited TRANSITIVELY. -->
+  <parent>
+    <groupId>systems.hugmesh</groupId>
+    <artifactId>hugmesh-parent</artifactId>
+    <version>2.8.0</version>
+    <relativePath/>
+  </parent>
+
+  <artifactId>admin-bff</artifactId>
+  <version>0.1.0</version>
+
+  <properties>
+    <!-- java.version (25), encoding, the hugmesh-commons version, the AWS SDK
+         BOM version, the resilience4j version and the springdoc version are all
+         inherited from hugmesh-parent. ONLY the repo-specific pins stay.
+
+         spring-cloud-kubernetes is now MANAGED by the spring-cloud-dependencies BOM
+         (2025.1.2, Boot 4-aligned) imported in hugmesh-parent — the old explicit
+         3.1.4 pin (Boot 3.4-3.5 train) was dropped so the fabric8 LEADER starter
+         tracks the Boot-4-compatible spring-cloud release train. -->
+
+    <!-- The generator checkout dir the image-gen catalogs are VENDORED from
+         (resources/catalog/{packages-catalog.json,image-catalog.json}, served verbatim by
+         ImageCatalogController). The `catalog-copy` profile below refreshes the vendored copy
+         from here at generate-resources, and ImageCatalogDriftTest asserts no drift — "never
+         hand-vendor a stale snapshot". Default assumes the generator is checked out as a sibling
+         of this repo; override with -Dcatalog.source.dir=<generator>/docs/catalog otherwise. The
+         committed resources/catalog/*.json are authoritative — the copy profile only refreshes
+         them when a generator checkout is present (drift test skips when it is absent). -->
+    <catalog.source.dir>${project.basedir}/../hugmesh-generator/docs/catalog</catalog.source.dir>
+  </properties>
+
+  <dependencies>
+    <!-- The shared, canonical HugMesh security/tenancy/config/web building blocks
+         (Casdoor JWT authorities, issuer->domain DomainRegistry, Roles + PrincipalDomain
+         helpers, the config-gated multi-issuer TenancyResourceServerConfig, the BFF
+         ApiException). Version is MANAGED by hugmesh-parent's dependencyManagement,
+         so NO <version> here. This replaces admin-bff's deleted local copies of
+         security.{Roles,DomainRegistry,DomainScope} + config.{CasdoorAuthorities,
+         TenancyResourceServerConfig} + web.ApiException. -->
+    <dependency>
+      <groupId>systems.hugmesh</groupId>
+      <artifactId>hugmesh-commons</artifactId>
+    </dependency>
+
+    <!-- hugmesh-auth-core — the shared STATEFUL auth core extracted out of this BFF:
+         account/allowlist/bff-session store + AccountStore, Casdoor-admin client, the full
+         MFA subsystem, session-cookie + internal-token filters, username gate, login/MFA
+         DTOs, and the OIDC token-custody seams (OidcExchangeClient/BffCustodyCipher). admin-bff
+         keeps wiring AccountStore against admin-bff-db (it owns the data); user-bff consumes the
+         same jar but reaches the data over /bff/internal. NOT in the parent BOM (BFF-only, kept
+         off the gateway classpath), so the version is pinned explicitly here. -->
+    <dependency>
+      <groupId>systems.hugmesh</groupId>
+      <artifactId>hugmesh-auth-core</artifactId>
+      <!-- 2.1.0 adds the BFF-JWT-custody seam (bff_session custody columns on BffSession,
+           AccountStore.stampCustody/clearCustody/sessionRow, BffCustodyCipher AES-256-GCM,
+           and the OidcExchangeClient refresh leg). Bumped in lockstep with the band-180
+           custody migration + the /bff/internal custody/stamp & session/exchange endpoints.
+           2.2.0 adds the per-account session-listing seam: AccountStore.sessionsForAccount
+           (live-only, expires_at>now(), newest-first) over the new BffSessionRepository
+           derived queries (findByAccountIdOrderByCreatedAtDesc /
+           findByAccountIdAndExpiresAtAfterOrderByCreatedAtDesc), returning the projection
+           record BffSessionRow(token, accountId, createdAt, expiresAt). Bumped in lockstep
+           with the /bff/internal/sessions/{accountId} listing endpoint below.
+           2.3.0 drops UUID.randomUUID() mints from MfaEnrollmentService +
+           WebAuthnChallengeStore; INSERTs now use RETURNING id against the
+           (gen_random_uuid())::text column DEFAULT added by band-210 here.
+           2.3.1 adds AccountStore.ensureAccount(provider, handle, roles): SYNCS the
+           given roles onto an account row on every call (not just at creation), so a
+           native-login principal's real Casdoor role grant (mod/superadmin/matrix/etc,
+           not just the legacy user/admin pair) reaches the BFF session. Bumped in
+           lockstep with InternalAccountController's new rolesFromIdToken() extraction
+           below and changeset 260 (drops the now-stale 2-value account.roles CHECK).
+           2.3.2 adds BffCookieAuthenticationWebFilter: bridges a bff_ session (already
+           normalised into the Authorization header by SessionCookieWebFilter) into a
+           real Spring Security Authentication via AccountStore, so this service's own
+           hasAnyRole()/.authenticated() gates (e.g. /bff/admin/usage,
+           /bff/admin/namespace-access) — previously reachable only by a JWT, never a
+           native-login cookie — now see an authenticated, role-bearing principal. Auto-
+           registers via the existing scanBasePackages="systems.hugmesh.authcore";
+           no additional wiring needed.
+           2.3.4 fixes two identity-fold bugs: CasdoorAdminClient.usernameOf now strips
+           the "@..." tail for EVERY provider (not just "google" — casdoor/matrix/discord
+           etc. were previously left un-stripped), and AccountStore.idFor now trims +
+           folds the handle with Locale.ROOT (was a bare toLowerCase(), locale-dependent).
+           Bumped in lockstep with hugmesh-auth-core PR #33 (merged 2026-07-15).
+           2.4.0 is a coordinate-only rename (legacy groupId -> systems.hugmesh groupId +
+           package move), no behavior change - part of the HugMesh rebrand.
+           2.4.1 syncs ReservedNames (the shared copy this BFF's username/route-prefix
+           guards consume) to canonical reserved-prefixes.yaml revision 9 (82 labels):
+           hmdm/attest from rev 7/8 + character-forge / games-character-forge /
+           games-shadows-of-the-net from the Character Forge track — so this BFF's
+           invite/grant/provision username gates and the route-access
+           reserved-prefix warning now enforce those five labels at runtime.
+           RELEASE NOTE: 2.4.1 exists on hugmesh-auth-core branch
+           feat/character-forge-reserved-labels and is NOT yet published to the
+           registry — until it is released, CI resolution of this pin FAILS (local
+           builds work via a locally-installed ./mvnw install of that branch). -->
+      <version>2.4.1</version>
+    </dependency>
+
+    <!-- ============================================================================
+         The core reactive BFF stack (webflux / actuator / security /
+         oauth2-resource-server / validation), the data-access stack (data-r2dbc /
+         r2dbc-postgresql / liquibase-core / spring-jdbc / postgresql), springdoc, and
+         the core test stack (spring-boot-starter-test / reactor-test /
+         spring-security-test / r2dbc-h2 / h2) are INHERITED from hugmesh-parent's
+         common <dependencies>. They were removed here to de-duplicate. ONLY the
+         repo-specific dependencies below remain.
+         ============================================================================ -->
+
+    <!-- WebClient — Spring Boot 4 SPLIT the reactive WebClient support out of
+         spring-boot-starter-webflux into its own spring-boot-webclient module, so the
+         WebClientAutoConfiguration that supplies the autoconfigured WebClient.Builder
+         is NO LONGER on the classpath transitively. This BFF injects WebClient.Builder
+         in every homeserver/federation/forum/announcement/profile/usage config, so the
+         starter must be declared explicitly under Boot 4 (was implicit under Boot 3.5).
+         Version is BOM-managed. -->
+    <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-webclient</artifactId></dependency>
+
+    <!-- Mail — the ONLY net-new notification channel transport (Notifications PR5): a
+         sender-only system@<domain> over the MAIL_PROVIDER SMTP secret. JavaMailSender is
+         blocking, so the EmailChannel wraps it on Reactor's boundedElastic scheduler. The
+         channel ships dark (notify.email.enabled=false) so a SMTP-less run is unaffected.
+         Repo-specific — stays here. -->
+    <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-mail</artifactId></dependency>
+
+    <!-- jsoup — server-side HTML sanitiser for admin announcement body_html. The
+         announcement body is admin-authored HTML rendered to users INCLUDING
+         anonymous login-page visitors, so it is sanitised on create/update against
+         a jsoup Safelist allowlist (scripts / on* handlers / javascript: URLs are
+         stripped) BEFORE it is stored — the UIs additionally render it inside a
+         sandboxed null-origin srcdoc iframe. jsoup is a single self-contained jar
+         (no transitive deps), the lightest fit for the WebFlux/native stack.
+         Repo-specific — stays here. -->
+    <dependency><groupId>org.jsoup</groupId><artifactId>jsoup</artifactId><version>1.22.2</version></dependency>
+
+    <!-- Resilience4j circuit breaker (reactive) — wraps the per-homeserver / per-
+         Casdoor call effect in the access_suspension reconcile + expiry loop
+         (MastodonAccessSyncAction "akkoma", MatrixAccessSyncAction "tuwunel",
+         SuspensionExpiryAction reuses "casdoor"). A stalled akkoma/tuwunel/Casdoor
+         opens the breaker, the tick skips that side, and the next tick retries when
+         the breaker half-opens — the table stays the single source of truth so a
+         skipped tick self-heals. Versions are MANAGED by hugmesh-parent (2.7.0,
+         Boot 4.0.7-compatible) so no <version> here. -->
+    <dependency>
+      <groupId>io.github.resilience4j</groupId>
+      <artifactId>resilience4j-spring-boot4</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>io.github.resilience4j</groupId>
+      <artifactId>resilience4j-reactor</artifactId>
+    </dependency>
+    <!-- spring-cloud-kubernetes fabric8 leader election — the SINGLE-WRITER
+         primitive for the access_suspension reconcile/expiry loop. admin-bff may
+         run >1 replica, and the loop is the ONLY caller of
+         CasdoorAdminClient.add/removeUserFromRole + the homeserver suspend seam, so
+         exactly one replica must own the tick. A k8s Lease (coordination.k8s.io)
+         elects one leader; LeaderElection.isLeader() gates every write. Pinned to the
+         spring-cloud-kubernetes 3.1.x line (NOT in spring-cloud-dependencies).
+         Gated by app.access-suspension.lease.enabled (default false) so a
+         cluster-less dev/test/CI run never dials the k8s API — see
+         LeaderElectionConfig: when disabled (single replica / local) the loop is
+         always-leader. Repo-specific — stays here. -->
+    <dependency>
+      <groupId>org.springframework.cloud</groupId>
+      <artifactId>spring-cloud-kubernetes-fabric8-leader</artifactId>
+    </dependency>
+
+    <!-- Kafka usage-event bus consumer (and self-producer). Gated behind
+         app.kafka.enabled so a broker-less dev/test run boots clean. Repo-specific. -->
+    <dependency><groupId>org.springframework.kafka</groupId><artifactId>spring-kafka</artifactId></dependency>
+
+    <!-- Cassandra = best-effort mirror the gateways read + authoritative
+         url_registry. Driver only (no spring-data autoconfig) so a missing /
+         unreachable Cassandra never blocks BFF startup; blocking driver calls
+         are wrapped on boundedElastic at the reactive boundary. Repo-specific. -->
+    <dependency><groupId>org.apache.cassandra</groupId><artifactId>java-driver-core</artifactId><version>4.19.3</version></dependency>
+
+    <!-- sshj = the SSH client for the in-UI SSH terminal's REAL dial to a mesh node
+         (the device-terminal transport, #81). Also used by the admin SSH key-issuance leg
+         (sshissue) to wire-encode the issued Ed25519 public key + derive its SHA256 %f
+         fingerprint (the exact form the node's AuthorizedKeysCommand pins). Repo-specific. -->
+    <dependency><groupId>com.hierynomus</groupId><artifactId>sshj</artifactId><version>0.40.0</version></dependency>
+
+    <!-- BouncyCastle PKIX/util — used by the admin SSH key-issuance leg (sshissue) to
+         serialize the minted Ed25519 private key to an OpenSSH-format PEM
+         (OpenSSHPrivateKeyUtil) streamed ONCE to the operator. These jars already arrive
+         transitively via sshj at RUNTIME scope; declared here explicitly at COMPILE scope so
+         the sshissue main code that imports org.bouncycastle.* compiles. Versions pinned to
+         match sshj's transitive bcprov/bcpkix (1.80) — no version drift. Repo-specific. -->
+    <dependency><groupId>org.bouncycastle</groupId><artifactId>bcpkix-jdk18on</artifactId><version>1.84</version></dependency>
+    <dependency><groupId>org.bouncycastle</groupId><artifactId>bcprov-jdk18on</artifactId><version>1.84</version></dependency>
+
+    <!-- WebAuthn4J = the maintained WebAuthn server library (registration attestation +
+         authentication assertion verification: RP ID, origin allowlist, challenge match,
+         signature, sign-count clone detection). The BFF runs its OWN WebAuthn ceremony for
+         the web path (Casdoor's WebAuthn is session-bound and cannot be driven on-behalf-of a
+         session-less web user — see the D6+D8 design memo), so the factor lifecycle is owned
+         here. webauthn4j-core pulls jackson-dataformat-cbor (COSE key + attestation/auth-data
+         CBOR) transitively; CBOR/COSE crypto is delegated to it (no hand-rolled COSE parsing).
+         The WebAuthn verify path is wrapped on Reactor's boundedElastic at the reactive
+         boundary (the lib is synchronous). Ships dark behind app.casdoor.mfa.enabled.
+         Repo-specific. -->
+    <dependency><groupId>com.webauthn4j</groupId><artifactId>webauthn4j-core</artifactId><version>0.31.7.RELEASE</version></dependency>
+
+    <!-- Repo-specific TEST deps NOT in the parent's common test stack. -->
+    <dependency><groupId>org.springframework.kafka</groupId><artifactId>spring-kafka-test</artifactId><scope>test</scope></dependency>
+
+    <!-- fabric8 kubernetes mock server — offline verification of the image-gen launcher's
+         two-doc apply contract (spec ConfigMap BEFORE Job, ownerReference patch, rollback on
+         Job-create failure) without any cluster. Version pinned to the kubernetes-client the
+         spring-cloud-kubernetes leader starter resolves (7.4.1) so client and mock never drift. -->
+    <dependency>
+      <groupId>io.fabric8</groupId>
+      <artifactId>kubernetes-server-mock</artifactId>
+      <version>7.4.1</version>
+      <scope>test</scope>
+    </dependency>
+
+    <!-- hugmesh-commons test-jar — supplies the shared Testcontainers
+         PostgresTestSupport base (per-class fresh Postgres + r2dbc/liquibase
+         auto-wiring) used by the converted full-context HTTP tests. -->
+    <dependency>
+      <groupId>systems.hugmesh</groupId>
+      <artifactId>hugmesh-commons</artifactId>
+      <version>2.1.0</version>
+      <classifier>tests</classifier>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build><plugins>
+    <!-- The spring-boot, native and surefire (bytebuddy-experimental argLine)
+         plugins are configured in hugmesh-parent's pluginManagement; declaring
+         them here (no config) binds the managed config. The native plugin is bound
+         so `./mvnw -Pnative native:compile` works; spring-boot repackages the app. -->
+    <plugin>
+      <groupId>org.graalvm.buildtools</groupId>
+      <artifactId>native-maven-plugin</artifactId>
+    </plugin>
+    <plugin>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-maven-plugin</artifactId>
+    </plugin>
+    <!-- Testcontainers full-context tests use a real Postgres (TestDatabaseConfig).
+         This box's docker-java pings the daemon with API 1.32 but the daemon's
+         minimum is 1.40, so the negotiation must be pinned with -Dapi.version=1.43.
+         A command-line -D / MAVEN_OPTS reaches the Maven JVM but NOT the forked
+         test JVM (the parent's surefire argLine is literal), so push it onto the
+         fork explicitly here. (DOCKER_API_VERSION env does not take.) -->
+    <plugin>
+      <groupId>org.apache.maven.plugins</groupId>
+      <artifactId>maven-surefire-plugin</artifactId>
+      <configuration>
+        <systemPropertyVariables>
+          <api.version>1.43</api.version>
+          <!-- Forward the generator catalog dir to the FORKED test JVM (a CLI -D reaches the
+               Maven JVM but not the fork — same reason api.version is pushed here) so
+               ImageCatalogDriftTest resolves the generator source (default, or a CI -D override). -->
+          <catalog.source.dir>${catalog.source.dir}</catalog.source.dir>
+        </systemPropertyVariables>
+      </configuration>
+    </plugin>
+  </plugins></build>
+
+  <profiles>
+    <!-- Build-time refresh of the VENDORED image-gen catalogs from the generator's canonical
+         source of truth. Activates ONLY when the generator checkout is present (a downstream CI
+         that builds the BFF alone falls back to the committed vendored copy). Copies
+         {packages,image}-catalog.json from ${catalog.source.dir} into resources/catalog/ at
+         generate-resources (before process-resources stages the classpath), so a fresh build
+         picks up any generator change; ImageCatalogDriftTest then fails the build if the
+         committed copy ever drifted. Activation is by the presence of a sibling generator
+         checkout (relative <exists> path, resolved against project basedir — no property
+         interpolation needed); a CI with the generator elsewhere activates it explicitly with
+         `-Pcatalog-copy -Dcatalog.source.dir=<generator>/docs/catalog`. When no generator is
+         present the profile stays dormant and the committed vendored copy is authoritative. -->
+    <profile>
+      <id>catalog-copy</id>
+      <activation>
+        <file>
+          <exists>../hugmesh-generator/docs/catalog/image-catalog.json</exists>
+        </file>
+      </activation>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-resources-plugin</artifactId>
+            <executions>
+              <execution>
+                <id>copy-generator-catalog</id>
+                <phase>generate-resources</phase>
+                <goals><goal>copy-resources</goal></goals>
+                <configuration>
+                  <outputDirectory>${project.basedir}/src/main/resources/catalog</outputDirectory>
+                  <overwrite>true</overwrite>
+                  <resources>
+                    <resource>
+                      <directory>${catalog.source.dir}</directory>
+                      <includes>
+                        <include>packages-catalog.json</include>
+                        <include>image-catalog.json</include>
+                      </includes>
+                    </resource>
+                  </resources>
+                </configuration>
+              </execution>
+            </executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+
+    <!-- Native build: `./mvnw -Pnative native:compile` produces a GraalVM binary.
+         The parent's native plugin management does the heavy lifting; this thin
+         local profile mirrors the gateway/actions so the same `-Pnative` invocation
+         works. -->
+    <profile>
+      <id>native</id>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.graalvm.buildtools</groupId>
+            <artifactId>native-maven-plugin</artifactId>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+  </profiles>
+</project>

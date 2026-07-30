@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+      180 — BFF-JWT-CUSTODY columns (band 180, the next FREE band above the 172
+      admin-ssh-issued-key include and the 150-159 MFA reserve). This is the admin-bff
+      leg of the SSO BFF-JWT-custody chain: the browser holds ONLY the opaque bff_
+      session id; the real Casdoor access_token + refresh_token live server-side AT REST,
+      AES-256-GCM encrypted (auth-core BffCustodyCipher), in four NEW bff_session columns:
+        - access_token_enc       (clob)      — the encrypted access JWT (ciphertext blob).
+        - refresh_token_enc      (clob)      — the encrypted refresh token (ciphertext blob).
+        - access_token_expires_at(timestamp) — the access JWT's expiry; the exchange leg
+                                               lazily refreshes when within a skew window.
+        - custody_updated_at     (timestamp) — the instant custody was last stamped.
+
+      SHIPS DARK: all four columns are NULLABLE, carry NO default, and are NEVER written by
+      AccountStore.newSession (the mint path leaves them null). They are stamped ONLY by the
+      dark /bff/internal/custody/stamp endpoint and read ONLY by the dark
+      /bff/internal/session/exchange endpoint — both unreachable / 503 at defaults
+      (app.bff.custody-key blank => BffCustodyCipher.isAvailable()==false; the refresh leg
+      only fires when the OidcExchangeClient bean exists, i.e. app.bff.oidc.enabled=true).
+      A 2.0.0 consumer running before this band simply reads them as null. ADDITIVE +
+      backward-safe for live rows (no NOT NULL / CHECK / default that would touch existing
+      data). clob (not varchar) because the encrypted JWTs exceed varchar bounds — matches
+      the 150 amr column's clob choice.
+
+      Portable DDL mirrors the 150-mfa-substrate idiom EXACTLY: one changeSet per addColumn
+      with a <rollback><dropColumn>; the PG-only GRANT gated dbms=postgresql
+      onFail=MARK_RAN onError=MARK_RAN (the H2 test path runs the column adds + relies on the
+      service guards). Appended LAST at the include site (AFTER the 152 include) so it runs
+      last regardless of its numeric prefix — the bff_session table (006) already exists by
+      here, so the addColumn changes apply cleanly. GRANT is SELECT,INSERT,UPDATE only —
+      NEVER DELETE (custody is cleared by UPDATE-to-null, never row delete).
+    -->
+
+    <!-- ═══════════════════════ bff_session custody columns ═══════════════════════════ -->
+
+    <changeSet id="180-bff-session-access-token-enc" author="hugmesh">
+        <comment>bff_session.access_token_enc — the BffCustodyCipher AES-256-GCM-encrypted
+                 Casdoor access JWT held server-side. NULL until the dark custody/stamp
+                 endpoint writes it; the browser never sees it. clob (JWTs exceed varchar).</comment>
+        <addColumn tableName="bff_session">
+            <column name="access_token_enc" type="clob"/>
+        </addColumn>
+        <rollback>
+            <dropColumn tableName="bff_session" columnName="access_token_enc"/>
+        </rollback>
+    </changeSet>
+
+    <changeSet id="180-bff-session-refresh-token-enc" author="hugmesh">
+        <comment>bff_session.refresh_token_enc — the BffCustodyCipher AES-256-GCM-encrypted
+                 refresh token. NULL until stamped / when the grant carries no refresh token.
+                 The session/exchange leg decrypts this to lazily re-mint a near-expiry access
+                 token. clob (token blobs exceed varchar).</comment>
+        <addColumn tableName="bff_session">
+            <column name="refresh_token_enc" type="clob"/>
+        </addColumn>
+        <rollback>
+            <dropColumn tableName="bff_session" columnName="refresh_token_enc"/>
+        </rollback>
+    </changeSet>
+
+    <changeSet id="180-bff-session-access-token-expires-at" author="hugmesh">
+        <comment>bff_session.access_token_expires_at — the held access JWT's expiry. NULL until
+                 stamped. The session/exchange leg refreshes when this is within
+                 app.bff.oidc.refresh-skew-seconds of now (and a refresh token + OidcExchangeClient
+                 are present); otherwise it serves the still-valid decrypted access token.</comment>
+        <addColumn tableName="bff_session">
+            <column name="access_token_expires_at" type="timestamp"/>
+        </addColumn>
+        <rollback>
+            <dropColumn tableName="bff_session" columnName="access_token_expires_at"/>
+        </rollback>
+    </changeSet>
+
+    <changeSet id="180-bff-session-custody-updated-at" author="hugmesh">
+        <comment>bff_session.custody_updated_at — the instant custody was last stamped (audit /
+                 diagnostic). NULL until the first stamp.</comment>
+        <addColumn tableName="bff_session">
+            <column name="custody_updated_at" type="timestamp"/>
+        </addColumn>
+        <rollback>
+            <dropColumn tableName="bff_session" columnName="custody_updated_at"/>
+        </rollback>
+    </changeSet>
+
+    <!-- ═══════════════════════════════ GRANT (PG only) ══════════════════════════════ -->
+
+    <changeSet id="180-bff-session-custody-grant" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>GRANT SELECT,INSERT,UPDATE on bff_session to admin_bff (the custody stamp is an
+                 UPDATE of the new columns; custody is cleared by UPDATE-to-null, never DELETE).
+                 Harmless/idempotent at table level — matches the 150 GRANT idiom.</comment>
+        <sql>GRANT SELECT, INSERT, UPDATE ON bff_session TO admin_bff</sql>
+        <rollback>REVOKE SELECT, INSERT, UPDATE ON bff_session FROM admin_bff</rollback>
+    </changeSet>
+
+</databaseChangeLog>

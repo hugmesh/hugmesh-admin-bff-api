@@ -1,0 +1,301 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+      node_radio_device — the control-plane SOURCE OF TRUTH for a Meshtastic LoRa RADIO an
+      operator ATTACHES to a specific mesh node, so the meshbridge optional service (the
+      mesh<->Matrix bridge, built in parallel) can reach the LoRa mesh THROUGH that node.
+      CLONES the node-storage (085) pool idioms verbatim — one table (a radio has no
+      per-radio sub-assignments the way a pool has service placements):
+
+        node_radio_device — a radio attachment PINNED to one node (FK -> device_registry).
+                            Identity is the node + a stable bridge-facing radio_id; the row
+                            carries the TRANSPORT the node reaches the radio over:
+                              serial — a USB-serial Meshtastic device on THAT node
+                                       (serial_path, e.g. /dev/ttyUSB0);
+                              tcp    — a LoRa-WiFi radio the node dials over TCP
+                                       (host + port, Meshtastic TCP API port 4403);
+                              mqtt   — a WAN-linked / LoRaWAN-gateway-style mesh reached via
+                                       a Meshtastic MQTT broker (host + port [1883] +
+                                       topic_root + channel_name, optional gateway_node_id
+                                       for downlink attribution) — NOT a locally attached
+                                       radio.
+                            Per-node + per-domain; CAS active->detached (never DELETE =
+                            audit); generation + propagation_state drive the on-node
+                            reconcile ACK exactly like 085's pools.
+
+      ── Portable DDL (mirrors 085-node-storage.xml + the 270 new-table id DEFAULT) ────
+      id is a varchar(36) UUID string with the org-wide DB-generated DEFAULT
+      ((gen_random_uuid())::text, the changelog-200 idiom): the INSERT omits id and reads it
+      back via RETURNING id. timestamptz -> the portable 'timestamp with time zone' generic
+      type, defaultValueComputed="now()". One changeSet per CHECK / partial-unique / FK /
+      index / GRANT (independent redeploy + rollback). PG-gated partial-unique + indexes +
+      GRANT via a dbms=postgresql precondition (onFail/onError=MARK_RAN) — the non-PG path
+      enforces the at-most-one-active invariant with the service findActive-before-insert
+      guard, exactly like 085. NEVER a DELETE grant — detach is a CAS UPDATE.
+
+      ── DOMAIN stamped from the node's RESIDENCY (not the caller) [FIX-NODEFAULT] ─────
+      The table carries a per-row `domain` tenant discriminator for the ADMIN read view,
+      but it is NEVER caller-supplied: the service resolves the node FIRST and stamps the
+      radio domain from device_registry.domain (the node's residency), exactly as 085's
+      attachPool() stamps pool.domain from the device's residency.
+
+      ── OWNERSHIP gating is in the SERVICE, not the schema (the 085 divergence kept) ──
+      Radios are ADMIN-CAPABLE (not superadmin-only) but OWNERSHIP-gated: an ADMIN may act
+      ONLY on own-domain ADMIN-owned nodes; any SUPERADMIN-owned node is SUPERADMIN-only;
+      SUPERADMIN is unrestricted. That ALLOW/DENY matrix is enforced in the service layer
+      reading device_registry.owner_type + PrincipalDomain residency — the schema only
+      records owner_type via the FK'd device row, exactly like 085.
+
+      ── TRANSPORT shape (per-transport column matrix, CHECK-backstopped) ──────────────
+      transport IN ('serial','tcp','mqtt'). serial -> serial_path required, host/port/
+      topic_root/channel_name/gateway_node_id absent; tcp -> host+port required,
+      serial_path/topic_root/channel_name/gateway_node_id absent; mqtt -> host+port+
+      topic_root+channel_name required, gateway_node_id optional, serial_path absent. The
+      service rejects a mixed shape (422) BEFORE any write; the ck_node_radio_device_shape
+      CHECK is the DB backstop, mirroring how 085 pairs service guards with CHECKs.
+
+      ── propagation_state + generation (reconcile ACK + rollback) ─────────────────────
+      Same CHECK vocabulary as 085 (pending/applied/failed/degraded) so the UI can show
+      the on-node meshbridge reconcile ACK, plus a monotonic `generation` bumped on every
+      mutate that the per-node signed export's monotonic-generation rollback guard reads
+      (the export reproduces NodeStorageExportService.exportNode exactly).
+
+      ── SHIPS INERT (opt-in / attach-by-command) ──────────────────────────────────────
+      The table is created EMPTY. With zero radio rows the platform behaves EXACTLY as
+      today (the meshbridge optional service has nothing to reconcile). A node radio is an
+      OPTIONAL attachment the operator opts into per node.
+
+      ── Numbering: 300 ────────────────────────────────────────────────────────────────
+      Current max band on main is 290/291 (account localparts). 300 is the NEXT FREE band.
+      Appended LAST at the include site in db.changelog-master.xml, after the 291 include.
+      Independent of every other changeSet (a net-new table).
+    -->
+
+    <!-- ════════════════════════ node_radio_device ════════════════════════════════ -->
+
+    <changeSet id="300-node-radio-device" author="hugmesh">
+        <comment>node_radio_device — a Meshtastic LoRa radio attachment PINNED to ONE mesh
+                 node (FK -> device_registry): USB-serial on the node, a LoRa-WiFi radio
+                 dialled over TCP, or a WAN mesh reached via a Meshtastic MQTT broker.
+                 domain is stamped from the node's RESIDENCY by the service
+                 [FIX-NODEFAULT], never the caller.</comment>
+        <createTable tableName="node_radio_device">
+            <column name="id" type="varchar(36)" defaultValueComputed="(gen_random_uuid())::text">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <!-- The node this radio is attached to / reachable from. A radio is NODE-PINNED:
+                 the on-node meshbridge reconcile agent bridges exactly the radios pinned to
+                 ITS node. -->
+            <column name="device_id" type="varchar(36)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- HOW the node reaches the radio: 'serial' (USB-serial device path on the
+                 node) | 'tcp' (LoRa-WiFi radio, Meshtastic TCP API, default port 4403)
+                 | 'mqtt' (WAN/LoRaWAN-gateway mesh via a Meshtastic MQTT broker, JSON
+                 integration, default port 1883). -->
+            <column name="transport" type="varchar(16)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- serial transport ONLY: the node-local serial device path
+                 (e.g. /dev/ttyUSB0, /dev/serial/by-id/...). NULL for tcp/mqtt. -->
+            <column name="serial_path" type="varchar(255)"/>
+            <!-- tcp + mqtt transports ONLY: the radio's / broker's hostname or IPv4. NULL
+                 for serial. -->
+            <column name="host" type="varchar(253)"/>
+            <!-- tcp + mqtt transports ONLY: the TCP port (Meshtastic API 4403 / MQTT 1883).
+                 NULL for serial. -->
+            <column name="port" type="int"/>
+            <!-- mqtt transport ONLY: the broker topic root the mesh publishes under
+                 (e.g. msh/US). NULL for serial/tcp. -->
+            <column name="topic_root" type="varchar(64)"/>
+            <!-- mqtt transport ONLY: the Meshtastic channel name the JSON integration
+                 subscribes on. NULL for serial/tcp. -->
+            <column name="channel_name" type="varchar(32)"/>
+            <!-- mqtt transport ONLY (optional): the mesh GATEWAY node id used for downlink
+                 attribution (Meshtastic !hex8 node id). NULL elsewhere. -->
+            <column name="gateway_node_id" type="varchar(16)"/>
+            <!-- The stable bridge-facing radio identity the meshbridge keys its channel map
+                 on; UNIQUE per node while active (re-attaching the same radio_id on the
+                 same node is idempotent). -->
+            <column name="radio_id" type="varchar(64)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- The Meshtastic mesh channel index (0..7) the bridge binds this radio on. -->
+            <column name="mesh_channel" type="int" defaultValueNumeric="0">
+                <constraints nullable="false"/>
+            </column>
+            <column name="state" type="varchar(16)" defaultValue="active">
+                <constraints nullable="false"/>
+            </column>
+            <!-- home/tenant discriminator for the ADMIN read view — stamped from the node's
+                 residency by the service (NO default residency is reachable). -->
+            <column name="domain" type="varchar(64)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- the on-node meshbridge reconcile ACK outcome the UI surfaces. -->
+            <column name="propagation_state" type="varchar(16)" defaultValue="pending">
+                <constraints nullable="false"/>
+            </column>
+            <!-- monotonic generation bumped on every mutate; the per-node signed export
+                 carries max(generation) so a node rejects a rolled-back payload. -->
+            <column name="generation" type="bigint" defaultValueNumeric="0">
+                <constraints nullable="false"/>
+            </column>
+            <column name="created_by" type="varchar(400)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="created_at" type="timestamp with time zone" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+            <column name="detached_at" type="timestamp with time zone"/>
+            <column name="detached_by" type="varchar(400)"/>
+        </createTable>
+    </changeSet>
+
+    <changeSet id="300-node-radio-device-transport-check" author="hugmesh">
+        <comment>CHECK: transport is serial (USB-serial on the node), tcp (LoRa-WiFi radio,
+                 Meshtastic TCP API) or mqtt (WAN mesh via a Meshtastic MQTT broker).</comment>
+        <sql>
+            ALTER TABLE node_radio_device
+                ADD CONSTRAINT ck_node_radio_device_transport
+                CHECK (transport IN ('serial', 'tcp', 'mqtt'))
+        </sql>
+        <rollback>ALTER TABLE node_radio_device DROP CONSTRAINT ck_node_radio_device_transport</rollback>
+    </changeSet>
+
+    <changeSet id="300-node-radio-device-shape-check" author="hugmesh">
+        <comment>CHECK: the per-transport column matrix — serial rows carry ONLY serial_path;
+                 tcp rows carry ONLY host+port; mqtt rows carry host+port+topic_root+
+                 channel_name (gateway_node_id optional). The DB backstop to the service's
+                 mixed-shape reject (422), like 085's service-guard + CHECK pairing.</comment>
+        <sql>
+            ALTER TABLE node_radio_device
+                ADD CONSTRAINT ck_node_radio_device_shape
+                CHECK (
+                    (transport = 'serial' AND serial_path IS NOT NULL AND host IS NULL
+                        AND port IS NULL AND topic_root IS NULL AND channel_name IS NULL
+                        AND gateway_node_id IS NULL)
+                 OR (transport = 'tcp' AND serial_path IS NULL AND host IS NOT NULL
+                        AND port IS NOT NULL AND topic_root IS NULL AND channel_name IS NULL
+                        AND gateway_node_id IS NULL)
+                 OR (transport = 'mqtt' AND serial_path IS NULL AND host IS NOT NULL
+                        AND port IS NOT NULL AND topic_root IS NOT NULL
+                        AND channel_name IS NOT NULL)
+                )
+        </sql>
+        <rollback>ALTER TABLE node_radio_device DROP CONSTRAINT ck_node_radio_device_shape</rollback>
+    </changeSet>
+
+    <changeSet id="300-node-radio-device-state-check" author="hugmesh">
+        <comment>CHECK: state is active (bridged) or detached (CAS audit, never DELETEd
+                 while history matters).</comment>
+        <sql>
+            ALTER TABLE node_radio_device
+                ADD CONSTRAINT ck_node_radio_device_state
+                CHECK (state IN ('active', 'detached'))
+        </sql>
+        <rollback>ALTER TABLE node_radio_device DROP CONSTRAINT ck_node_radio_device_state</rollback>
+    </changeSet>
+
+    <changeSet id="300-node-radio-device-propagation-check" author="hugmesh">
+        <comment>CHECK: propagation_state is one of the four push-with-ack outcomes
+                 (same vocabulary as 085's node_storage_pool).</comment>
+        <sql>
+            ALTER TABLE node_radio_device
+                ADD CONSTRAINT ck_node_radio_device_propagation
+                CHECK (propagation_state IN ('pending', 'applied', 'failed', 'degraded'))
+        </sql>
+        <rollback>ALTER TABLE node_radio_device DROP CONSTRAINT ck_node_radio_device_propagation</rollback>
+    </changeSet>
+
+    <changeSet id="300-node-radio-device-mesh-channel-check" author="hugmesh">
+        <comment>CHECK: the Meshtastic mesh channel index is 0..7 (the radio's 8 channel
+                 slots).</comment>
+        <sql>
+            ALTER TABLE node_radio_device
+                ADD CONSTRAINT ck_node_radio_device_mesh_channel
+                CHECK (mesh_channel BETWEEN 0 AND 7)
+        </sql>
+        <rollback>ALTER TABLE node_radio_device DROP CONSTRAINT ck_node_radio_device_mesh_channel</rollback>
+    </changeSet>
+
+    <changeSet id="300-node-radio-device-port-check" author="hugmesh">
+        <comment>CHECK: when present, port is a real TCP port (1..65535).</comment>
+        <sql>
+            ALTER TABLE node_radio_device
+                ADD CONSTRAINT ck_node_radio_device_port
+                CHECK (port IS NULL OR port BETWEEN 1 AND 65535)
+        </sql>
+        <rollback>ALTER TABLE node_radio_device DROP CONSTRAINT ck_node_radio_device_port</rollback>
+    </changeSet>
+
+    <changeSet id="300-node-radio-device-device-fk" author="hugmesh">
+        <comment>FK: a radio's device_id references a real device_registry row (the node it
+                 is attached to). The radio's residency + owner_type are READ THROUGH this FK
+                 (the service stamps domain from device.domain, gates on device.owner_type).</comment>
+        <addForeignKeyConstraint
+                constraintName="fk_node_radio_device_device"
+                baseTableName="node_radio_device" baseColumnNames="device_id"
+                referencedTableName="device_registry" referencedColumnNames="id"/>
+        <rollback>
+            <dropForeignKeyConstraint baseTableName="node_radio_device"
+                                      constraintName="fk_node_radio_device_device"/>
+        </rollback>
+    </changeSet>
+
+    <!--
+      The partial UNIQUE below is PARTIAL (... WHERE state='active'). PostgreSQL supports
+      partial indexes; it is gated with a dbms=postgresql precondition (onFail=MARK_RAN) so
+      it applies only on Postgres. Elsewhere the at-most-one-active-radio-per-(device,
+      radio_id) invariant is enforced by the service (findActive-before-insert), exactly as
+      085 does — an idempotent attach resolves an existing active row rather than writing a
+      duplicate.
+    -->
+    <changeSet id="300-node-radio-device-active-radio-unique" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>Partial UNIQUE: at most one ACTIVE radio per (device_id, radio_id).
+                 Detached rows are excluded so the same radio_id can be re-attached after
+                 detach (the audit trail holds the cycles).</comment>
+        <sql>
+            CREATE UNIQUE INDEX uq_node_radio_device_active_radio
+                ON node_radio_device (device_id, radio_id)
+                WHERE state = 'active'
+        </sql>
+        <rollback>DROP INDEX uq_node_radio_device_active_radio</rollback>
+    </changeSet>
+
+    <changeSet id="300-node-radio-device-domain-index" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>Index the per-tenant residency read predicate on node_radio_device.</comment>
+        <sql>CREATE INDEX idx_node_radio_device_domain ON node_radio_device (domain)</sql>
+        <rollback>DROP INDEX idx_node_radio_device_domain</rollback>
+    </changeSet>
+
+    <changeSet id="300-node-radio-device-device-index" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>Index the per-node export scan (the node's active radios).</comment>
+        <sql>CREATE INDEX idx_node_radio_device_device ON node_radio_device (device_id)</sql>
+        <rollback>DROP INDEX idx_node_radio_device_device</rollback>
+    </changeSet>
+
+    <changeSet id="300-node-radio-device-grant" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>GRANT SELECT,INSERT,UPDATE on node_radio_device to the admin_bff role
+                 (detach is a CAS UPDATE — the row is never DELETEd = the audit trail).</comment>
+        <sql>GRANT SELECT, INSERT, UPDATE ON node_radio_device TO admin_bff</sql>
+        <rollback>REVOKE SELECT, INSERT, UPDATE ON node_radio_device FROM admin_bff</rollback>
+    </changeSet>
+</databaseChangeLog>

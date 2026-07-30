@@ -1,0 +1,699 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+      Admin BFF schema, migrated from the old spring.sql.init schema.sql into
+      Liquibase changesets. Liquibase runs over a JDBC datasource (Liquibase has
+      no R2DBC runner); all runtime data access goes through R2DBC.
+
+      Ordering of the changesets:
+        001 — gateway_route_access  (ported from schema.sql, source-of-truth)
+        002 — iso_artifacts          (ported from schema.sql)
+        003 — allowlist              (NEW durable allowlist: email + discord)
+        004 — account                (NEW durable two-stage accounts)
+        005 — namespace_grant        (NEW durable per-user namespace grants)
+        006 — bff_session            (NEW durable opaque BFF sessions, TTL)
+        007 — data constraints       (API<->DB parity: CHECK/FK on provider/roles/
+                                      namespace/route-access + bff_session FK)
+        050 — backup_history         (cloud Backup & Recovery job history; HIGH
+                                      number to avoid colliding with open PRs.)
+        060 — announcement           (admin site announcements: per-surface target
+                                      flags HOME/LOGIN/akkoma/FORUM + akkoma_ref;
+                                      HIGH number to avoid colliding with open PRs.
+                                      Appended LAST.)
+        070 — test_run               (test-architecture run/report status model:
+                                      test_run + per-(suite,role) test_run_result;
+                                      HIGH number to avoid colliding with open PRs.
+                                      Appended LAST. The admin Test-Reports console
+                                      lists/downloads/re-triggers these.)
+        008 — access_suspension      (account-states FOUNDATION desired-state +
+                                      single-writer reconcile loop source of truth;
+                                      kept low-numbered for readability but appended
+                                      LAST at the include site. The open
+                                      announcements PR ALSO appends here
+                                      [060-announcement.xml] — expect a trivial
+                                      include-order conflict; keep BOTH. The two
+                                      tables are independent so order is irrelevant.)
+        009 — domain_lock            (DOMAIN-LOCKED roles desired-state: the
+                                      ADD-active force-local source of truth + the
+                                      single-writer domain-lock reconcile loop. SIBLING
+                                      of 008 — a SEPARATE table because domain-lock is
+                                      ADD-semantics [keep the ROLE_*_DOMAINLOCKED
+                                      marker] whereas access_suspension is
+                                      REMOVE-semantics. Appended LAST after 008.)
+    -->
+
+    <include file="db/changelog/001-gateway-route-access.xml"/>
+    <include file="db/changelog/002-iso-artifacts.xml"/>
+    <include file="db/changelog/003-allowlist.xml"/>
+    <include file="db/changelog/004-account.xml"/>
+    <include file="db/changelog/005-namespace-grant.xml"/>
+    <include file="db/changelog/006-bff-session.xml"/>
+    <include file="db/changelog/007-data-constraints.xml"/>
+    <include file="db/changelog/050-backup-history.xml"/>
+    <include file="db/changelog/060-announcement.xml"/>
+    <include file="db/changelog/008-access-suspension.xml"/>
+    <include file="db/changelog/009-domain-lock.xml"/>
+    <include file="db/changelog/070-test-run.xml"/>
+    <!--
+      010 — domain-scope: adds a per-row `domain` tenant discriminator (default
+      'default') to access_suspension (008), domain_lock (009) and
+      gateway_route_access (001) so a brand-scoped ADMIN sees/mutates only their own
+      brand's rows (SUPERADMIN unscoped). Appended LAST.
+    -->
+    <include file="db/changelog/010-domain-scope.xml"/>
+    <!--
+      011 — device-license-registry: the SINGLE SOURCE OF TRUTH governing which operator
+      may SSH into which mesh node. device_registry (identity + physical ownership +
+      DOMAIN RESIDENCY, domain NOT NULL NO DEFAULT [FIX-NODEFAULT]) + device_ssh_license
+      (explicit operator x device|domain grants, pinned to the exact SSH pubkey %f
+      [FIX-PINKEY], CAS-revoke audit + generation/propagation_state for ACK-revoke
+      [FIX-REVOKE]). SUPERADMIN mutates; ADMIN read-only own-domain; the registry compiles
+      to BOTH enforcement layers off ONE signed unscoped export [FIX-SIGNCACHE].
+      Appended LAST after the 010 include.
+    -->
+    <include file="db/changelog/011-device-license-registry.xml"/>
+    <!--
+      012 — domain-registry: the RUNTIME source of truth for which brands/domains exist
+      in the cluster (multi-tenancy PR9). The SUPERADMIN-managed twin of the build-time
+      brands/domains.conf the generator (#79) bakes in: cluster_domain (UNIQUE natural
+      key, <- conf DOMAIN), brand (<- conf BRAND), ca_ref (<- conf CA_CERT/CA_KEY, a CA
+      *reference* NOT the bytes), org, ns_prefix, casdoor_org, mesh_tag, enabled
+      (soft-disable, never hard-delete), audit. CROSS-DOMAIN: no per-row tenant
+      discriminator — only the cross-domain SUPERADMIN role reads/writes it. Appended
+      LAST after the 011 include.
+    -->
+    <include file="db/changelog/012-domain-registry.xml"/>
+    <!--
+      061 — announcement-domain: adds the per-row tenant discriminator `domain` (default
+      'default') to the announcement table (060) so a brand-scoped ADMIN only sees and
+      mutates THEIR brand's announcements. P1 multi-tenancy fix. Appended LAST.
+    -->
+    <include file="db/changelog/061-announcement-domain.xml"/>
+    <!--
+      062 — notification-outbox: the TRANSACTIONAL OUTBOX spine for the per-domain
+      @system notifications subsystem (Notifications PR2). notification_outbox (the
+      durable, deduped record of an effect to notify on — payload carries reason/ttl/
+      target ONLY, never the actor), notification_delivery (per-channel sent guard),
+      notification_cursor (per-consumer cursor) and announcement_suppressed (a minimal
+      per-domain ADMIN broadcast kill-switch — NET-NEW; the Announcement system has no
+      such flag). SHIPS DARK: nothing consumes the outbox yet (the hugmesh-actions
+      reconciler is PR4); the only observable change is an extra outbox row written in
+      the SAME reactive transaction as an access_suspension (ban/timeout) effect write.
+      Appended LAST.
+    -->
+    <include file="db/changelog/062-notification-outbox.xml"/>
+    <!--
+      063 — notification-delivery 'skipped' status: the PR4b in-app reconciler is the
+      first writer of notification_delivery and needs a fourth terminal status,
+      'skipped' (user-bff accepted but the recipient suppressed the category), distinct
+      from 'sent' (delivered) and 'failed' (dead-letter). Additively widens the 062
+      status CHECK. Appended LAST.
+    -->
+    <include file="db/changelog/063-notification-delivery-skipped.xml"/>
+    <!--
+      080 — egress-vpn-configs: the control plane for the DEFAULT-OFF egress-VPN optional
+      service. vpn_config (one imported provider config per (domain,name); a secret_ref +
+      metadata ONLY — the private VPN key rides a K8s Secret via ESO / the key-USB, never
+      this DB; CAS active->revoked audit + generation/propagation_state) + vpn_node_
+      assignment (the explicit (config x NODE|DOMAIN) assignment marking which public pods
+      egress via the VPN; DUAL scope mirroring device_ssh_license, target_node_id joins
+      device_registry.machine_key_fp, optional per-service service_slug, CAS audit).
+      CLONES the 011 device-license-registry idioms (portable varchar(36) UUID PK,
+      timestamptz now(), PG-gated partial-uniques WHERE active, FIX-NODEFAULT domain).
+      SUPERADMIN mutates; ADMIN reads own-domain only. The signed export the node consumes
+      is a later PR. Band 080-084. Appended LAST.
+    -->
+    <include file="db/changelog/080-egress-vpn-configs.xml"/>
+    <!--
+      081 — oidc-provider-roles: per-domain default role assignments for OIDC identity
+      providers (concurrent-session feat/oidc-provider-roles). Admins configure which
+      roles new users get when registering via a given provider (Google, GitHub, custom
+      OIDC). RENUMBERED 080 -> 081 during consolidation: the egress-vpn feature also
+      claimed the 080 prefix (080-egress-vpn-configs.xml) — the two changesets have
+      DISTINCT changeSet ids + table names (oidc_provider_default_roles vs vpn_config), so
+      both run cleanly; the file was bumped to 081 only to keep the numeric-prefix order
+      unique. Appended in numeric order after 080.
+    -->
+    <include file="db/changelog/081-oidc-provider-roles.xml"/>
+    <!--
+      085 — node-storage: the control-plane SOURCE OF TRUTH for ADDITIONAL storage an
+      operator ATTACHES to a specific mesh node so services can use SPACE on that node.
+      node_storage_pool (an additional disk/pool PINNED to one node, FK -> device_registry,
+      reserved_bytes capacity claim + a node-local provisioner pool_path, domain stamped
+      from the node's RESIDENCY [FIX-NODEFAULT]) + storage_service_assignment (the explicit
+      pool x service placement rows the apps/13b ApplicationSet selects on, CAS-revoke audit
+      + generation/propagation_state for the GitOps ACK). CLONES the 011 device-license-
+      registry idioms verbatim. SHIPS INERT (created empty; zero pools = today's behaviour
+      exactly). HIGH number band (085-089) to avoid colliding with the open low-numbered
+      PRs; APPENDED LAST after the 063 include.
+    -->
+    <include file="db/changelog/085-node-storage.xml"/>
+    <!--
+      090 — games-server-catalog: the GAMES APP-STORE control-plane FOUNDATION (PR1).
+      game_server_catalog (the GLOBAL, superadmin-curated FOSS catalog — no per-row tenant
+      discriminator, modelled on domain_registry 012) + game_server_domain_offer (the
+      per-(domain,slug) TWO-TIER offer carrying the superadmin creation gate
+      offered_by_superadmin + the max_instances quota, modelled on the announcement
+      per-domain pattern). image_ref is DIGEST-PINNED (a DB CHECK + the service validator
+      reject tag-only refs — arbitrary-container exec containment). SHIPS DARK: the 8 curated
+      FOSS servers are seeded into the global catalog but ZERO domain offers exist, so no
+      domain can run anything until a superadmin offers a slug to it. Band 090-099 (the
+      games-services control-plane band). Appended LAST.
+    -->
+    <include file="db/changelog/090-games-server-catalog.xml"/>
+    <!--
+      091 — game-instance: the games app-store INSTANCE desired-state table (PR4).
+      Modelled EXACTLY on access_suspension (008): state pending/active/suspended/
+      terminated + propagation_state + ending_at single expiry clock + partial-unique
+      WHERE non-terminal + never-DELETE audit, driven by a Lease-gated single-writer
+      reconciler (clone of SuspensionExpiryAction). domain = validated issuer;
+      owner_subject = jwt.getSubject() (owner == subject, fail-closed). node_port /
+      namespace / console_path are allocated by later PRs (PR5/PR7). Appended LAST.
+    -->
+    <include file="db/changelog/091-game-instance.xml"/>
+    <!--
+      100/101/102 — Superadmin App-Store PR1 (the data/accounting layer): a FREE >=100
+      band picked so it never collides with the existing changesets (which go to ~070)
+      OR the concurrent agents' bands (080 egress / 085 node-storage / 090-099 games).
+        100 — service_curation : the per-domain TWO-TIER offered catalog. SUPERADMIN
+              offers/withdraws a service_key FOR a {domain}; a brand ADMIN reads ONLY
+              their own issuer-derived domain's offered rows (/bff/admin/service-store).
+              Desired-state (offered/withdrawn, never hard-delete) + per-row `domain`
+              discriminator (the 010 pattern).
+        101 — app_profile : reusable SUPERADMIN-owned deploy templates. GLOBAL (NO
+              per-row domain discriminator) — a shared cross-brand library; name UNIQUE;
+              profile_json holds resource/role/cert/exposure defaults.
+        102 — service_deployment : per-domain lifecycle accounting. CLONES the 008
+              access_suspension desired-state shape — state(active/ended), ending_at as
+              the single expiry clock, enforce_actions emitted at end-of-lease,
+              propagation_state self-heal. The ServiceDeploymentExpiryAction CASes
+              active->ended at ending_at (lease-gated single writer) and SHIPS DARK (the
+              ArgoCD/Casdoor/cert effects are STUBBED/LOGGED). Appended LAST.
+    -->
+    <include file="db/changelog/100-service-curation.xml"/>
+    <include file="db/changelog/101-app-profile.xml"/>
+    <include file="db/changelog/102-service-deployment.xml"/>
+    <!--
+      110 — workload-console-grants: the WORKLOAD CONSOLE (podman/OpenShift-equivalent)
+      access-control source of truth. THREE tables, ALL SHIPPING DARK:
+        workload_console_grant  — the READ_ONLY-only, ~24h-TTL-leased, log-opt-in LEASE a
+              SUPERADMIN issues so a brand ADMIN may read-only-view their OWN-domain app-tier
+              workloads (clone of device_ssh_license 011: CAS active->revoked/expired,
+              monotonic generation, propagation_state, domain from validated issuer;
+              access_level CHECK-pinned to READ_ONLY, log_access default FALSE, expires_at
+              NOT NULL).
+        workload_console_config — the master kill-switch (one row per domain + a GLOBAL
+              ' global' sentinel seeded OFF). admin_enabled (ships dark) +
+              dangerous_tier_enabled (ships dark; the GLOBAL kill of exec/log-stream/
+              mutations that applies EVEN to a superadmin).
+        workload_console_intent — the GitOps-PR OUTBOX for the GitOps-authoritative lifecycle
+              verbs (scale/deploy/service-removal/export-manifest); DEPLOY image_ref is
+              digest-pinned (CHECK). SHIPS DARK like service_deployment (102): the ArgoCD-PR
+              effect is STUBBED/LOGGED.
+      The 110 band is FREE (the consolidation carries changesets through 102). Appended LAST.
+    -->
+    <include file="db/changelog/110-workload-console-grants.xml"/>
+    <!--
+      130 — device_enrollment (machine_key_fp AUTO-CAPTURE liveness-reconciliation channel;
+      mTLS self-report, NO authorizing columns). Band 130+ to avoid colliding with the
+      device-license-registry 011, domain-registry 012, and the 100/101/102/110 bands.
+      Appended LAST.
+    -->
+    <include file="db/changelog/130-device-enrollment.xml"/>
+    <!--
+      140-142 — desktop-app-governance: the admin-bff SOURCE OF TRUTH for least-privilege,
+      centrally-governed DESKTOP CLIENT IMAGES (amd64-laptop + thin-Chromebook Plasma
+      desktops). THREE tables, ALL SHIPPING DARK / DEFAULT-NONE:
+        140 — desktop_app_catalog : the per-domain Plasma Discover allowlist; `enabled`
+              DEFAULT FALSE (the store is DEFAULT-NONE — add != enable); UNIQUE per
+              (domain, app_ref). The discover-role registry endpoint serves ONLY this
+              domain's ENABLED refs (ref not in the enabled allowlist -> deny/404, no
+              cross-domain leak; the upstream OCI fetch ships DARK behind a Noop).
+        141 — desktop_sudo_grant : the per-(domain,subject,device) SSO-enforced sudo grant;
+              CLONES device_ssh_license 011 EXACTLY (CAS active->revoked never-deleted audit,
+              monotonic generation, propagation_state, PG-gated partial-unique WHERE active).
+              DEFAULT NONE = no sudo; an active grant is the revocable SSO claim the
+              IdP/desktop consults via the entitlement-read endpoint.
+        142 — desktop_install_request : a non-sudo user's allow/install request; requester
+              = JWT SUBJECT (owner == subject, fail-closed), domain from the validated
+              issuer, status pending/approved/denied/installed, decided_by on an admin
+              decision; NEVER deleted = audit.
+      Band 140-142 is FREE above the 130 device-enrollment include. Appended LAST.
+    -->
+    <include file="db/changelog/140-desktop-app-governance.xml"/>
+    <!--
+      160-162 — cloud-backups: the admin-bff SOURCE OF TRUTH catalog for the per-domain +
+      superadmin TOTAL-CLOUD encrypted, versioned backups feature (Velero + kopia/restic AES
+      repo). FOUNDATION leg = catalog + endpoints; generator(Velero) + admin-ui legs follow.
+      THREE tables, ALL SHIPPING DARK (the Velero effector is a Noop):
+        160 — backup_destination : the per-domain destination CONFIG (object_store vs
+              node_storage = the superadmin device-attached FDE volume). secret_ref / pool ref
+              are REFERENCES only — never credential bytes. UNIQUE per domain (PUT upserts).
+        161 — backup_set : one backup REQUEST/job. scope DOMAIN (brand admin own brand) /
+              TOTAL (superadmin-only). VERSIONED (a chain sharing set_key; each run version+1;
+              UNIQUE per (domain,set_key,version)). created_by = JWT SUBJECT (owner == subject).
+              encryption_meta = a repo / age-recipient REFERENCE only — NEVER the key bytes.
+              The TOTAL vs DOMAIN role gate is enforced in the service/controller; the schema
+              records the scope discriminator + a CHECK.
+        162 — backup_artifact : the per-SERVICE rows under a set (FK -> backup_set): kind
+              db_dump / pv_snapshot / config + a size + a per-artifact status; the set's status
+              aggregates these.
+      Band 160-162 is the NEXT FREE band ABOVE the 150-159 reserve (Casdoor MFA build); the
+      current max on main is 140-142 (desktop-app-governance). Appended LAST after the 140
+      include. CLONES the 011/085/140 portable-DDL idioms verbatim (app-UUID PK, timestamptz
+      now(), one changeSet per CHECK/FK/index/GRANT, PG-gated indexes/GRANT via dbms=postgresql
+      onFail=MARK_RAN; the H2 path relies on the service guards).
+    -->
+    <include file="db/changelog/160-cloud-backups.xml"/>
+    <!--
+      170-171 — ssh-terminal real dial + image-gen FOUNDATION (PR-1 of the 7-PR ships-dark
+      plan for the in-UI SSH terminal real dial + image-generation feature). This leg adds
+      the schema + repos + the sshj dependency ONLY — NO dial factory, NO controller, NO
+      sshj usage, NO behavior. TWO tables, BOTH SHIPPING DARK:
+        170 — device_ssh_dial : the per-device dial-key registry pointer. NON-SECRET only
+              (public host key + fingerprints + the dial user + a Vault/K8s-Secret REF); the
+              PRIVATE dial key lives in Vault, NEVER here. One row per device (UNIQUE +
+              FK device_id -> device_registry ON DELETE CASCADE). status starts PENDING.
+        171 — image_build : the image-generation request catalog. requested_by/target_user
+              (owner == subject, enforced later), image_type reuses the device_registry
+              vocabulary, ssh_keys_allowed DEFAULT false (fail-closed). job_name/image_ref/
+              keys_ref are REFERENCES only — never secret bytes. status starts QUEUED.
+      Band 170-171 is the NEXT FREE band above the 150-159 Casdoor MFA reserve and the
+      160-162 cloud-backups band (current max on main is 160-162). Appended LAST after the
+      160 include. CLONES the 011/160 portable-DDL idioms verbatim (app-UUID PK, timestamptz
+      now(), one changeSet per CHECK/FK/index/GRANT, PG-gated indexes/GRANT via
+      dbms=postgresql onFail=MARK_RAN; the H2 path runs the DDL + relies on the UNIQUE/repo
+      guards).
+    -->
+    <include file="db/changelog/170-device-ssh-keys.xml"/>
+    <include file="db/changelog/171-image-build.xml"/>
+
+    <!--
+      172 — admin-ssh-issued-key : the issuance AUDIT record for admin SSH key-ISSUANCE
+      (SSH PR-4, Option B; ships dark behind app.ssh-issue.enabled=false). One row per Ed25519
+      keypair the BFF MINTS for an operator to SSH a licensed device. NON-SECRET only: the
+      issued OpenSSH public line + its SHA256 fingerprint (the %f the node pins) + a FK to the
+      backing device_ssh_license row whose key_fingerprints that fingerprint was added to. NO
+      private-key column — the minted private key is held only in a short-TTL leader-pinned
+      single-use in-memory store, streamed ONCE, never persisted. Revoke is a CAS
+      issued->revoked (never deleted = audit) that ALSO removes the fingerprint from the backing
+      license (bumping its generation to drive the export forward). Band 172 is the NEXT FREE
+      band above the 170-171 ssh-terminal/image-build band; appended LAST after the 171 include.
+      CLONES the 011/170 portable-DDL idioms verbatim (app-UUID PK, timestamptz now(), one
+      changeSet per CHECK/FK/index/GRANT, PG-gated index+GRANT via dbms=postgresql
+      onFail=MARK_RAN; NEVER a DELETE grant).
+    -->
+    <include file="db/changelog/172-admin-ssh-issued-key.xml"/>
+
+    <!--
+      150 — Casdoor-MFA SUBSTRATE (D6+D8 opaque-session leg). The 150-159 band was
+      RESERVED for the Casdoor MFA build (the 160 cloud-backups + 170 ssh-terminal bands
+      were kept ABOVE it precisely so this band stayed free). It adds the bff_session MFA
+      columns (mfa_satisfied / mfa_satisfied_at / amr) the cookie-bridge /bff/session
+      hydration reads + the A5 step-up freshness leg evaluates, and the role_mfa_policy
+      per-(domain,role) requirement table (consumed DARK). Does NOT add the
+      gateway_route_access.mfa_required 001-copy column — that lives in the 001 route-access
+      changelog (changeSet 001b, the admin-bff leg of the dual-write trio), not here. Appended LAST at the include site (AFTER the 172 include) so it runs
+      last regardless of its lower numeric prefix — the bff_session table (006) already
+      exists by here, so the addColumn changes apply cleanly.
+    -->
+    <include file="db/changelog/150-mfa-substrate.xml"/>
+
+    <!--
+      151 — MFA FACTOR STORAGE (D6+D8 enrollment leg). Within the 150-159 MFA reserve,
+      directly after 150's opaque-session columns. The web path cannot use Casdoor's MFA
+      endpoints (no standalone factor-verify API; WebAuthn session-bound; TOTP secret masked
+      forever after setup), so the BFF OWNS the factor lifecycle: mfa_factor (TOTP secret
+      AES-256-GCM encrypted at rest + WebAuthn factor rows), mfa_recovery_code (salted-HMAC
+      hash only, one-time consume), webauthn_credential (credentialId + COSE key + monotonic
+      sign_count). SHIPS DARK — every /bff/mfa/* endpoint 503s while app.casdoor.mfa.enabled
+      =false; no enforcement is wired off these tables in this band. Appended LAST (AFTER the
+      150 include) so it runs last regardless of its numeric prefix — bff_session (006) is
+      already present. PG-gated index+GRANT via dbms=postgresql onFail=MARK_RAN (the H2 test
+      path runs the table creates only).
+    -->
+    <include file="db/changelog/151-mfa-factors.xml"/>
+
+    <!--
+      152 — WEBAUTHN PENDING CHALLENGE (D6+D8 multi-replica leg). Within the 150-159 MFA
+      reserve, directly after 151's factor lifecycle storage. Makes the pending WebAuthn
+      challenge DURABLE + MULTI-REPLICA-SAFE: the WebAuthnChallengeStore was an in-process
+      ConcurrentHashMap, so a cross-node options-then-verify ceremony missed the challenge and
+      failed closed (a documented multi-replica GO-LIVE blocker). webauthn_challenge holds one
+      PENDING challenge per (owner_subject, ceremony_type REGISTER|ASSERT) with a ~5m expires_at
+      and a one-time used flag; consume is an atomic CAS (used=false->true guarded on owner +
+      ceremony + unexpired) so a replay / concurrent double-verify loses, and expired rows are
+      pruned lazily on put. SHIPS DARK — unreachable while app.casdoor.mfa.enabled=false; the
+      durable store only matters when MFA is enabled and admin-bff runs multi-replica. Appended
+      LAST (AFTER the 151 include) so it runs last regardless of its numeric prefix — bff_session
+      (006) is already present. PG-gated index+GRANT via dbms=postgresql onFail=MARK_RAN (the H2
+      test path runs the table create only).
+    -->
+    <include file="db/changelog/152-webauthn-challenge.xml"/>
+
+    <!--
+      180 — BFF-JWT-CUSTODY columns (the SSO custody-tail leg). The 180 band is the NEXT
+      FREE band above the 172 admin-ssh-issued-key include and the 150-159 MFA reserve.
+      Adds four NULLABLE bff_session columns (access_token_enc / refresh_token_enc /
+      access_token_expires_at / custody_updated_at) the dark /bff/internal/custody/stamp
+      writes and /bff/internal/session/exchange reads, so the real Casdoor JWT lives
+      server-side AES-256-GCM-encrypted (auth-core BffCustodyCipher) while the browser holds
+      only the opaque bff_ session id. SHIPS DARK: the columns are never written by
+      newSession; the stamp/exchange endpoints are unreachable / 503 at defaults
+      (app.bff.custody-key blank, app.bff.oidc.enabled=false). Appended LAST (AFTER the 152
+      include) so it runs last regardless of its numeric prefix — bff_session (006) is already
+      present, so the addColumn changes apply cleanly. PG-gated GRANT via dbms=postgresql
+      onFail/onError=MARK_RAN (the H2 test path runs the column adds only); NEVER a DELETE
+      grant. Bumped in lockstep with the auth-core 2.1.0 dep + the two custody endpoints.
+    -->
+    <include file="db/changelog/180-bff-jwt-custody.xml"/>
+
+    <!--
+      181 — SSO account provider: relax ck_account_provider to also allow 'casdoor' (the
+      OIDC login leg provisions accounts with provider="casdoor"). Pairs with
+      InternalAccountController.ensureAccount casdoor id_token subject extraction.
+    -->
+    <include file="db/changelog/181-casdoor-provider.xml"/>
+
+    <!--
+      190 — DOMAIN-REGISTRY PROVISIONING-STATUS columns (the runtime add-domain provisioning
+      bridge). Adds three SHIPS-DARK columns to domain_registry (012): ca_provisioned +
+      appset_registered (NOT NULL DEFAULT false) and last_reconciled_generation (NOT NULL
+      DEFAULT 0). They record whether a SUPERADMIN-registered domain has actually been
+      PROVISIONED (per-domain CA + brand-list ArgoCD ApplicationSet) so the admin-ui console can
+      render "registered but not yet provisioned" and the signed domain_registry /export this PR
+      adds can carry the state to the (later) generator domain-reconcile effector — the ONE
+      missing export symmetry (device-license/egress-VPN/node-storage each already ship a signed
+      /export). NOTHING flips them at defaults (the CRUD never sets them; only the effector
+      does), so zero behaviour change. Band 190 is the NEXT FREE band above the 180
+      bff-jwt-custody include. Appended LAST so it runs last regardless of its numeric
+      prefix — domain_registry (012) is already present, so the addColumn changes apply cleanly.
+    -->
+    <include file="db/changelog/190-domain-registry-provisioning-status.xml"/>
+
+    <!--
+      200 — DB-GENERATED UUID PRIMARY KEYS (the org-wide admin-bff migration; exemplar:
+      merged mod-bff #36). Stops the app minting UUID primary keys (UUID.randomUUID())
+      and lets Postgres generate them via a gen_random_uuid() column DEFAULT, read back
+      on insert via INSERT ... RETURNING id. The column type + entity @Id type are
+      UNCHANGED — only the id SOURCE moves to the DB. STAGE 1 migrates the 3 native-uuid
+      PK tables (gateway_route_access 001, announcement 060, backup_history 050); later
+      stages APPEND more changeSets to the SAME 200 file (no further master change). Band
+      200 is the NEXT FREE band above the 190 domain-registry-provisioning-status include.
+      Appended LAST — every table it touches already exists by here, so the addDefaultValue
+      changes apply cleanly.
+    -->
+    <include file="db/changelog/200-db-generated-uuid-pks.xml"/>
+
+    <!--
+      210 — DB-GENERATED UUID PRIMARY KEYS for the four auth-core MFA tables (companion
+      to auth-core 2.3.0). Adds (gen_random_uuid())::text DEFAULT to mfa_factor (151),
+      mfa_recovery_code (151), webauthn_credential (151), and webauthn_challenge (152).
+      auth-core 2.3.0 drops UUID.randomUUID() mints from MfaEnrollmentService +
+      WebAuthnChallengeStore; this changeset supplies the matching column DEFAULT so
+      Postgres fills the id on any INSERT that omits it. Band 210: the NEXT FREE band
+      above the 200 include. Appended LAST — all four tables already exist by here.
+    -->
+    <include file="db/changelog/210-mfa-db-generated-uuid-pks.xml"/>
+
+    <!--
+      220 — DOMAIN SCOPE for allowlist + namespace_grant. Closes the cross-tenant IDOR
+      gap that changeset 010 skipped: adds `domain VARCHAR(64) NOT NULL DEFAULT 'default'`
+      to both tables, widens each PK to include `domain`, and adds Postgres read-path
+      indexes. auth-core AllowlistRepository / NamespaceGrantRepository now expose
+      domain-scoped finder and upsert/delete methods; AdminController threads
+      PrincipalDomain through the /allowlist and /namespace-access endpoints. Band 220:
+      the NEXT FREE band above the 210 include. Appended LAST.
+    -->
+    <include file="db/changelog/220-allowlist-namespace-grant-domain.xml"/>
+
+    <!--
+      230 — DOMAIN SCOPE for backup_history. Closes the cross-tenant backup READ IDOR
+      (and the cross-tenant RESTORE hole) left by changeset 050: adds `domain VARCHAR(64)
+      NOT NULL DEFAULT 'default'` + a (domain, created_at) read index. PK is single
+      `id` so no PK change. BackupRepository/Service/Controller thread PrincipalDomain
+      through /backups (history + restore). Band 230: next free above 220. Appended LAST.
+    -->
+    <include file="db/changelog/230-backup-history-domain.xml"/>
+
+    <!--
+      240 — mastodon_appearance_default: the ADMIN-CONFIGURED, per-domain platform-wide
+      default appearance/preferences fallback for the hugmesh-mastodon-ui
+      PreferencesService (theme/accent/layout/density/etc). One durable key/value row per
+      (domain, pref_key) — clones the 011 user-bff-api user_preferences_store idiom.
+      GET /bff/mastodon/appearance-default (any authenticated user) /
+      PUT /bff/admin/mastodon/appearance-default (ADMIN-write-gated). Band 240: next free
+      above 230. Appended LAST.
+    -->
+    <include file="db/changelog/240-mastodon-appearance-default.xml"/>
+
+    <!--
+      250 — account_appeal: the structured ACCOUNT-BAN appeal record (owner ==
+      subject). A curtailed principal files ONE appeal against their own
+      access_suspension PROFILE row via POST /bff/me/appeal; ADMIN/SUPERADMIN decide
+      via /bff/admin/account-appeals/{id}/decide — an APPROVE reverses the underlying
+      suspension (SuspensionService.clear), never a bare status flip. Band 250: next
+      free above 240. Appended LAST.
+    -->
+    <include file="db/changelog/250-account-appeals.xml"/>
+
+    <!--
+      260 — drop the stale 2-value account.roles CHECK (ck_account_roles). See the
+      changeset file's own comment for the full rationale. Band 260: next free above 250.
+      Appended LAST.
+    -->
+    <include file="db/changelog/260-account-roles-check-relax.xml"/>
+
+    <!--
+      270 — go_live_intent: the SIGNED-INTENT ledger for the superadmin GO-LIVE WIZARD
+      (admin web-UI half of go-live wizard v1; ships dark behind app.go-live.enabled=false).
+      The in-cluster BFF RECORDS/WITHDRAWS intent only — it can never (and must never
+      pretend to) write the host's /etc/hugmesh/go-live marker; the host-side agent
+      pulls the signed /bff/admin/go-live/export (detached Ed25519, RegistrySigner),
+      verifies against the key-USB-baked public half, writes the marker itself, and later
+      acks via applied_at/applied_by (its write surface, dark like band 190). NO secret
+      columns — provider is a catalog key; tokens route to keys-USB/Vault, never this DB.
+      Band 270: next free above 260. Appended LAST.
+    -->
+    <include file="db/changelog/270-go-live-intent.xml"/>
+
+    <!--
+      280 — image-build-spec: the FULL per-image IMAGE_SPEC_JSON channel (worklist redesign
+      item 1b). Adds ONE nullable column image_build.image_spec_json (text) holding the
+      MATERIALIZED flat ImageConfig spec (secrets blanked) the orchestrator emits as the
+      per-build hugmesh-image-spec-<id> ConfigMap; NULL keeps the LEGACY 6-env manifest
+      path (pure additive opt-in). The existing 171 table GRANT covers the new column. Band
+      280: next free above 270 (172..270 taken). Appended LAST — image_build (171) already
+      exists by here, so the addColumn applies cleanly.
+    -->
+    <include file="db/changelog/280-image-build-spec.xml"/>
+
+    <!--
+      290 — account.localpart: the account-takeover-by-collision fix. Persists the
+      resolved, collision-checked homeserver (Matrix/Mastodon) localpart on the account
+      row itself (UNIQUE, nullable — see the changeset file's own comment for the full
+      rationale, including why NOT NULL is deliberately omitted), backfilling existing
+      rows with the same sanitizer ServiceTokenBroker.matrixUser uses and
+      deterministically disambiguating any pre-existing collision. Band 290: next free
+      above 280. Appended LAST.
+    -->
+    <include file="db/changelog/290-account-localpart.xml"/>
+
+    <!--
+      291 — account.mastodon_localpart: the RESIDUAL half of the
+      account-takeover-by-collision fix. 290 made the Matrix localpart (account.localpart,
+      the matrixUser fold) UNIQUE; the Mastodon mint re-folds it through the coarser
+      mastodonLocalpart ('.-=/'->'_', 30-cap), so two 290-unique accounts still collapse
+      to one Mastodon localpart and the shared-service-password recover leg lets the
+      second take over the first's Mastodon identity. Persists the resolved,
+      collision-checked Mastodon localpart on the account row (UNIQUE, nullable), with a
+      FOLD-STABLE backfill (see the changeset's own comment). Band 291: next free above
+      290. Appended LAST.
+    -->
+    <include file="db/changelog/291-account-mastodon-localpart.xml"/>
+
+    <!--
+      292 — account.casdoor_sub: the A5 part-B cross-carrier route-pin fix. Persists
+      the raw Casdoor `sub` UUID on the account row (nullable, NOT unique — see the
+      changeset file's own comment for both rationales), captured at the native-login
+      mint path (InternalAccountController#ensureAccount, provider="casdoor" — the one
+      place the raw id_token is decoded) and surfaced by /bff/internal/session/introspect
+      as the nullable casdoorSub field, so the gateway can match UUID-form casdoor_user
+      route pins for bff_ session carriers exactly as it does for Casdoor-JWT carriers.
+      No backfill (the UUID is not derivable from any existing column — legacy rows
+      self-heal on their next native login). Band 292: next free above 291.
+    -->
+    <include file="db/changelog/292-account-casdoor-sub.xml"/>
+
+    <!--
+      300 — node_radio_device: the control-plane SOURCE OF TRUTH for a Meshtastic LoRa
+      RADIO an operator ATTACHES to a specific mesh node — the admin-facing desired state
+      the meshbridge optional service (mesh<->Matrix bridge) reconciles on-node. One table
+      CLONING the 085 node-storage pool idioms verbatim (FK -> device_registry, domain
+      stamped from the node's RESIDENCY [FIX-NODEFAULT], service-layer ownership
+      ALLOW/DENY matrix, CAS active->detached never-DELETE audit, monotonic generation +
+      propagation_state for the signed per-node export's rollback guard). transport IN
+      ('serial','tcp','mqtt'): a USB-serial device path on the node, a LoRa-WiFi radio
+      dialled over TCP (Meshtastic port 4403), or a WAN/LoRaWAN-gateway mesh via a
+      Meshtastic MQTT broker (host+port+topic_root+channel_name, optional
+      gateway_node_id) — the per-transport column matrix is CHECK-backstopped. SHIPS
+      INERT (created empty; zero radios = today's behaviour exactly). Band 300: next free
+      above 292. Appended LAST.
+    -->
+    <include file="db/changelog/300-node-radio-device.xml"/>
+
+    <!--
+      301 — account.account_issuer: closes the multi-brand bff_-session domain-scope
+      blocker. The introspect contract carried no brand/issuer field (only `provider`, the
+      OAuth LOGIN provider — a different axis from the per-brand Casdoor instance), so
+      user-bff's synthetic-Jwt filter could only stamp an `iss` via singleTrustedIssuerOrNull
+      and stamped NOTHING on a genuinely multi-issuer cluster → PrincipalDomain.forScope
+      resolved "__deny__" and EVERY domain-scoped bff_-session read/write failed closed.
+      Persists the account's own Casdoor issuer at the ONE id_token decode point
+      (InternalAccountController#ensureAccount, provider="casdoor") and surfaces it as the
+      nullable `issuer` introspect field. SECURITY: the id_token is decoded but NOT
+      signature-verified and the handle is user-bff-supplied, so — unlike 292's casdoor_sub
+      (only ever ADDED to a deny-wins pin set) — the iss DECIDES TENANT SCOPE and is stamped
+      ONLY on strict membership of the configured, NON-EMPTY commons-DomainRegistry
+      trusted-issuer set; anything else stamps NULL and degrades to today's fail-closed deny.
+      Nullable (legacy rows self-heal on next native login), NOT unique (a brand's accounts
+      all share its issuer). Band 301: next free above 300. Appended LAST.
+    -->
+    <include file="db/changelog/301-account-issuer.xml"/>
+
+    <!--
+      302 — phone_device: the MDM PHONE REGISTRY. One row per operator-onboarded managed
+      phone (GrapheneOS/stock Android), the phone-ingest/v1 record scripts/phone-wizard.sh
+      POSTs at the end of onboarding over the same mTLS in-cluster service transport as the
+      node device_enrollment self-report. Distinct from device_registry (011, node SSH
+      authority) and device_enrollment (130, node liveness) — it keys on device_id, not
+      machine_key_fp, and like device_enrollment carries NO authorizing columns (inventory /
+      telemetry a SUPERADMIN reads, never an access grant). device_id is UNIQUE so a re-ingest
+      UPSERTs one row and bumps ingest_count. Band 302: next free above 301. Appended LAST.
+    -->
+    <include file="db/changelog/302-phone-device.xml"/>
+
+    <!--
+      303 — phone_device mdm_* columns: the phone-ingest/v2 ADDITIVE Headwind MDM
+      enrollment facts (enrolled flag + DPC package + Headwind URL + how ownership was set
+      + when). Strictly additive over 302 — a v1 record (no mdm object) lands with
+      mdm_enrolled=false and NULL facts — and carries the same inventory/telemetry-only
+      semantics (NO authorizing columns; the MDM policy lives in Headwind, never here).
+      mdm_enrolled mirrors enterprise_profile_present (boolean NOT NULL DEFAULT false, the
+      DEFAULT backfills pre-303 rows). Band 303: next free above 302. Appended LAST.
+    -->
+    <include file="db/changelog/303-phone-device-mdm.xml"/>
+
+    <!--
+      303-domain-capability — per-domain capability gate for user mesh devices (feat 6869224,
+      ships dark). Its migration file + DomainCapabilityRepositoryTest were merged, but its
+      master-changelog <include> was LOST in the 303-number-collision merge with
+      303-phone-device-mdm above (the concurrent-file comment on the 310 include below shows
+      the collision was known but this include was never restored). Result: the
+      domain_capability table is never created -> DomainCapabilityRepositoryTest fails on
+      main with `relation "domain_capability" does not exist` (repo-wide red CI). Wiring it in
+      here. The migration is self-contained (create table + unique + global-sentinel seed +
+      index + grant) and independent of the phone tables, so position is immaterial; grouped
+      with the other 303-band files. DISTINCT changeSet ids (303-domain-capability*) — no
+      collision with 303-phone-device-mdm-*.
+    -->
+    <include file="db/changelog/303-domain-capability.xml"/>
+
+    <!--
+      304 — phone_device management + lockout columns: the OPERATOR-AUTHORITATIVE control
+      plane over the 302/303 inventory. management_mode ('unmanaged' default / 'mesh_owned')
+      distinguishes managed phones from BYOD and is written ONLY on /bff/superadmin/**
+      (SUPERADMIN + step-up) — the spoofable mdm_* ingest facts are an advisory HINT, never
+      the authority, and the ingest INSERT/REFRESH touch NONE of these columns (a re-ingest
+      of a locked device keeps its state). lock_state + lock_generation (monotonic across
+      lock AND unlock) + lock_propagation_state mirror device_ssh_license (011): a reversible
+      CAS lock, permitted ONLY on management_mode='mesh_owned' (a BYOD lock is a 409), never
+      deleted (audit). Strictly additive; the 302 GRANT covers the lock/unlock UPDATE (no new
+      grant). Band 304: next free above 303. Appended LAST.
+    -->
+    <include file="db/changelog/304-phone-device-management.xml"/>
+    <!--
+      305 — phone_device owner columns: the OPERATOR-AUTHORITATIVE fleet-ownership
+      discriminators (physical_owner varchar(400) + owner_domain varchar(253), both nullable)
+      that let a non-superadmin FLEET_ADMIN manage ONLY their own phones on the PUBLIC
+      fe-gateway /bff/admin/phone-fleet/** surface. IDENTICAL trust boundary to the 304
+      management/lock columns: set ONLY via /bff/superadmin (SUPERADMIN + step-up); the ingest
+      INSERT/REFRESH touch NEITHER column, so a re-ingest can never set/overwrite an owner.
+      Together the two columns are the SOLE tenancy wall (every fleet-admin read/mutation is
+      predicated WHERE physical_owner = caller AND owner_domain = caller-domain). Strictly
+      additive; the 302 GRANT covers the owner-assignment UPDATE (no new grant). Band 305:
+      next free above 304. Appended LAST.
+    -->
+    <include file="db/changelog/305-phone-device-owner.xml"/>
+    <!--
+      306 — fleet_entitlement: the per-subject FLEET-ADMIN SUBSCRIPTION gate. subject
+      varchar(400) PRIMARY KEY (natural key, no gen_random_uuid) + active (NOT NULL DEFAULT
+      true) + optional seats + optional expires_at (timestamptz) + updated_at. A non-superadmin
+      FLEET_ADMIN reaches /bff/admin/phone-fleet/** ONLY while an active, unexpired row exists
+      for their subject (SUPERADMIN exempt); superadmin-managed via /bff/superadmin/
+      fleet-entitlements. New GRANT SELECT/INSERT/UPDATE/DELETE to admin_bff (PG-gated,
+      MARK_RAN off-PG) — DELETE granted because an entitlement is revocable state, not an audit
+      trail. Band 306: next free above 305. Appended LAST (net-new table).
+    -->
+    <include file="db/changelog/306-fleet-entitlement.xml"/>
+    <!--
+      307 — phone_device mdm-provider columns (wave 2): Azure Intune as a CO-EQUAL MDM
+      provider alongside the sovereign self-hosted Headwind default. mdm_provider varchar(32)
+      NOT NULL DEFAULT 'headwind' (CHECK IN 'headwind'|'azure-intune') + intune_device_id
+      varchar(128) NULL. UNLIKE the 304/305 operator-authoritative columns these are
+      DEVICE-REPORTED telemetry (the wizard knows which backend it enrolled with), so the
+      ingest INSERT/REFRESH DO write them (like mdm_dpc_package/mdm_set_via) — but they are
+      advisory self-report: the enforcer fans a lock to the matching DPC leg while the
+      control-plane lock state stays authoritative regardless (an unknown/spoofed provider
+      only degrades enforcement, never blocks the lock record). Band 307: next free above 306.
+      Registered in numeric order BEFORE the 310 include below (which predates this track).
+    -->
+    <include file="db/changelog/307-phone-device-provider.xml"/>
+    <!--
+      310 — backing_service_mode: the durable APPEND-ONLY intent ledger for the MANAGED /
+      SELF-HOSTED backing-services axis (the admin web-UI half of cloud-deploy DESIGN
+      I8-DESIGN, Lane M3; ships dark behind app.backing-services.enabled=false). Self-hosted
+      is the BYTE-IDENTICAL default (no recorded row = in-mesh, unchanged); a superadmin may
+      RECORD a 'managed' intent (a BackingServiceCatalog id at a hosted cloud endpoint) or
+      back 'self-hosted'. Recording is INTENT ONLY — the generator's gate_backing_services()
+      (image time) or the ships-dark BackingServiceModeReconciler (logs-only in v1) converge
+      it; tier-3 (docs-only) services are refused a mode change (409). NO secret columns —
+      endpoint is a coordinate, creds_ref a reference; managed creds route to ESO/Vault,
+      never this DB. App-generated varchar(36) UUID PK (the Persistable-isNew save() idiom),
+      monotonic generation (the 011/270 idiom). Band 310 (from #237, retained across the
+      fleet-entitlement rebase; 305/306 slot in numeric order above it). Appended LAST.
+    -->
+    <include file="db/changelog/310-backing-service-mode.xml"/>
+    <!--
+      320 — service_scaffold: the per-domain SCAFFOLD-request record for the Service-Store
+      wizard (the "scaffold a new service, then federate it" App-Store surface; svc-review
+      federation track). Records which example archetype was chosen for a service_key in a
+      brand/domain + the intended federation hints (mount_at / requires_role); the rendered
+      starter codebase ZIP is produced on demand from the embedded skeletons — this table is
+      INTENT only, nothing is deployed. Follows the 100/102 conventions: DB-generated
+      varchar(36) UUID id ((gen_random_uuid())::text default + INSERT ... RETURNING id),
+      never-hard-delete state IN ('requested','archived') CASed by the archive endpoint, a
+      per-row `domain` discriminator (010 pattern), created_at/updated_at DEFAULT now(). PG-only
+      GRANT SELECT/INSERT/UPDATE to admin_bff (no DELETE — the row is the audit trail). Band
+      320: next free above the current max wired band (310). Appended LAST (net-new table).
+    -->
+    <include file="db/changelog/320-service-scaffold.xml"/>
+    <!--
+      330 — access_suspension role vocabulary: add ROLE_MESH. The platform gained a
+      ROLE_MESH access role (the gateway route-access floor for /bff/mesh/**, seeded in
+      Casdoor); every other access role (ROLE_MATRIX, ROLE_MASTODON) was already
+      ban/temp-ban-able through the 008 access_suspension machinery, so a mesh abuser
+      could only be handled by manually stripping the Casdoor role — no audit row, no
+      expiry clock, no restore. Additively widens the 008 ck_access_suspension_role CHECK
+      (drop + re-add with the superset, the 063 idiom) rather than editing the immutable
+      008 changeSet. Band 330: the next free band above the current max wired band (320
+      service-scaffold). Appended LAST — access_suspension (008) and its named constraint
+      already exist by here, so the drop + re-add applies cleanly.
+    -->
+    <include file="db/changelog/330-access-suspension-mesh-role.xml"/>
+</databaseChangeLog>

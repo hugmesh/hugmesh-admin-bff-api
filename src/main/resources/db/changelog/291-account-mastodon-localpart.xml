@@ -1,0 +1,126 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+      291 — account.mastodon_localpart: the RESIDUAL half of the
+      account-takeover-by-collision fix (changeset 290 closed the Matrix half).
+
+      BUG: changeset 290 made account.localpart (the ServiceTokenBroker.matrixUser
+      fold — charset [a-z0-9._=/-], no truncation) UNIQUE, so no two accounts can
+      share a Matrix localpart. But the Mastodon/Akkoma mint path RE-FOLDS that
+      canonical value through the strictly-COARSER ServiceTokenBroker.mastodonLocalpart
+      (folds '.','-','=','/' -> '_' and 30-char-caps, because Mastodon rejects the
+      '.-=/' Matrix permits and caps usernames at 30). So two DISTINCT, 290-unique
+      accounts — e.g. localpart 'john.doe' and 'john-doe', or any two sharing a 30-char
+      prefix — collapse to the SAME Mastodon localpart 'john_doe'. Because both BFFs'
+      ServiceTokenBroker recover-leg (Mastodon OAuth password grant) logs in with ONE
+      SHARED service password, whichever account is PROVISIONED SECOND silently
+      password-logs into the FIRST account's already-registered Mastodon identity — the
+      exact takeover 290 closed for Matrix, still open on the coarser Mastodon fold.
+
+      FIX (same shape as 290: provision-time uniqueness, read-persisted-never-rederive):
+      persist the RESOLVED, collision-checked Mastodon localpart on the account row too,
+      at the SAME one chokepoint every account is created through
+      (AccountLocalpartService.resolveAndPersist, called by registerGoogle /
+      registerDiscord / InternalAccountController#ensureAccount — the only 3 writers of
+      new account rows), and have every Mastodon-mint call site READ this persisted
+      value (AuthController#provision here; user-bff-api's MastodonProxyController + the
+      media leg, over the internal account-read API) rather than re-folding whatever
+      localpart is at hand at mint time. A candidate that collides with a DIFFERENT
+      account's persisted mastodon_localpart is a 409 at registration — identical UX to
+      290's Matrix collision, one fold coarser.
+
+      FOLD-STABILITY INVARIANT (the reason the backfill suffix below is NOT 290's
+      '-'||md5 form): the persisted mastodon_localpart is fed to the homeserver mint,
+      which defensively re-applies mastodonLocalpart() to it. For uniqueness on the
+      STORED value to equal uniqueness at the HOMESERVER, the stored value MUST be a
+      FIXED POINT of mastodonLocalpart — i.e. already only [a-z0-9_], length <= 30
+      (mastodonLocalpart(x) == x). 290's disambiguator 'candidate || '-' || md5' is NOT
+      mastodon-safe (the '-' re-folds to '_'), which would let two distinct STORED values
+      re-fold to the same homeserver localpart and resurrect the collision. So the
+      backfill here folds the base, truncates to leave room, and suffixes with
+      '_' || short-id-hash (all [a-z0-9_], total <= 30) — a fold fixed point.
+
+      DELIBERATELY NULLABLE (mirrors 290): AccountStore.ensureAccount (auth-core, an
+      external versioned dependency) INSERTs via an entity whose column list excludes
+      this column, so NOT NULL would fail every account creation; a DEFAULT would break
+      the UNIQUE constraint the moment two accounts were created. Postgres UNIQUE treats
+      NULLs as pairwise-distinct, so nullable + UNIQUE is correct: resolveAndPersist
+      fills it within the SAME request as the INSERT, and #provision is unreachable
+      until the separate registration-complete step, so a real caller never observes a
+      null on its own account.
+
+      BACKFILL: derives each row's mastodon_localpart from its ALREADY-backfilled
+      (changeset 290) account.localpart via the SQL mirror of mastodonLocalpart
+      (regexp_replace '[^a-z0-9_]' -> '_' , substr 1..30, all-underscore -> 'user'),
+      then deterministically disambiguates any collision AMONG EXISTING rows by
+      updated_at then id (the only ordering columns the account table carries — same
+      imperfect-but-only proxy for first-created that 290 documents), first-created
+      keeping the bare candidate, later ones suffixed with the fold-stable
+      '_' || substr(md5(id),1,8). Only rows whose localpart is already set are
+      backfilled (a null localpart yields a null mastodon_localpart — self-heals on the
+      next read that needs it, exactly like 290). Exercised against live Postgres
+      semantics by the same DataConstraintsTest / AccountStoreTest slices as 290; no
+      cross-fold collisions exist in any committed fixture (compose personas are
+      single-provider e2e-* handles with no '.'/'-'), but the UNIQUE constraint is the
+      loud backstop if the backfill ever did produce one.
+
+      Band 291: next free above 290. Appended LAST — account (004) + localpart (290)
+      both exist by here, so addColumn + backfill + unique apply cleanly.
+    -->
+
+    <changeSet id="291-account-mastodon-localpart-add-column" author="hugmesh">
+        <comment>account.mastodon_localpart — nullable (see rationale above), the
+                 resolved collision-checked Mastodon/Akkoma localpart for this account
+                 (the coarser [a-z0-9_], 30-cap fold on top of account.localpart).</comment>
+        <addColumn tableName="account">
+            <column name="mastodon_localpart" type="varchar(64)"/>
+        </addColumn>
+    </changeSet>
+
+    <changeSet id="291-account-mastodon-localpart-backfill" author="hugmesh">
+        <comment>Backfill mastodon_localpart from the already-resolved account.localpart
+                 with the SQL mirror of ServiceTokenBroker.mastodonLocalpart; collisions
+                 among existing rows disambiguated by updated_at/id order, later ones
+                 suffixed with a FOLD-STABLE '_'||md5(id)[0:8] (never 290's '-' form —
+                 see the fold-stability invariant above) so the stored value is a fixed
+                 point of mastodonLocalpart. Only rows with a non-null localpart.</comment>
+        <sql>
+            WITH candidates AS (
+                SELECT id, updated_at,
+                       CASE
+                           WHEN regexp_replace(substr(regexp_replace(lower(localpart), '[^a-z0-9_]', '_', 'g'), 1, 30), '_', '', 'g') = ''
+                           THEN 'user'
+                           ELSE substr(regexp_replace(lower(localpart), '[^a-z0-9_]', '_', 'g'), 1, 30)
+                       END AS candidate
+                FROM account
+                WHERE localpart IS NOT NULL
+            ), ranked AS (
+                SELECT id, candidate,
+                       ROW_NUMBER() OVER (PARTITION BY candidate ORDER BY updated_at ASC, id ASC) AS rn
+                FROM candidates
+            )
+            UPDATE account a
+            SET mastodon_localpart = CASE
+                    WHEN r.rn = 1 THEN r.candidate
+                    ELSE substr(r.candidate, 1, 21) || '_' || substr(lower(md5(r.id)), 1, 8)
+                END
+            FROM ranked r
+            WHERE a.id = r.id;
+        </sql>
+    </changeSet>
+
+    <changeSet id="291-account-mastodon-localpart-unique" author="hugmesh">
+        <comment>UNIQUE(mastodon_localpart) — the DB-level backstop (NULLs exempt); the
+                 per-call-site collision check in AccountLocalpartService is the
+                 application-level guard, this makes a colliding mint impossible to
+                 persist either way.</comment>
+        <addUniqueConstraint tableName="account" columnNames="mastodon_localpart"
+                             constraintName="uq_account_mastodon_localpart"/>
+    </changeSet>
+
+</databaseChangeLog>

@@ -1,0 +1,143 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+      announcement: admin-authored site announcements rendered on a configurable
+      combination of surfaces — the logged-in HOME top banner, the public LOGIN
+      page (shown to anonymous visitors), akkoma (as a LOCAL-ONLY instance
+      announcement), and the FORUM main page. One row per announcement.
+
+      Numbered 060 (a HIGH number, well above the current max changeset 050 on main
+      and on every open branch) so this NEVER collides on merge with an open PR's
+      changeset id. Appended LAST in db.changelog-master.xml (after 050).
+
+      Portability: plain uuid / varchar / text / boolean / int / timestamp +
+      defaultValueComputed now() — the SAME style as 001..050 — so the identical
+      DDL runs on PostgreSQL and on the H2 (PostgreSQL-compat, NON_KEYWORDS)
+      slice-test store. The two enum columns (state, format) get CHECK constraints
+      to keep API<->DB constraint parity (the platform rule: a closed vocabulary the
+      API enforces is ALSO enforced in the DB so a non-controller write path cannot
+      violate it). Indexes back the active-surface queries (state + per-surface
+      target flag + priority).
+
+      SECURITY: body_html holds admin HTML shown to users incl. anonymous login
+      visitors. It is SANITISED server-side at create/update (jsoup Safelist
+      allowlist) BEFORE it lands here, and the UIs render it inside a SANDBOXED
+      null-origin srcdoc iframe — it is never raw innerHTML.
+
+      ACTIVE (per surface) = state='published' AND now within [starts_at, ends_at]
+      (NULL starts_at = now, NULL ends_at = open) AND the relevant target_* flag.
+      akkoma_ref is the id of the akkoma announcement created on publish (so it can
+      be removed on unpublish/archive/expire/delete).
+    -->
+    <changeSet id="060-announcement" author="hugmesh">
+        <createTable tableName="announcement">
+            <column name="id" type="uuid">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="title" type="varchar(300)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- SANITISED admin HTML (jsoup Safelist) — never stored raw. -->
+            <column name="body_html" type="text">
+                <constraints nullable="false"/>
+            </column>
+            <!-- html | wysiwyg — how the admin authored it; both stored as sanitised
+                 HTML. -->
+            <column name="format" type="varchar(16)" defaultValue="html">
+                <constraints nullable="false"/>
+            </column>
+            <!-- draft | published | archived. -->
+            <column name="state" type="varchar(16)" defaultValue="draft">
+                <constraints nullable="false"/>
+            </column>
+            <!-- Per-surface target flags: an announcement may show on any
+                 combination of the HOME banner, the public LOGIN page, akkoma (as a
+                 local-only instance announcement), and the FORUM main page. -->
+            <column name="target_home" type="boolean" defaultValueBoolean="false">
+                <constraints nullable="false"/>
+            </column>
+            <column name="target_login" type="boolean" defaultValueBoolean="false">
+                <constraints nullable="false"/>
+            </column>
+            <column name="target_akkoma" type="boolean" defaultValueBoolean="false">
+                <constraints nullable="false"/>
+            </column>
+            <column name="target_forum" type="boolean" defaultValueBoolean="false">
+                <constraints nullable="false"/>
+            </column>
+            <!-- Higher first (ordered DESC in the active queries). -->
+            <column name="priority" type="int" defaultValueNumeric="0">
+                <constraints nullable="false"/>
+            </column>
+            <!-- NULL starts_at = active from now; NULL ends_at = open-ended. -->
+            <column name="starts_at" type="timestamp"/>
+            <column name="ends_at" type="timestamp"/>
+            <column name="timezone" type="varchar(64)"/>
+            <column name="dismissible" type="boolean" defaultValueBoolean="true">
+                <constraints nullable="false"/>
+            </column>
+            <!-- JWT subject of the admin who created it. -->
+            <column name="created_by" type="varchar(400)"/>
+            <!-- id of the akkoma announcement created on publish; NULL when not
+                 propagated. Used to REMOVE the akkoma post on unpublish/archive/
+                 expire/delete. -->
+            <column name="akkoma_ref" type="varchar(255)"/>
+            <column name="created_at" type="timestamp" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+            <column name="updated_at" type="timestamp" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+    </changeSet>
+
+    <changeSet id="060-announcement-state-check" author="hugmesh">
+        <comment>CHECK: announcement.state is one of the lifecycle states the API
+                 writes (draft|published|archived) — API/DB constraint parity.</comment>
+        <sql>
+            ALTER TABLE announcement
+                ADD CONSTRAINT ck_announcement_state
+                CHECK (state IN ('draft', 'published', 'archived'))
+        </sql>
+        <rollback>ALTER TABLE announcement DROP CONSTRAINT ck_announcement_state</rollback>
+    </changeSet>
+
+    <changeSet id="060-announcement-format-check" author="hugmesh">
+        <comment>CHECK: announcement.format is one of the supported authoring formats
+                 (html|wysiwyg) — API/DB constraint parity.</comment>
+        <sql>
+            ALTER TABLE announcement
+                ADD CONSTRAINT ck_announcement_format
+                CHECK (format IN ('html', 'wysiwyg'))
+        </sql>
+        <rollback>ALTER TABLE announcement DROP CONSTRAINT ck_announcement_format</rollback>
+    </changeSet>
+
+    <changeSet id="060-announcement-active-indexes" author="hugmesh">
+        <comment>Indexes backing the per-surface active queries (state + the
+                 relevant target flag drive the WHERE; priority/starts_at order the
+                 result).</comment>
+        <createIndex tableName="announcement" indexName="ix_announcement_home">
+            <column name="state"/>
+            <column name="target_home"/>
+        </createIndex>
+        <createIndex tableName="announcement" indexName="ix_announcement_login">
+            <column name="state"/>
+            <column name="target_login"/>
+        </createIndex>
+        <createIndex tableName="announcement" indexName="ix_announcement_forum">
+            <column name="state"/>
+            <column name="target_forum"/>
+        </createIndex>
+        <rollback>
+            <dropIndex tableName="announcement" indexName="ix_announcement_home"/>
+            <dropIndex tableName="announcement" indexName="ix_announcement_login"/>
+            <dropIndex tableName="announcement" indexName="ix_announcement_forum"/>
+        </rollback>
+    </changeSet>
+</databaseChangeLog>

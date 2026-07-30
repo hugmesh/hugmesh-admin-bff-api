@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+      backup_history: the durable record of every cloud Backup & Recovery job the
+      admin starts (POST /bff/admin/backups). One row per backup; restores stream
+      progress but reference an existing backup row as their source.
+
+      Numbered 050 (a HIGH number, well above the current max changeset 007 on
+      main and on every open branch) so this NEVER collides on merge with an open
+      PR's changeset id. Appended LAST in db.changelog-master.xml.
+
+      Portability: plain varchar / boolean / bigint / timestamp + defaultValueComputed
+      now() — the SAME style as 001..006 — so the identical DDL runs on PostgreSQL
+      and on the H2 (PostgreSQL-compat, NON_KEYWORDS) slice-test store. The two
+      enum columns (target, status) get CHECK constraints to keep API<->DB
+      constraint parity (the platform rule: a closed vocabulary the API enforces is
+      ALSO enforced in the DB so a non-controller write path cannot violate it).
+
+      SECURITY: there is NO password column. encrypted records only THAT a backup
+      is password-encrypted; verifier_salt + verifier hold a one-way PBKDF2
+      verifier (BackupCrypto) used only to confirm the right decryption password on
+      restore — they never reveal the AES key or the password.
+    -->
+    <changeSet id="050-backup-history" author="hugmesh">
+        <createTable tableName="backup_history">
+            <column name="id" type="uuid">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="created_at" type="timestamp" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+            <column name="requested_by" type="varchar(400)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- comma-separated lowercase BackupScope list (e.g. "etcd,postgres"). -->
+            <column name="scope" type="varchar(255)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- CLUSTER (in-cluster/cloud storage) | USB (connected device). -->
+            <column name="target" type="varchar(16)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="encrypted" type="boolean" defaultValueBoolean="false">
+                <constraints nullable="false"/>
+            </column>
+            <!-- QUEUED -> RUNNING -> COMPLETED | FAILED. -->
+            <column name="status" type="varchar(16)" defaultValue="QUEUED">
+                <constraints nullable="false"/>
+            </column>
+            <column name="size_bytes" type="bigint"/>
+            <column name="error" type="varchar(2000)"/>
+            <!-- where the blob landed (e.g. cluster://&lt;id&gt; or usb://&lt;id&gt;). -->
+            <column name="location_ref" type="varchar(512)"/>
+            <!-- PBKDF2 verifier (base64) + its salt (base64); NULL when not encrypted.
+                 One-way: proves the password on restore, never reveals the key. -->
+            <column name="verifier_salt" type="varchar(64)"/>
+            <column name="verifier" type="varchar(128)"/>
+        </createTable>
+    </changeSet>
+
+    <changeSet id="050-backup-history-target-check" author="hugmesh">
+        <comment>CHECK: backup_history.target is one of the two supported targets
+                 (mirrors BackupService.normaliseTarget / the API's CLUSTER|USB).</comment>
+        <sql>
+            ALTER TABLE backup_history
+                ADD CONSTRAINT ck_backup_history_target
+                CHECK (target IN ('CLUSTER', 'USB'))
+        </sql>
+        <rollback>ALTER TABLE backup_history DROP CONSTRAINT ck_backup_history_target</rollback>
+    </changeSet>
+
+    <changeSet id="050-backup-history-status-check" author="hugmesh">
+        <comment>CHECK: backup_history.status is one of the lifecycle states the
+                 orchestrator writes (QUEUED|RUNNING|COMPLETED|FAILED).</comment>
+        <sql>
+            ALTER TABLE backup_history
+                ADD CONSTRAINT ck_backup_history_status
+                CHECK (status IN ('QUEUED', 'RUNNING', 'COMPLETED', 'FAILED'))
+        </sql>
+        <rollback>ALTER TABLE backup_history DROP CONSTRAINT ck_backup_history_status</rollback>
+    </changeSet>
+</databaseChangeLog>

@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+      domain-scope — adds a per-row tenant discriminator `domain` to the admin
+      desired-state / route tables so a brand-scoped ADMIN only ever sees + mutates
+      THEIR brand's rows, while SUPERADMIN (the infra control plane) is unscoped and
+      sees all. The value is derived (in the controller) from the
+      CRYPTOGRAPHICALLY-VALIDATED token ISSUER (per-brand Casdoor => distinct iss)
+      via DomainRegistry — never a user-settable claim — and stamped on write.
+
+      ── Back-compat (single-issuer clusters unchanged) ──────────────────────────
+      Every column defaults to 'default' and is NOT NULL, so:
+        - existing rows back-fill to 'default' (the single-tenant domain the registry
+          maps the lone issuer to), and
+        - a single-issuer cluster keeps stamping/reading 'default' for everything —
+          identical behaviour to before the column existed.
+
+      ── Tables scoped ───────────────────────────────────────────────────────────
+        - access_suspension   (ban / timed-suspend desired state — 008)
+        - domain_lock         (force-local desired state — 009)
+        - gateway_route_access(per-gateway role->URL external-access rules — 001)
+
+      ── Numbering: 010 ──────────────────────────────────────────────────────────
+      Sits ABOVE 009 and is APPENDED LAST at the include site in
+      db.changelog-master.xml. Each addColumn is its own changeSet (independent
+      redeploy + rollback). Indexes on `domain` are Postgres-only (dbms-gated,
+      onFail=MARK_RAN) — the H2 test store filters by the predicate in-SQL anyway;
+      the index is a production read optimisation, not a correctness requirement.
+    -->
+
+    <changeSet id="010-access-suspension-domain" author="hugmesh">
+        <comment>Tenant discriminator on access_suspension (default 'default' for
+                 single-tenant back-compat).</comment>
+        <addColumn tableName="access_suspension">
+            <column name="domain" type="varchar(64)" defaultValue="default">
+                <constraints nullable="false"/>
+            </column>
+        </addColumn>
+    </changeSet>
+
+    <changeSet id="010-domain-lock-domain" author="hugmesh">
+        <comment>Tenant discriminator on domain_lock (default 'default').</comment>
+        <addColumn tableName="domain_lock">
+            <column name="domain" type="varchar(64)" defaultValue="default">
+                <constraints nullable="false"/>
+            </column>
+        </addColumn>
+    </changeSet>
+
+    <changeSet id="010-gateway-route-access-domain" author="hugmesh">
+        <comment>Tenant discriminator on gateway_route_access (default 'default').</comment>
+        <addColumn tableName="gateway_route_access">
+            <column name="domain" type="varchar(64)" defaultValue="default">
+                <constraints nullable="false"/>
+            </column>
+        </addColumn>
+    </changeSet>
+
+    <changeSet id="010-access-suspension-domain-index" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>Index the per-tenant read predicate on access_suspension.</comment>
+        <sql>CREATE INDEX idx_access_suspension_domain ON access_suspension (domain)</sql>
+        <rollback>DROP INDEX idx_access_suspension_domain</rollback>
+    </changeSet>
+
+    <changeSet id="010-domain-lock-domain-index" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>Index the per-tenant read predicate on domain_lock.</comment>
+        <sql>CREATE INDEX idx_domain_lock_domain ON domain_lock (domain)</sql>
+        <rollback>DROP INDEX idx_domain_lock_domain</rollback>
+    </changeSet>
+
+    <changeSet id="010-gateway-route-access-domain-index" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>Index the per-tenant read predicate on gateway_route_access.</comment>
+        <sql>CREATE INDEX idx_gateway_route_access_domain ON gateway_route_access (domain)</sql>
+        <rollback>DROP INDEX idx_gateway_route_access_domain</rollback>
+    </changeSet>
+</databaseChangeLog>

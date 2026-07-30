@@ -1,0 +1,153 @@
+# ADMISSION-LAYER PREFIX PIN for the admin-bff ServiceAccount's ConfigMap writes — the
+# follow-up hardening the security review in jobs/image-gen-rbac.yaml tracks. The operator
+# applies this ONCE, the same one-time step as image-gen-rbac.yaml:
+#
+#   kubectl apply -f image-gen-admission.yaml
+#
+# REQUIRES Kubernetes >= 1.30: ValidatingAdmissionPolicy is admissionregistration.k8s.io/v1
+# (GA, enabled by default) from 1.30 on — the platform's clusters, including the kind
+# validation cluster, run >= 1.32. This is a NATIVE policy: the API server evaluates the CEL
+# below inside its own admission chain — no Kyverno/OPA/webhook controller to install,
+# operate, or trust.
+#
+# WHAT IT PINS — jobs/image-gen-rbac.yaml necessarily grants the admin-bff SA
+# configmaps [create, get, patch, delete] across the WHOLE hugmesh-backend namespace,
+# because core RBAC cannot express a name prefix:
+#   * resourceNames matches EXACT names only (no prefix/glob), and the spec ConfigMaps are
+#     per-build (`hugmesh-image-spec-<uuid>`) — unenumerable up front;
+#   * resourceNames NEVER applies to `create` (the name is unknown at authorization time).
+# At the RBAC layer alone, a compromised admin-bff SA could therefore write CO-TENANT
+# ConfigMaps in that namespace by exact name — including the admin-sync SCRIPT ConfigMaps
+# that sync Jobs mount and EXECUTE (indirect code execution; see the blast-radius review in
+# image-gen-rbac.yaml). THIS policy closes that: any configmaps CREATE, UPDATE (which is what
+# an API `patch` surfaces as in admission), or DELETE in hugmesh-backend by
+# system:serviceaccount:hugmesh-backend:admin-bff whose target name does NOT start with
+# `hugmesh-image-spec-` is DENIED at admission. RBAC answers "may this principal touch
+# configmaps at all"; this policy answers "only the per-build spec ones".
+#
+# WHAT IT DOES NOT PIN — reads, and everything that is not a configmaps write. Admission here
+# intercepts configmaps writes only, so the SA's RBAC `get` of a co-tenant ConfigMap by exact
+# name remains possible (platform ConfigMaps are non-secret by rule — secrets live in
+# Secrets/Vault via ESO). It also does NOT touch the SA's separate batch/jobs create grant:
+# vanilla Kubernetes enforces no "use" check on a pod spec's serviceAccountName, so a
+# compromised admin-bff can still create a Job whose pod runs as another ServiceAccount in
+# hugmesh-backend — a pre-existing lateral path this policy neither introduces nor closes
+# (the image-gen runner SA deliberately has no API access, but co-tenant SAs are out of this
+# file's hands). And it constrains ONLY the admin-bff SA: no other principal's requests are
+# even evaluated (matchConditions below), so nothing here can break cluster components,
+# operators, or co-tenant controllers.
+#
+# OPERATOR COUPLING — under this pin, admin-bff (as itself) must NEVER be configured to write
+# any non-`hugmesh-image-spec-` ConfigMap into hugmesh-backend, or that write is denied
+# on every reconcile tick (fail-closed availability outage, not a security break). Concretely:
+# keep `games-services.reconciler.namespace` (default hugmesh-games) and
+# `node-storage.reconciler.namespace` (default devops) — both env-overridable — pointing at
+# their own namespaces, never at hugmesh-backend.
+#
+# LIVE PROOF — src/test/java/.../imagegen/ImageGenAdmissionKindE2eTest.java (dark e2e, gated
+# on IMAGEGEN_KIND_E2E_ADMISSION=true) drives allowed/denied writes AS the admin-bff SA and
+# re-proves the real spec-channel launcher path under this policy.
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: hugmesh-image-spec-prefix-pin
+spec:
+  # FAIL CLOSED: any CEL evaluation error (in matchConditions, variables, or validations)
+  # DENIES the request rather than waving it through. Variables/validations only run once
+  # the matchCondition has narrowed the request to the admin-bff SA, so their errors can
+  # only ever bite that SA. The matchCondition itself is evaluated for every configmaps
+  # write in the bound namespace — an ERROR there would (correctly, fail-closed) reject any
+  # principal's write — but request.userInfo.username is populated on every authenticated
+  # request, so that expression cannot error in practice.
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]           # core
+        apiVersions: ["v1"]
+        # CREATE + UPDATE + DELETE is every write there is for configmaps:
+        #  * API `patch` (incl. fabric8 edit()/ownerReference patch) surfaces as UPDATE;
+        #  * `deletecollection` surfaces as per-object DELETE admission reviews;
+        #  * configmaps have no writable subresources.
+        operations: ["CREATE", "UPDATE", "DELETE"]
+        resources: ["configmaps"]
+  matchConditions:
+    # Scope to EXACTLY the admin-bff ServiceAccount — the RoleBinding subject in
+    # jobs/image-gen-rbac.yaml. Keep the two files in lockstep if the deployment renames the
+    # SA. Impersonated requests carry the impersonated username here, so an
+    # `kubectl --as=system:serviceaccount:hugmesh-backend:admin-bff` probe (and the dark
+    # e2e) exercises the same path as the real pod token. All other users/SAs — cluster
+    # components included — fail this condition and are untouched by the policy.
+    - name: only-the-admin-bff-serviceaccount
+      expression: >-
+        request.userInfo.username == 'system:serviceaccount:hugmesh-backend:admin-bff'
+  variables:
+    # The write's TARGET NAME, resolved per operation:
+    #  * CREATE/UPDATE — `object` is the incoming object; its metadata.name is authoritative.
+    #    generateName CREATEs included: VALIDATING admission runs inside the registry's
+    #    create path AFTER the server has generated the final name from metadata.generateName
+    #    (only MUTATING admission sees the name-less object; the admission attributes' name
+    #    is also backfilled from the object for validation), so object.metadata.name already
+    #    carries the final `<stem>xxxxx` name here — the pin evaluates the REAL name that
+    #    would be stored, and a non-prefixed generateName stem yields a non-prefixed final
+    #    name → denied by the prefix clause below.
+    #  * DELETE — `object` is null; the name comes from the stored `oldObject` (with
+    #    request.name as belt-and-braces fallback).
+    # Every access is has()/null-guarded; an unexpected shape errors the expression and
+    # failurePolicy: Fail turns that error into a DENY.
+    - name: targetName
+      expression: >-
+        request.operation == 'DELETE'
+          ? ((oldObject != null && has(oldObject.metadata.name))
+               ? oldObject.metadata.name
+               : (has(request.name) ? request.name : ''))
+          : ((object != null && has(object.metadata.name))
+               ? object.metadata.name
+               : (has(request.name) ? request.name : ''))
+  validations:
+    # Clause 1 — targetName != '': PURE DEFENSE-IN-DEPTH, expected unreachable. No write
+    # reaches VALIDATING admission nameless — even generateName CREATEs carry the final
+    # generated name by this point (see the variables comment above) — so this clause only
+    # exists so that IF some future server behavior ever surfaced a nameless write, it
+    # would be DENIED explicitly instead of leaning on ''.startsWith(<non-empty>) semantics
+    # (which happens to be false in CEL anyway). The launcher never uses generateName.
+    # Clause 2 — the pin itself: the target must carry the per-build spec-channel prefix.
+    - expression: >-
+        variables.targetName != '' &&
+        variables.targetName.startsWith('hugmesh-image-spec-')
+      # Forbidden → the API server answers HTTP 403, the same class of error the RBAC layer
+      # would produce, so the launcher's existing fail-closed handling applies unchanged.
+      reason: Forbidden
+      # Static fallback message (used if messageExpression ever errors).
+      message: >-
+        image-spec prefix pin: the admin-bff ServiceAccount may only CREATE/UPDATE/DELETE
+        ConfigMaps named 'hugmesh-image-spec-<build-uuid>' in hugmesh-backend (see
+        jobs/image-gen-admission.yaml)
+      # Every CEL string literal below sits on ONE source line (a double-quoted CEL
+      # literal cannot span lines; only operators/operands are split across lines).
+      messageExpression: >-
+        "image-spec prefix pin: " + request.operation + " of ConfigMap '" +
+        (variables.targetName == ''
+          ? "(no name — unexpected at validating admission)" : variables.targetName) +
+        "' by admin-bff in hugmesh-backend denied" +
+        " — only names with the 'hugmesh-image-spec-' prefix are allowed" +
+        " (see jobs/image-gen-admission.yaml)"
+---
+# The binding that puts the policy above into ENFORCEMENT (a ValidatingAdmissionPolicy does
+# nothing until bound). Both objects are cluster-scoped; the namespaceSelector below is what
+# confines the effect to hugmesh-backend.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: hugmesh-image-spec-prefix-pin
+spec:
+  policyName: hugmesh-image-spec-prefix-pin
+  # Deny — hard enforcement, not Warn/Audit: a failed validation rejects the API request.
+  validationActions: ["Deny"]
+  matchResources:
+    # Pin the blast radius to the ONE namespace the RBAC grant covers. The
+    # kubernetes.io/metadata.name label is stamped on every namespace automatically by the
+    # API server (immutable, GA since 1.22) — no operator labeling step required.
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: hugmesh-backend

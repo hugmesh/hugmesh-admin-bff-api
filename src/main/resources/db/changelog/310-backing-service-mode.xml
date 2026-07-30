@@ -1,0 +1,134 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+      backing_service_mode — the durable, APPEND-ONLY intent ledger for the MANAGED /
+      SELF-HOSTED backing-services axis (the admin web-UI half of cloud-deploy DESIGN
+      I8-DESIGN, Lane M3; ships dark behind app.backing-services.enabled=false).
+
+      ── WHAT THIS TABLE IS (and is NOT) ───────────────────────────────────────────────
+      Self-hosted (in-mesh) is the BYTE-IDENTICAL default: no recorded row means the
+      backing service is used unchanged. A superadmin may RECORD an intent to run a
+      catalog service (BackingServiceCatalog: object-store / smtp / kafka / clickhouse /
+      federation-bundles / the per-service Postgres set) 'managed' at a hosted cloud
+      endpoint, or back 'self-hosted'. Recording the intent does NOT itself re-point any
+      consumer or prune any workload — that is a build-time act (the generator's
+      gate_backing_services()) or a future reconciler act (the ships-dark
+      BackingServiceModeReconciler skeleton, which LOGS ONLY in v1). This table is the
+      recorded desired state the effector leg converges toward.
+
+      Tier-3 (docs-only) services (cassandra / harbor / vault-kv / vault-pki) are REFUSED
+      a mode change by the service layer (409) — their managed swaps are architecturally
+      blocked and ship as design docs + emitted checklists, not code, in v1.
+
+      ── NO SECRETS, EVER ───────────────────────────────────────────────────────────────
+      endpoint is a NON-SECRET coordinate (a host/URL); creds_ref is a REFERENCE only (an
+      ESO/Vault path NAME). There is NO column for credential bytes — operator-supplied
+      managed-cloud creds route to the generator side (env -> keys-file -> ESO/Vault),
+      never this DB.
+
+      ── APPEND-ONLY (audit) + monotonic generation ─────────────────────────────────────
+      Each PUT INSERTs a NEW row (app-generated varchar(36) UUID via the Persistable-isNew
+      save() idiom — the notification_cursor / NotificationOutbox convention); the CURRENT
+      mode of a service is the row with the highest generation for that service_id. Rows
+      are never UPDATEd or DELETEd (the ledger is the audit trail). generation is stamped
+      max(generation)+1 across the table (the 011 device_ssh_license / 270 go_live_intent
+      idiom) so the ledger strictly advances.
+
+      ── Portable DDL (mirrors 270-go-live-intent.xml) ──────────────────────────────────
+      timestamptz -> the portable 'timestamp with time zone' generic type,
+      defaultValueComputed="now()". One changeSet per CHECK / index / GRANT (independent
+      redeploy + rollback); index + GRANT gated dbms=postgresql onFail/onError=MARK_RAN.
+      NEVER an UPDATE or DELETE grant — the ledger is append-only.
+
+      ── Band: 310 ─────────────────────────────────────────────────────────────────────
+      Current max WIRED band on main is 304 (phone-device-management). 310 is the NEXT FREE
+      band (clear of the concurrent 303-domain-capability file). Appended LAST at the
+      include site in db.changelog-master.xml, after the 304 include.
+    -->
+
+    <changeSet id="310-backing-service-mode" author="hugmesh">
+        <comment>backing_service_mode — the durable APPEND-ONLY intent ledger for the managed /
+                 self-hosted backing-services axis (ships dark behind
+                 app.backing-services.enabled=false). Self-hosted is the byte-identical default;
+                 a recorded 'managed' row is INTENT the generator/effector leg converges. NO
+                 secret columns — endpoint is a coordinate, creds_ref a reference; creds route to
+                 ESO/Vault, never this DB.</comment>
+        <createTable tableName="backing_service_mode">
+            <!-- App-generated UUID (the Persistable-isNew save() idiom, notification_cursor
+                 convention) — the INSERT supplies id; no DB default. -->
+            <column name="id" type="varchar(36)">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <!-- The BackingServiceCatalog id this intent targets (a closed vocabulary; the
+                 service layer refuses an unknown id — no DB FK, like go_live_intent.provider). -->
+            <column name="service_id" type="varchar(64)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- 'self-hosted' (in-mesh default) | 'managed' (hosted cloud at endpoint). -->
+            <column name="mode" type="varchar(16)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- The managed service host/URL (NON-SECRET coordinate). NULL for self-hosted. -->
+            <column name="endpoint" type="varchar(512)"/>
+            <!-- An ESO/Vault path NAME the managed creds are sourced from (a REFERENCE, never
+                 bytes). NULL when none / self-hosted. -->
+            <column name="creds_ref" type="varchar(255)"/>
+            <column name="requested_by_subject" type="varchar(255)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="created_at" type="timestamp with time zone" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+            <!-- Monotonic table-wide generation stamped max+1 on every recorded mode, so the
+                 ledger strictly advances (the 011/270 idiom; see the file header). -->
+            <column name="generation" type="bigint" defaultValueNumeric="0">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+        <rollback>
+            <dropTable tableName="backing_service_mode"/>
+        </rollback>
+    </changeSet>
+
+    <changeSet id="310-backing-service-mode-mode-check" author="hugmesh">
+        <comment>API&lt;-&gt;DB parity: mode pinned to the self-hosted/managed vocabulary.</comment>
+        <sql>ALTER TABLE backing_service_mode ADD CONSTRAINT ck_backing_service_mode_mode
+             CHECK (mode IN ('self-hosted', 'managed'))</sql>
+        <rollback>ALTER TABLE backing_service_mode DROP CONSTRAINT ck_backing_service_mode_mode</rollback>
+    </changeSet>
+
+    <!-- ═══════════════════════ index + GRANT (PG only) ═══════════════════════ -->
+
+    <changeSet id="310-backing-service-mode-idx" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>Read-path index for the current-mode-per-service query (highest generation per
+                 service_id) + the audit history. UNIQUE on (service_id, generation): recordMode()
+                 reads max(generation) then stamps +1 outside the insert tx (clone-faithful to
+                 GoLiveService), so two concurrent PUTs for the SAME service could otherwise stamp
+                 the same generation and make 'current mode = highest generation' ambiguous between
+                 the tied rows. The unique index turns that race into a fail-closed insert error the
+                 caller retries, instead of a silent nondeterministic current-mode read. Different
+                 services coincidentally sharing a table-wide generation stay unaffected (their
+                 per-service highest is still unambiguous).</comment>
+        <sql>CREATE UNIQUE INDEX idx_backing_service_mode_service ON backing_service_mode (service_id, generation)</sql>
+        <rollback>DROP INDEX idx_backing_service_mode_service</rollback>
+    </changeSet>
+
+    <changeSet id="310-backing-service-mode-grant" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>GRANT SELECT,INSERT on backing_service_mode to admin_bff. NEVER UPDATE or DELETE —
+                 the ledger is APPEND-ONLY (a mode change is a new row; audit rows are immutable).</comment>
+        <sql>GRANT SELECT, INSERT ON backing_service_mode TO admin_bff</sql>
+        <rollback>REVOKE SELECT, INSERT ON backing_service_mode FROM admin_bff</rollback>
+    </changeSet>
+
+</databaseChangeLog>

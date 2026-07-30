@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!-- account: the two-stage registration lifecycle, durable. id is the
+         contract id "provider:handle" (e.g. google:alice@x.com). roles is a
+         comma-separated lowercase list ("user" or "user,admin") — a small, fixed
+         vocabulary, kept as a portable text column rather than an array type so
+         the same DDL runs on Postgres and H2. -->
+    <changeSet id="004-account" author="hugmesh">
+        <createTable tableName="account">
+            <column name="id" type="varchar(400)">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="provider" type="varchar(32)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="handle" type="varchar(320)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="registration_complete" type="boolean" defaultValueBoolean="false">
+                <constraints nullable="false"/>
+            </column>
+            <column name="roles" type="varchar(255)" defaultValue="user">
+                <constraints nullable="false"/>
+            </column>
+            <column name="updated_at" type="timestamp" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+    </changeSet>
+</databaseChangeLog>

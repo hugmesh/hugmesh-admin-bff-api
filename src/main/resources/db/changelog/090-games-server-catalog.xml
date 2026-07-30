@@ -1,0 +1,341 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+      GAMES APP-STORE — catalog data model (PR1 of the games-services control plane).
+
+      Two tables, modelled DIRECTLY on existing idioms in this repo:
+
+        game_server_catalog        — the GLOBAL, SUPERADMIN-CURATED catalog of FOSS
+                                     dockerized game servers. Modelled on
+                                     domain_registry (012): NO per-row tenant `domain`
+                                     discriminator (it is inherently cross-domain — only
+                                     the cross-domain SUPERADMIN curates it), app-generated
+                                     varchar(36) UUID id, a UNIQUE natural key (slug),
+                                     soft-disable via `enabled` (never hard-delete), audit.
+
+        game_server_domain_offer   — the per-(domain, catalog-slug) TWO-TIER OFFER. Modelled
+                                     on the announcement (060/061) per-domain pattern: a
+                                     `domain` tenant discriminator + the catalog slug, plus
+                                     the SUPERADMIN CREATION-GATE fields:
+                                       offered_by_superadmin BOOLEAN  — the superadmin must
+                                         OFFER a catalog entry to a domain before its admin
+                                         can enable/run it (fail-closed: no offer = no use).
+                                       enabled_by_admin BOOLEAN       — the domain admin's
+                                         own per-domain on/off (the second tier).
+                                       max_instances INTEGER          — the per-(domain,slug)
+                                         instance quota the creation-gate enforces.
+                                     A row exists once a superadmin offers slug->domain; the
+                                     domain admin then flips enabled_by_admin. EFFECTIVE =
+                                     catalog.enabled AND offered_by_superadmin AND
+                                     enabled_by_admin (computed in the service, not the DB).
+
+      ── SHIPS DARK ──────────────────────────────────────────────────────────────────
+      The seed below curates the GLOBAL catalog (8 FOSS servers, digest-pinned + SPDX),
+      but NO game_server_domain_offer rows are seeded — every offer is OFF until a
+      superadmin pulls/tests/pins and offers a slug to a specific domain. So a fresh
+      cluster has the catalog populated but ZERO domains able to run anything (the
+      design's dark-by-default creation gate).
+
+      ── DIGEST-PIN INVARIANT ─────────────────────────────────────────────────────────
+      `image_ref` MUST be a digest-pinned reference (repo@sha256:<64hex>). A tag-only
+      ref is REJECTED SERVER-SIDE (the service's ImageRef validator, PR2) AND by a DB
+      CHECK here (defence-in-depth): arbitrary-container exec is the core risk, so a
+      mutable tag (which could be re-pointed at a malicious image after curation) is
+      never accepted.
+
+      ── Portable DDL (mirrors 012-domain-registry.xml + 008-access-suspension.xml) ────
+      id is an app-generated varchar(36) UUID string (NOT a Postgres uuid column /
+      gen_random_uuid()), so INSERTs are portable across Postgres + the H2 (PG-compat,
+      NON_KEYWORDS) test store with no pgcrypto dependency and the app returns the id.
+      timestamptz -> the portable Liquibase 'timestamp with time zone' generic type.
+      The PG-only GRANTs are gated dbms=postgresql (onFail=MARK_RAN) so the H2 test store
+      (no admin_bff role) never fails the changelog. The partial UNIQUE on the offer
+      table is PG-only (H2 has no partial indexes) — the service enforces the same
+      one-offer-per-(domain,slug) invariant via find-before-insert on H2.
+
+      ── Numbering: 090 (band 090-099, the games-services control-plane band) ──────────
+      Appended LAST at the include site in db.changelog-master.xml.
+    -->
+
+    <!-- ── game_server_catalog: the GLOBAL superadmin-curated FOSS catalog ──────────── -->
+    <changeSet id="090-games-server-catalog" author="hugmesh">
+        <comment>game_server_catalog — the global, superadmin-curated catalog of FOSS
+                 dockerized game servers (cross-domain; no per-row tenant discriminator,
+                 modelled on domain_registry).</comment>
+        <createTable tableName="game_server_catalog">
+            <column name="id" type="varchar(36)">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <!-- The UNIQUE natural key (e.g. 'minetest', 'xonotic'). -->
+            <column name="slug" type="varchar(64)">
+                <constraints nullable="false" unique="true"
+                             uniqueConstraintName="uq_game_server_catalog_slug"/>
+            </column>
+            <column name="display_name" type="varchar(255)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- Digest-pinned image reference: repo@sha256:<64hex>. CHECK below. -->
+            <column name="image_ref" type="varchar(512)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- SPDX license identifier of the upstream FOSS server (e.g. 'GPL-3.0-or-later'). -->
+            <column name="license_spdx" type="varchar(128)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- The L4 game protocol the raw port speaks: 'tcp' | 'udp' | 'both'. The
+                 instance NodePort allocator (PR7) keys off this; an HTTP-only console
+                 server may set 'none'. -->
+            <column name="protocol" type="varchar(8)" defaultValue="udp">
+                <constraints nullable="false"/>
+            </column>
+            <!-- The in-container port the game protocol listens on (mapped to a NodePort). -->
+            <column name="container_port" type="int" defaultValueNumeric="0">
+                <constraints nullable="false"/>
+            </column>
+            <!-- Optional HTTP console/admin port in the container (be-gateway path-routed). -->
+            <column name="console_port" type="int"/>
+            <column name="summary" type="varchar(1024)"/>
+            <!-- Desired-state on/off; soft-disable, NEVER hard-delete (a curated entry that
+                 has live offers must not vanish out from under the offer rows). -->
+            <column name="enabled" type="boolean" defaultValueBoolean="true">
+                <constraints nullable="false"/>
+            </column>
+            <column name="created_at" type="timestamp with time zone" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+            <!-- Stamped from the curating SUPERADMIN's jwt.getSubject(). -->
+            <column name="created_by_subject" type="varchar(400)"/>
+            <column name="updated_at" type="timestamp with time zone" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+    </changeSet>
+
+    <changeSet id="090-games-server-catalog-protocol-check" author="hugmesh">
+        <comment>CHECK: protocol is one of the L4 protocol values the NodePort allocator
+                 understands ('tcp'/'udp'/'both'/'none').</comment>
+        <sql>
+            ALTER TABLE game_server_catalog
+                ADD CONSTRAINT ck_game_server_catalog_protocol
+                CHECK (protocol IN ('tcp', 'udp', 'both', 'none'))
+        </sql>
+        <rollback>ALTER TABLE game_server_catalog DROP CONSTRAINT ck_game_server_catalog_protocol</rollback>
+    </changeSet>
+
+    <changeSet id="090-games-server-catalog-digest-pin-check" author="hugmesh">
+        <!-- DEFENCE-IN-DEPTH digest-pin invariant (the service's ImageRef validator is the
+             primary gate). A digest-pinned ref always contains the literal '@sha256:' — a
+             tag-only ref (e.g. repo:latest) never does, so it is rejected here even if the
+             service check were ever bypassed. The 64-hex-char body is validated in the
+             service (a portable LIKE-only CHECK can't assert hex length precisely across
+             H2/PG). -->
+        <comment>CHECK: image_ref is digest-pinned (contains '@sha256:') — a mutable
+                 tag-only reference is rejected (arbitrary-container exec containment).</comment>
+        <sql>
+            ALTER TABLE game_server_catalog
+                ADD CONSTRAINT ck_game_server_catalog_digest_pin
+                CHECK (image_ref LIKE '%@sha256:%')
+        </sql>
+        <rollback>ALTER TABLE game_server_catalog DROP CONSTRAINT ck_game_server_catalog_digest_pin</rollback>
+    </changeSet>
+
+    <changeSet id="090-games-server-catalog-grant" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>GRANT SELECT,INSERT,UPDATE on game_server_catalog to admin_bff (no DELETE —
+                 soft-disable via enabled=false).</comment>
+        <sql>GRANT SELECT, INSERT, UPDATE ON game_server_catalog TO admin_bff</sql>
+        <rollback>REVOKE SELECT, INSERT, UPDATE ON game_server_catalog FROM admin_bff</rollback>
+    </changeSet>
+
+    <!-- ── game_server_domain_offer: the per-(domain, slug) two-tier offer + gate ──── -->
+    <changeSet id="090-game-server-domain-offer" author="hugmesh">
+        <comment>game_server_domain_offer — the per-(domain, catalog-slug) two-tier offer
+                 (superadmin offers -> admin enables) carrying the creation gate
+                 (offered_by_superadmin + max_instances quota). Modelled on the
+                 announcement per-domain pattern.</comment>
+        <createTable tableName="game_server_domain_offer">
+            <column name="id" type="varchar(36)">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <!-- The brand/tenant this offer applies to. Default 'default' (single-issuer). -->
+            <column name="domain" type="varchar(253)" defaultValue="default">
+                <constraints nullable="false"/>
+            </column>
+            <!-- FK (logical) to game_server_catalog.slug — the offered server. -->
+            <column name="slug" type="varchar(64)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- TIER 1: the superadmin creation gate. true once the superadmin OFFERS this
+                 slug to this domain. fail-closed: a row with false (or no row) = no use. -->
+            <column name="offered_by_superadmin" type="boolean" defaultValueBoolean="false">
+                <constraints nullable="false"/>
+            </column>
+            <!-- TIER 2: the domain admin's own per-domain on/off. -->
+            <column name="enabled_by_admin" type="boolean" defaultValueBoolean="false">
+                <constraints nullable="false"/>
+            </column>
+            <!-- The per-(domain,slug) instance quota the creation gate enforces (PR6). -->
+            <column name="max_instances" type="int" defaultValueNumeric="1">
+                <constraints nullable="false"/>
+            </column>
+            <column name="created_at" type="timestamp with time zone" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+            <!-- Stamped from the offering SUPERADMIN's jwt.getSubject(). -->
+            <column name="created_by_subject" type="varchar(400)"/>
+            <column name="updated_at" type="timestamp with time zone" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+    </changeSet>
+
+    <changeSet id="090-game-server-domain-offer-unique" author="hugmesh">
+        <!-- At most ONE offer row per (domain, slug). PG enforces it as a plain UNIQUE
+             (no partial predicate needed — there is one row per pair regardless of state).
+             Kept its own changeSet for independent redeploy/rollback. -->
+        <comment>UNIQUE (domain, slug): at most one offer per (domain, catalog-slug).</comment>
+        <sql>
+            ALTER TABLE game_server_domain_offer
+                ADD CONSTRAINT uq_game_server_domain_offer
+                UNIQUE (domain, slug)
+        </sql>
+        <rollback>ALTER TABLE game_server_domain_offer DROP CONSTRAINT uq_game_server_domain_offer</rollback>
+    </changeSet>
+
+    <changeSet id="090-game-server-domain-offer-quota-check" author="hugmesh">
+        <comment>CHECK: max_instances is non-negative (0 = offered-but-no-instances-allowed).</comment>
+        <sql>
+            ALTER TABLE game_server_domain_offer
+                ADD CONSTRAINT ck_game_server_domain_offer_quota
+                CHECK (max_instances >= 0)
+        </sql>
+        <rollback>ALTER TABLE game_server_domain_offer DROP CONSTRAINT ck_game_server_domain_offer_quota</rollback>
+    </changeSet>
+
+    <changeSet id="090-game-server-domain-offer-grant" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>GRANT SELECT,INSERT,UPDATE on game_server_domain_offer to admin_bff.</comment>
+        <sql>GRANT SELECT, INSERT, UPDATE ON game_server_domain_offer TO admin_bff</sql>
+        <rollback>REVOKE SELECT, INSERT, UPDATE ON game_server_domain_offer FROM admin_bff</rollback>
+    </changeSet>
+
+    <!-- ── Curated FOSS seed — 8 digest-pinned servers + SPDX license per row ───────────
+         SHIPS DARK: this seeds the GLOBAL catalog only; NO domain offers are created, so a
+         superadmin must offer a slug to a domain before anyone can run it.
+
+         ⚠ Image digests below are PLACEHOLDER sha256 values (a 64-hex literal so the
+         digest-pin CHECK passes + the shape is exact). A superadmin MUST re-pin each row to
+         the real, cosign-verified digest of the FOSS server image they have pulled/tested
+         BEFORE offering it to a domain (the curation step). The seed exists so the catalog
+         is non-empty + the schema/CHECK are exercised, NOT so these exact bytes run. -->
+    <changeSet id="090-games-catalog-seed" author="hugmesh">
+        <comment>Curated FOSS game-server seed (8 servers, digest-pinned + SPDX). Ships dark
+                 (no domain offers). Digests are placeholders to be re-pinned on curation.</comment>
+        <insert tableName="game_server_catalog">
+            <column name="id" value="gsc-minetest"/>
+            <column name="slug" value="minetest"/>
+            <column name="display_name" value="Luanti (Minetest)"/>
+            <column name="image_ref" value="ghcr.io/hugmesh-systems/games/minetest@sha256:0000000000000000000000000000000000000000000000000000000000000001"/>
+            <column name="license_spdx" value="LGPL-2.1-or-later"/>
+            <column name="protocol" value="udp"/>
+            <column name="container_port" valueNumeric="30000"/>
+            <column name="summary" value="Open-source voxel sandbox game engine and multiplayer server (formerly Minetest)."/>
+            <column name="enabled" valueBoolean="true"/>
+            <column name="created_by_subject" value="seed:games-catalog"/>
+        </insert>
+        <insert tableName="game_server_catalog">
+            <column name="id" value="gsc-veloren"/>
+            <column name="slug" value="veloren"/>
+            <column name="display_name" value="Veloren"/>
+            <column name="image_ref" value="ghcr.io/hugmesh-systems/games/veloren@sha256:0000000000000000000000000000000000000000000000000000000000000002"/>
+            <column name="license_spdx" value="GPL-3.0-only"/>
+            <column name="protocol" value="tcp"/>
+            <column name="container_port" valueNumeric="14004"/>
+            <column name="summary" value="Multiplayer voxel RPG inspired by Cube World; community-driven and open source."/>
+            <column name="enabled" valueBoolean="true"/>
+            <column name="created_by_subject" value="seed:games-catalog"/>
+        </insert>
+        <insert tableName="game_server_catalog">
+            <column name="id" value="gsc-xonotic"/>
+            <column name="slug" value="xonotic"/>
+            <column name="display_name" value="Xonotic"/>
+            <column name="image_ref" value="ghcr.io/hugmesh-systems/games/xonotic@sha256:0000000000000000000000000000000000000000000000000000000000000003"/>
+            <column name="license_spdx" value="GPL-2.0-or-later"/>
+            <column name="protocol" value="udp"/>
+            <column name="container_port" valueNumeric="26000"/>
+            <column name="summary" value="Fast-paced free and open-source arena first-person shooter."/>
+            <column name="enabled" valueBoolean="true"/>
+            <column name="created_by_subject" value="seed:games-catalog"/>
+        </insert>
+        <insert tableName="game_server_catalog">
+            <column name="id" value="gsc-openarena"/>
+            <column name="slug" value="openarena"/>
+            <column name="display_name" value="OpenArena"/>
+            <column name="image_ref" value="ghcr.io/hugmesh-systems/games/openarena@sha256:0000000000000000000000000000000000000000000000000000000000000004"/>
+            <column name="license_spdx" value="GPL-2.0-only"/>
+            <column name="protocol" value="udp"/>
+            <column name="container_port" valueNumeric="27960"/>
+            <column name="summary" value="Open-source arena FPS built on the ioquake3 engine."/>
+            <column name="enabled" valueBoolean="true"/>
+            <column name="created_by_subject" value="seed:games-catalog"/>
+        </insert>
+        <insert tableName="game_server_catalog">
+            <column name="id" value="gsc-teeworlds"/>
+            <column name="slug" value="teeworlds"/>
+            <column name="display_name" value="Teeworlds"/>
+            <column name="image_ref" value="ghcr.io/hugmesh-systems/games/teeworlds@sha256:0000000000000000000000000000000000000000000000000000000000000005"/>
+            <column name="license_spdx" value="Zlib"/>
+            <column name="protocol" value="udp"/>
+            <column name="container_port" valueNumeric="8303"/>
+            <column name="summary" value="Retro multiplayer 2D shooter with online competition."/>
+            <column name="enabled" valueBoolean="true"/>
+            <column name="created_by_subject" value="seed:games-catalog"/>
+        </insert>
+        <insert tableName="game_server_catalog">
+            <column name="id" value="gsc-mindustry"/>
+            <column name="slug" value="mindustry"/>
+            <column name="display_name" value="Mindustry"/>
+            <column name="image_ref" value="ghcr.io/hugmesh-systems/games/mindustry@sha256:0000000000000000000000000000000000000000000000000000000000000006"/>
+            <column name="license_spdx" value="GPL-3.0-or-later"/>
+            <column name="protocol" value="both"/>
+            <column name="container_port" valueNumeric="6567"/>
+            <column name="summary" value="Open-source tower-defense and factory-building game with dedicated server mode."/>
+            <column name="enabled" valueBoolean="true"/>
+            <column name="created_by_subject" value="seed:games-catalog"/>
+        </insert>
+        <insert tableName="game_server_catalog">
+            <column name="id" value="gsc-zeroad"/>
+            <column name="slug" value="zeroad"/>
+            <column name="display_name" value="0 A.D."/>
+            <column name="image_ref" value="ghcr.io/hugmesh-systems/games/zeroad@sha256:0000000000000000000000000000000000000000000000000000000000000007"/>
+            <column name="license_spdx" value="GPL-2.0-or-later"/>
+            <column name="protocol" value="udp"/>
+            <column name="container_port" valueNumeric="20595"/>
+            <column name="summary" value="Free, open-source historical real-time strategy game; multiplayer lobby/host."/>
+            <column name="enabled" valueBoolean="true"/>
+            <column name="created_by_subject" value="seed:games-catalog"/>
+        </insert>
+        <insert tableName="game_server_catalog">
+            <column name="id" value="gsc-supertuxkart"/>
+            <column name="slug" value="supertuxkart"/>
+            <column name="display_name" value="SuperTuxKart"/>
+            <column name="image_ref" value="ghcr.io/hugmesh-systems/games/supertuxkart@sha256:0000000000000000000000000000000000000000000000000000000000000008"/>
+            <column name="license_spdx" value="GPL-3.0-or-later"/>
+            <column name="protocol" value="both"/>
+            <column name="container_port" valueNumeric="2759"/>
+            <column name="summary" value="Free 3D kart racing game with a standalone multiplayer server."/>
+            <column name="enabled" valueBoolean="true"/>
+            <column name="created_by_subject" value="seed:games-catalog"/>
+        </insert>
+    </changeSet>
+
+</databaseChangeLog>

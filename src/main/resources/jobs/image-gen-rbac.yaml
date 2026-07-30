@@ -1,0 +1,122 @@
+# RBAC the operator must apply ONCE so the admin BFF can launch image-gen Jobs.
+# Apply with:  kubectl apply -f image-gen-rbac.yaml
+#              kubectl apply -f image-gen-admission.yaml   # its admission-layer companion
+#
+# LEAST PRIVILEGE — the image-gen mirror of jobs/test-runner-rbac.yaml:
+#  * the BFF (admin-bff ServiceAccount) can create/observe/delete ONLY image-gen Jobs
+#    in hugmesh-backend, plus the narrow per-build spec-ConfigMap verbs reviewed
+#    below — nothing else, no cluster-scoped grants;
+#  * the runner ServiceAccount (image-gen) needs NO cluster API access at all (it
+#    drives debootstrap/package locally and reports back over HTTP), only the
+#    artifacts PVC + its ESO-synced Secrets (mounted, not API-read).
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: image-gen
+  namespace: hugmesh-backend
+---
+# The BFF's namespaced access to manage the image-gen Jobs. The BFF runs as the
+# admin-bff ServiceAccount; bind this Role to THAT SA.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: hugmesh-image-gen-launcher
+  namespace: hugmesh-backend
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "get", "list", "watch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs: ["get", "list", "watch"]   # tail builder progress (belt-and-braces; the
+                                       # primary event path is the runner's HTTP ingest)
+  # ConfigMap grant for the FULL IMAGE_SPEC_JSON channel (worklist redesign item 1b). The BFF
+  # creates ONE per-build `hugmesh-image-spec-<build-uuid>` ConfigMap (the materialized flat
+  # spec, secrets blanked) BEFORE the image-gen Job, then PATCHes it with an ownerReference to
+  # the created Job so the Job's ttlSecondsAfterFinished reap GC-CASCADES the ConfigMap.
+  #
+  # SECURITY REVIEW (2026-07, resolves the former SECURITY-REVIEW gate on this rule):
+  #  * BLAST RADIUS — the grant is namespaced to hugmesh-backend, which also holds (per the
+  #    platform manifests): akkoma-config / akkoma-proxy-nginx / tuwunel-config /
+  #    tuwunel-proxy-nginx (homeserver + proxy config), egress-proxy-config +
+  #    domainlock-allowlist (egress policy), coturn-config, test-runner-orchestrator,
+  #    akkoma-peer-config, and the akkoma-/tuwunel- admin-sync SCRIPT ConfigMaps that sync Jobs
+  #    MOUNT AND EXECUTE. A fully-compromised admin-bff SA could therefore `patch` the egress
+  #    allowlist or a sync-job script (= code execution in that Job's pod on its next run), or
+  #    `get`/`delete` any of them — BUT only BY EXACT NAME (see the list/watch exclusion).
+  #    None of these ConfigMaps carries a secret IN ITS BYTES (platform secrets live in
+  #    Secrets/Vault via ESO, never in ConfigMaps) — but do NOT read that as "no path to
+  #    secrets": the admin-sync SCRIPT ConfigMaps are executed by Jobs that envFrom-mount
+  #    akkoma/casdoor Secrets, so patching one reaches those secrets INDIRECTLY via code
+  #    execution. Treat this grant as a code-execution-adjacent capability post-compromise.
+  #    THAT SAID — the above describes the RBAC layer ALONE. With the companion
+  #    jobs/image-gen-admission.yaml applied (do apply it), every configmaps write by this
+  #    SA whose target name lacks the `hugmesh-image-spec-` prefix is DENIED at
+  #    admission, closing the co-tenant create/patch/delete paths. `get` by exact name
+  #    remains (admission intercepts writes only; these ConfigMaps are non-secret). BE
+  #    PRECISE about what the pin buys: it closes the ConfigMap-TAMPERING route to code
+  #    execution for this SA, and ONLY that. The batch/jobs create grant above still lets a
+  #    compromised admin-bff create a Job running as ANY co-tenant ServiceAccount in this
+  #    namespace (Kubernetes enforces no "use" check on serviceAccountName), so the
+  #    residual code-execution-adjacent surface post-compromise is that jobs grant — not
+  #    configmaps.
+  #  * WHY NOT NAME-SCOPED — core RBAC resourceNames match EXACT names only (no prefix/glob),
+  #    and the spec ConfigMaps are named per-build (`hugmesh-image-spec-<uuid>`), so a
+  #    resourceNames pin cannot enumerate them; resourceNames also NEVER applies to `create`
+  #    (the name is not known at authorization time). Enforcing the
+  #    `hugmesh-image-spec-` name prefix for this SA's configmap writes belongs to an
+  #    admission layer — SHIPPED IN-REPO as jobs/image-gen-admission.yaml (a native
+  #    ValidatingAdmissionPolicy, k8s >= 1.30, no controller dependency), applied the same
+  #    one-time way as this file.
+  #  * VERBS GRANTED — create: the per-build spec ConfigMap, applied BEFORE the Job so a
+  #    rejection leaves NO orphan Job; get + patch: the fabric8 ownerReference edit (a GET then
+  #    a PATCH), best-effort after the Job exists; delete: ONLY the rollback of the
+  #    just-created ConfigMap when the subsequent Job create fails — steady-state reaping is
+  #    the ownerRef GC cascade, never an explicit delete. The #213 review flagged this
+  #    verb's namespace-wide breadth as an open question; the admission pin DEFANGS it: a
+  #    delete whose target is outside the `hugmesh-image-spec-` prefix is denied at
+  #    admission even though RBAC grants the verb, while the prefixed rollback delete
+  #    still passes.
+  #  * VERBS EXCLUDED — list/watch: the SA cannot ENUMERATE or STREAM the namespace's
+  #    ConfigMaps. Be honest about how much that buys: the co-tenant names above are PUBLIC
+  #    in the platform repo, so an informed attacker does not need enumeration — the
+  #    exclusion denies a change-feed and discovery of NON-public/ad-hoc ConfigMaps, not
+  #    access to the known ones. The real containment is the admission-layer
+  #    `hugmesh-image-spec-` prefix pin — shipped as jobs/image-gen-admission.yaml.
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["create", "get", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: hugmesh-image-gen-launcher
+  namespace: hugmesh-backend
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: hugmesh-image-gen-launcher
+subjects:
+  - kind: ServiceAccount
+    name: admin-bff          # the BFF's ServiceAccount — adjust to your deployment
+    namespace: hugmesh-backend
+---
+# The shared artifacts PVC the builder writes the image + NON-SECRET keys bundle to and
+# the BFF reads for download. RWX so both the BFF pod and the short-lived builder Jobs
+# mount it. (hugmesh-local default StorageClass; size per image/retention appetite.)
+# NOTE: this PVC holds NO secrets — the private dial key is in Vault, never on this volume.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: hugmesh-image-artifacts
+  namespace: hugmesh-backend
+  labels:
+    app.kubernetes.io/part-of: hugmesh
+    app.kubernetes.io/component: image-gen
+spec:
+  accessModes: ["ReadWriteMany"]
+  storageClassName: hugmesh-local
+  resources:
+    requests:
+      storage: 50Gi

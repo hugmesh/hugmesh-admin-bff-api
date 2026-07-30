@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+      announcement domain scope — adds the per-row tenant discriminator `domain` to
+      the announcement table (changeset 060) so a brand-scoped ADMIN only sees and
+      mutates THEIR brand's announcements.
+
+      This is a P1 multi-tenancy fix: without this column every admin in the cluster
+      could read and write every other brand's announcements.
+
+      ── Design follows 010-domain-scope.xml exactly ──────────────────────────────
+        - Column default 'default' + NOT NULL → single-issuer clusters back-fill to
+          'default' and are unchanged (zero risk).
+        - Index gated on PostgreSQL (onFail=MARK_RAN) — H2 applies the predicate in-SQL
+          anyway; the index is a production read optimisation, not a correctness gate.
+        - Surface active-queries (activeForHome/Login/Forum) are NOT domain-scoped: they
+          are called from AnnouncementSurfaceController which has no JWT (the login-page
+          endpoint is public / unauthenticated). The domain predicate sits on the ADMIN
+          mutation surface (list/find/insert/update/delete) only.
+
+      ── Numbered 061 ─────────────────────────────────────────────────────────────
+      One above the announcement changeset 060 and appended last in
+      db.changelog-master.xml.
+    -->
+
+    <changeSet id="061-announcement-domain" author="hugmesh">
+        <comment>Tenant discriminator on announcement (default 'default' for
+                 single-tenant back-compat).</comment>
+        <addColumn tableName="announcement">
+            <column name="domain" type="varchar(64)" defaultValue="default">
+                <constraints nullable="false"/>
+            </column>
+        </addColumn>
+    </changeSet>
+
+    <changeSet id="061-announcement-domain-index" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>Index the per-tenant read predicate on announcement.</comment>
+        <sql>CREATE INDEX idx_announcements_domain ON announcement (domain)</sql>
+        <rollback>DROP INDEX idx_announcements_domain</rollback>
+    </changeSet>
+
+</databaseChangeLog>

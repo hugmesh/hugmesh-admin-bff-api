@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!--
+      band-181 — SSO account provider: allow 'casdoor'.
+
+      The native login leg (user-bff OidcLoginCompletionService, reached via POST /bff/login)
+      provisions accounts via POST /bff/internal/accounts/ensure with provider="casdoor"
+      (the Casdoor IdP is the upstream for SSO logins). The original ck_account_provider
+      (007) predates SSO and only allowed the two invite providers ('google','discord'),
+      so a Casdoor SSO login fails the CHECK at insert time. Relax the constraint to ALSO
+      accept 'casdoor'. Additive + back-compatible: existing google/discord rows are
+      unaffected; the invite/allowlist flows are unchanged.
+
+      Pairs with InternalAccountController.ensureAccount, which (for provider="casdoor")
+      decodes the id_token handed by user-bff and stores a SHORT, stable subject
+      (email > preferred_username > sub) as the handle — so account.id = idFor("casdoor",
+      subject) fits varchar(400) and is stable across logins.
+    -->
+    <changeSet id="181-account-provider-allow-casdoor" author="hugmesh">
+        <comment>Relax ck_account_provider to also allow the 'casdoor' SSO provider.</comment>
+        <sql>
+            ALTER TABLE account DROP CONSTRAINT ck_account_provider;
+            ALTER TABLE account
+                ADD CONSTRAINT ck_account_provider
+                CHECK (provider IN ('google', 'discord', 'casdoor'));
+        </sql>
+        <rollback>
+            ALTER TABLE account DROP CONSTRAINT ck_account_provider;
+            ALTER TABLE account
+                ADD CONSTRAINT ck_account_provider
+                CHECK (provider IN ('google', 'discord'));
+        </rollback>
+    </changeSet>
+
+</databaseChangeLog>

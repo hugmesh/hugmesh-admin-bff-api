@@ -1,0 +1,339 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+      desktop-app-governance — the admin-bff SOURCE OF TRUTH for least-privilege,
+      centrally-governed DESKTOP CLIENT IMAGES (the amd64-laptop + thin-Chromebook
+      Plasma desktops). THREE tables, ALL SHIPPING DARK / DEFAULT-NONE:
+
+        desktop_app_catalog   — the per-domain, SUPERADMIN/ADMIN-curated allowlist of
+                                Flatpak/OCI app refs the brand's Plasma Discover store
+                                may show. `enabled` DEFAULT FALSE — the store is
+                                DEFAULT-NONE: adding a ref is NOT enabling it; an admin
+                                must explicitly flip enabled. The discover-role registry
+                                endpoint serves ONLY this domain's ENABLED refs, so an
+                                empty / all-disabled catalog serves NOTHING.
+
+        desktop_sudo_grant    — the per-(domain,subject,device) SSO-enforced sudo grant.
+                                CLONES device_ssh_license 011 EXACTLY: app-UUID PK,
+                                timestamptz now(), CAS active->revoked (NEVER deleted =
+                                audit), monotonic generation, propagation_state for the
+                                push-with-ack to the IdP claim / on-device PAM, PG-gated
+                                partial-unique WHERE active. DEFAULT NONE = no sudo (the
+                                image bakes no sudoers; sudo is conferred ONLY by an
+                                active grant emitted as an SSO claim, revocable at the
+                                IdP). The entitlement-read endpoint compiles the active
+                                set the desktop/IdP consults to mint the claim.
+
+        desktop_install_request — a non-sudo user's request that an admin allow/install
+                                an app on their device. requester = JWT SUBJECT
+                                (owner == subject, fail-closed); domain from the validated
+                                issuer; status pending/approved/denied/installed; decided_by
+                                stamped on an admin decision. NEVER deleted = audit.
+
+      ── Portable DDL (mirrors 011-device-license-registry.xml / 009-domain-lock.xml
+         EXACTLY) ────────────────────────────────────────────────────────────────────
+      id is an app-generated varchar(36) UUID string (NOT a Postgres uuid column with
+      gen_random_uuid()), so the INSERT is portable across Postgres and the H2
+      (PostgreSQL-compat, NON_KEYWORDS) test store with no pgcrypto dependency. timestamptz
+      -> the portable Liquibase 'timestamp with time zone' generic type,
+      defaultValueComputed="now()". One changeSet per CHECK / partial-unique / FK / index /
+      GRANT (independent redeploy + rollback). PG-gated partial-uniques + GRANT via a
+      dbms=postgresql precondition (onFail/onError=MARK_RAN) — the H2 path enforces the
+      at-most-one invariant with the service findActive-before-insert guard, exactly like
+      009/011.
+
+      ── FIX-NODEFAULT ───────────────────────────────────────────────────────────────
+      Every table carries a `domain` tenant discriminator stamped from the VALIDATED JWT
+      issuer (never client-supplied). The catalog + grant + request reads scope on it
+      (the 010 pattern); a scoped ADMIN sees only their brand; SUPERADMIN unscoped.
+
+      ── Band: 140-142 (the desktop-app-governance band — FREE above the 130
+         device-enrollment include) ───────────────────────────────────────────────────
+      Appended LAST at the include site in db.changelog-master.xml, after the 130 include.
+    -->
+
+    <!-- ════════════════════════ desktop_app_catalog ═════════════════════════════ -->
+
+    <changeSet id="140-desktop-app-catalog" author="hugmesh">
+        <comment>desktop_app_catalog — the per-domain Plasma Discover allowlist. `enabled`
+                 DEFAULT FALSE = the store is DEFAULT-NONE (add != enable); the registry
+                 endpoint serves ONLY this domain's ENABLED refs.</comment>
+        <createTable tableName="desktop_app_catalog">
+            <column name="id" type="varchar(36)">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <!-- the Flatpak/OCI app reference (e.g. org.mozilla.firefox or an OCI ref). -->
+            <column name="app_ref" type="varchar(512)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="display_name" type="varchar(256)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- the delivery source: FLATPAK (over the OCI registry) or OCI. -->
+            <column name="source" type="varchar(16)" defaultValue="FLATPAK">
+                <constraints nullable="false"/>
+            </column>
+            <!-- DEFAULT FALSE: the store default-NONE. Adding a row does NOT enable it. -->
+            <column name="enabled" type="boolean" defaultValueBoolean="false">
+                <constraints nullable="false"/>
+            </column>
+            <column name="added_by" type="varchar(400)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- FIX-NODEFAULT: residency stamped from the validated issuer (defaults
+                 'default' like the 010 tenant discriminator for single-issuer clusters). -->
+            <column name="domain" type="varchar(64)" defaultValue="default">
+                <constraints nullable="false"/>
+            </column>
+            <column name="created_at" type="timestamp with time zone" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+            <column name="updated_at" type="timestamp with time zone"/>
+        </createTable>
+    </changeSet>
+
+    <changeSet id="140-desktop-app-catalog-source-check" author="hugmesh">
+        <comment>CHECK: source is FLATPAK or OCI.</comment>
+        <sql>
+            ALTER TABLE desktop_app_catalog
+                ADD CONSTRAINT ck_desktop_app_catalog_source
+                CHECK (source IN ('FLATPAK', 'OCI'))
+        </sql>
+        <rollback>ALTER TABLE desktop_app_catalog DROP CONSTRAINT ck_desktop_app_catalog_source</rollback>
+    </changeSet>
+
+    <changeSet id="140-desktop-app-catalog-unique" author="hugmesh">
+        <comment>UNIQUE per (domain, app_ref): a brand may list an app ref at most once.
+                 Portable plain UNIQUE (not partial) — works on both Postgres and H2.</comment>
+        <addUniqueConstraint tableName="desktop_app_catalog"
+                             columnNames="domain, app_ref"
+                             constraintName="uq_desktop_app_catalog_domain_ref"/>
+        <rollback>
+            <dropUniqueConstraint tableName="desktop_app_catalog"
+                                  constraintName="uq_desktop_app_catalog_domain_ref"/>
+        </rollback>
+    </changeSet>
+
+    <changeSet id="140-desktop-app-catalog-domain-index" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>Index the per-tenant read predicate on desktop_app_catalog.</comment>
+        <sql>CREATE INDEX idx_desktop_app_catalog_domain ON desktop_app_catalog (domain)</sql>
+        <rollback>DROP INDEX idx_desktop_app_catalog_domain</rollback>
+    </changeSet>
+
+    <changeSet id="140-desktop-app-catalog-grant" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>GRANT SELECT,INSERT,UPDATE,DELETE on desktop_app_catalog to admin_bff
+                 (an admin may remove a catalog entry; the registry filter is the live
+                 boundary regardless).</comment>
+        <sql>GRANT SELECT, INSERT, UPDATE, DELETE ON desktop_app_catalog TO admin_bff</sql>
+        <rollback>REVOKE SELECT, INSERT, UPDATE, DELETE ON desktop_app_catalog FROM admin_bff</rollback>
+    </changeSet>
+
+    <!-- ════════════════════════ desktop_sudo_grant ══════════════════════════════ -->
+
+    <changeSet id="141-desktop-sudo-grant" author="hugmesh">
+        <comment>desktop_sudo_grant — the per-(domain,subject,device) SSO-enforced sudo
+                 grant. CLONES device_ssh_license 011: CAS active->revoked (NEVER deleted =
+                 audit), monotonic generation, propagation_state. DEFAULT NONE = no sudo;
+                 an active grant is emitted as the revocable SSO claim.</comment>
+        <createTable tableName="desktop_sudo_grant">
+            <column name="id" type="varchar(36)">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <!-- the Casdoor SUBJECT being granted sudo (== the licensed desktop user). -->
+            <column name="subject" type="varchar(400)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- the desktop device the sudo grant applies on (a device_registry node id). -->
+            <column name="device_id" type="varchar(36)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="state" type="varchar(16)" defaultValue="active">
+                <constraints nullable="false"/>
+            </column>
+            <column name="granted_by" type="varchar(400)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="granted_at" type="timestamp with time zone" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+            <column name="revoked_at" type="timestamp with time zone"/>
+            <column name="revoked_by" type="varchar(400)"/>
+            <!-- FIX-NODEFAULT: residency / home-tenant discriminator stamped from the
+                 device's residency (the ADMIN read view scopes on it). -->
+            <column name="domain" type="varchar(64)" defaultValue="default">
+                <constraints nullable="false"/>
+            </column>
+            <!-- FIX-REVOKE: the push-with-ack outcome (IdP claim / on-device PAM) the UI
+                 surfaces. -->
+            <column name="propagation_state" type="varchar(16)" defaultValue="pending">
+                <constraints nullable="false"/>
+            </column>
+            <!-- FIX-SIGNCACHE/FIX-REVOKE: monotonic generation bumped on every mutate. -->
+            <column name="generation" type="bigint" defaultValueNumeric="0">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+    </changeSet>
+
+    <changeSet id="141-desktop-sudo-grant-state-check" author="hugmesh">
+        <comment>CHECK: state is active (grants sudo) or revoked (CAS, never deleted).</comment>
+        <sql>
+            ALTER TABLE desktop_sudo_grant
+                ADD CONSTRAINT ck_desktop_sudo_grant_state
+                CHECK (state IN ('active', 'revoked'))
+        </sql>
+        <rollback>ALTER TABLE desktop_sudo_grant DROP CONSTRAINT ck_desktop_sudo_grant_state</rollback>
+    </changeSet>
+
+    <changeSet id="141-desktop-sudo-grant-propagation-check" author="hugmesh">
+        <comment>CHECK: propagation_state is one of the four push-with-ack outcomes.</comment>
+        <sql>
+            ALTER TABLE desktop_sudo_grant
+                ADD CONSTRAINT ck_desktop_sudo_grant_propagation
+                CHECK (propagation_state IN ('pending', 'applied', 'failed', 'degraded'))
+        </sql>
+        <rollback>ALTER TABLE desktop_sudo_grant DROP CONSTRAINT ck_desktop_sudo_grant_propagation</rollback>
+    </changeSet>
+
+    <changeSet id="141-desktop-sudo-grant-device-fk" author="hugmesh">
+        <comment>FK: the sudo grant's device_id references a real device_registry row.</comment>
+        <addForeignKeyConstraint
+                constraintName="fk_desktop_sudo_grant_device"
+                baseTableName="desktop_sudo_grant" baseColumnNames="device_id"
+                referencedTableName="device_registry" referencedColumnNames="id"/>
+        <rollback>
+            <dropForeignKeyConstraint baseTableName="desktop_sudo_grant"
+                                      constraintName="fk_desktop_sudo_grant_device"/>
+        </rollback>
+    </changeSet>
+
+    <!--
+      Partial UNIQUE (... WHERE state='active'): at most one ACTIVE sudo grant per
+      (domain, subject, device_id). Revoked rows are excluded so the audit trail holds
+      many grant/revoke cycles. PG-only (H2 has no partial index) — gated dbms=postgresql,
+      onFail=MARK_RAN; on H2 the service findActive-before-insert guard enforces the
+      invariant, exactly as 011 does.
+    -->
+    <changeSet id="141-desktop-sudo-grant-active-unique" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>Partial UNIQUE: at most one ACTIVE sudo grant per (domain, subject,
+                 device_id).</comment>
+        <sql>
+            CREATE UNIQUE INDEX uq_desktop_sudo_grant_active
+                ON desktop_sudo_grant (domain, subject, device_id)
+                WHERE state = 'active'
+        </sql>
+        <rollback>DROP INDEX uq_desktop_sudo_grant_active</rollback>
+    </changeSet>
+
+    <changeSet id="141-desktop-sudo-grant-domain-index" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>Index the per-tenant read predicate on desktop_sudo_grant.</comment>
+        <sql>CREATE INDEX idx_desktop_sudo_grant_domain ON desktop_sudo_grant (domain)</sql>
+        <rollback>DROP INDEX idx_desktop_sudo_grant_domain</rollback>
+    </changeSet>
+
+    <changeSet id="141-desktop-sudo-grant-grant" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>GRANT SELECT,INSERT,UPDATE on desktop_sudo_grant to admin_bff (revoke is
+                 a CAS UPDATE — the row is never DELETEd = the audit trail).</comment>
+        <sql>GRANT SELECT, INSERT, UPDATE ON desktop_sudo_grant TO admin_bff</sql>
+        <rollback>REVOKE SELECT, INSERT, UPDATE ON desktop_sudo_grant FROM admin_bff</rollback>
+    </changeSet>
+
+    <!-- ════════════════════════ desktop_install_request ═════════════════════════ -->
+
+    <changeSet id="142-desktop-install-request" author="hugmesh">
+        <comment>desktop_install_request — a non-sudo user's request that an admin
+                 allow/install an app on their device. requester = JWT SUBJECT
+                 (owner == subject), domain from the validated issuer; an admin
+                 decision stamps status + decided_by. NEVER deleted = audit.</comment>
+        <createTable tableName="desktop_install_request">
+            <column name="id" type="varchar(36)">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <!-- the Casdoor SUBJECT who asked (owner == subject; fail-closed). -->
+            <column name="requester" type="varchar(400)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="app_ref" type="varchar(512)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- the target desktop device the requester wants the app on. -->
+            <column name="device_id" type="varchar(36)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="status" type="varchar(16)" defaultValue="pending">
+                <constraints nullable="false"/>
+            </column>
+            <column name="decided_by" type="varchar(400)"/>
+            <column name="decided_at" type="timestamp with time zone"/>
+            <!-- FIX-NODEFAULT: residency stamped from the validated issuer. -->
+            <column name="domain" type="varchar(64)" defaultValue="default">
+                <constraints nullable="false"/>
+            </column>
+            <column name="created_at" type="timestamp with time zone" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+    </changeSet>
+
+    <changeSet id="142-desktop-install-request-status-check" author="hugmesh">
+        <comment>CHECK: status is one of the four lifecycle values.</comment>
+        <sql>
+            ALTER TABLE desktop_install_request
+                ADD CONSTRAINT ck_desktop_install_request_status
+                CHECK (status IN ('pending', 'approved', 'denied', 'installed'))
+        </sql>
+        <rollback>ALTER TABLE desktop_install_request DROP CONSTRAINT ck_desktop_install_request_status</rollback>
+    </changeSet>
+
+    <changeSet id="142-desktop-install-request-device-fk" author="hugmesh">
+        <comment>FK: the request's device_id references a real device_registry row.</comment>
+        <addForeignKeyConstraint
+                constraintName="fk_desktop_install_request_device"
+                baseTableName="desktop_install_request" baseColumnNames="device_id"
+                referencedTableName="device_registry" referencedColumnNames="id"/>
+        <rollback>
+            <dropForeignKeyConstraint baseTableName="desktop_install_request"
+                                      constraintName="fk_desktop_install_request_device"/>
+        </rollback>
+    </changeSet>
+
+    <changeSet id="142-desktop-install-request-domain-index" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>Index the per-tenant read predicate on desktop_install_request.</comment>
+        <sql>CREATE INDEX idx_desktop_install_request_domain ON desktop_install_request (domain)</sql>
+        <rollback>DROP INDEX idx_desktop_install_request_domain</rollback>
+    </changeSet>
+
+    <changeSet id="142-desktop-install-request-grant" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>GRANT SELECT,INSERT,UPDATE on desktop_install_request to admin_bff
+                 (a decision is a CAS UPDATE — the row is never DELETEd = the audit
+                 trail).</comment>
+        <sql>GRANT SELECT, INSERT, UPDATE ON desktop_install_request TO admin_bff</sql>
+        <rollback>REVOKE SELECT, INSERT, UPDATE ON desktop_install_request FROM admin_bff</rollback>
+    </changeSet>
+</databaseChangeLog>

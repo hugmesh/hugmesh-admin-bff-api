@@ -1,0 +1,313 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+      device-license-registry — the SINGLE SOURCE OF TRUTH that governs which operator
+      may SSH into which mesh node. Two tables:
+
+        device_registry    — identity + physical ownership + DOMAIN RESIDENCY of each
+                              headscale-enrolled mesh node (keyed by a stable
+                              machine_key_fp). The node a person can/can't SSH into.
+        device_ssh_license — the explicit (operator x device|domain) grant rows: who may
+                              SSH where, pinned to the exact SSH pubkey fingerprint(s)
+                              they may present. SUPERADMIN issues/revokes; the registry
+                              compiles to BOTH enforcement layers (per-node sshd
+                              AuthorizedKeysCommand + headscale policy) off ONE signed,
+                              unscoped export. NEVER deleted — revoke is a CAS audit.
+
+      ── Portable DDL (mirrors 009-domain-lock.xml EXACTLY) ──────────────────────────
+      id is an app-generated varchar(36) UUID string (NOT a Postgres uuid column with
+      gen_random_uuid()), so the INSERT is portable across Postgres and the H2
+      (PostgreSQL-compat, NON_KEYWORDS) test store with no pgcrypto dependency and the
+      app can return the new row id. timestamptz -> the portable Liquibase
+      'timestamp with time zone' generic type, defaultValueComputed="now()". One
+      changeSet per CHECK / partial-unique / FK / index / GRANT (independent redeploy +
+      rollback). PG-gated partial-uniques + GRANT via a dbms=postgresql precondition
+      (onFail/onError=MARK_RAN) — the H2 path enforces the at-most-one-active invariant
+      with the service findActive-before-insert guard, exactly like 009.
+
+      ── FIX-NODEFAULT ───────────────────────────────────────────────────────────────
+      device_registry.domain is NOT NULL with NO DEFAULT (unlike the 010 tenant
+      discriminator which defaults to 'default'). A residency MUST be stamped explicitly:
+      the service rejects domain=='default' outright, because a single-issuer cluster
+      emits DOMAIN_default for everyone, which would make the ADMIN cross-domain-deny
+      wall vacuous (every node would read as "my brand"). Residency is issuer-keyed, a
+      deliberate operator decision, never a silent default.
+
+      ── FIX-PINKEY ──────────────────────────────────────────────────────────────────
+      device_ssh_license.key_fingerprints pins the EXACT SSH pubkey fingerprint(s) the
+      operator may present (a license is operator x scope x KEY, not just operator x
+      scope). The compiled export returns a key's authorized line only when the offered
+      %f matches a pinned fingerprint, so a licensed operator presenting an un-pinned
+      key is still denied.
+
+      ── FIX-REVOKE (propagation) ────────────────────────────────────────────────────
+      device_ssh_license carries propagation_state (mirrors 009's column) so the UI can
+      show pending/applied/failed/degraded as a revoke (CAS + gen bump + re-sign) is
+      pushed-with-ack to both layers, plus a monotonic `generation` on each row that the
+      export's monotonic-generation rollback guard reads.
+
+      ── Numbering: 011 ──────────────────────────────────────────────────────────────
+      Sits ABOVE 010 and is APPENDED LAST at the include site in
+      db.changelog-master.xml, immediately after the 010 include.
+    -->
+
+    <!-- ════════════════════════ device_registry ═════════════════════════════════ -->
+
+    <changeSet id="011-device-registry" author="hugmesh">
+        <comment>device_registry — identity + physical ownership + DOMAIN RESIDENCY of
+                 each mesh node. domain is NOT NULL with NO DEFAULT [FIX-NODEFAULT].</comment>
+        <createTable tableName="device_registry">
+            <column name="id" type="varchar(36)">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="machine_key_fp" type="varchar(128)">
+                <constraints nullable="false" unique="true"
+                             uniqueConstraintName="uq_device_registry_machine_key_fp"/>
+            </column>
+            <column name="hostname" type="varchar(253)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="tailnet_id" type="varchar(128)"/>
+            <column name="image_type" type="varchar(32)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="hardware_class" type="varchar(64)"/>
+            <column name="owner_type" type="varchar(16)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="physical_owner" type="varchar(400)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- FIX-NODEFAULT: residency is mandatory + has NO default; the service
+                 rejects 'default'. -->
+            <column name="domain" type="varchar(64)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="mesh_id" type="varchar(64)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="created_at" type="timestamp with time zone" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+            <column name="last_seen_at" type="timestamp with time zone"/>
+        </createTable>
+    </changeSet>
+
+    <changeSet id="011-device-registry-image-type-check" author="hugmesh">
+        <comment>CHECK: image_type is one of the closed image vocabulary.</comment>
+        <sql>
+            ALTER TABLE device_registry
+                ADD CONSTRAINT ck_device_registry_image_type
+                CHECK (image_type IN ('primary', 'mesh-extension', 'client'))
+        </sql>
+        <rollback>ALTER TABLE device_registry DROP CONSTRAINT ck_device_registry_image_type</rollback>
+    </changeSet>
+
+    <changeSet id="011-device-registry-owner-type-check" author="hugmesh">
+        <comment>CHECK: owner_type is SUPERADMIN (primary/core) or ADMIN (mesh-extension).
+                 The auth predicate DENIES an ADMIN any access to a SUPERADMIN-owned
+                 node regardless of license.</comment>
+        <sql>
+            ALTER TABLE device_registry
+                ADD CONSTRAINT ck_device_registry_owner_type
+                CHECK (owner_type IN ('SUPERADMIN', 'ADMIN'))
+        </sql>
+        <rollback>ALTER TABLE device_registry DROP CONSTRAINT ck_device_registry_owner_type</rollback>
+    </changeSet>
+
+    <changeSet id="011-device-registry-domain-index" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>Index the per-tenant residency read predicate on device_registry.</comment>
+        <sql>CREATE INDEX idx_device_registry_domain ON device_registry (domain)</sql>
+        <rollback>DROP INDEX idx_device_registry_domain</rollback>
+    </changeSet>
+
+    <changeSet id="011-device-registry-grant" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>GRANT SELECT,INSERT,UPDATE,DELETE on device_registry to the admin_bff
+                 role (SUPERADMIN may de-register a stale node).</comment>
+        <sql>GRANT SELECT, INSERT, UPDATE, DELETE ON device_registry TO admin_bff</sql>
+        <rollback>REVOKE SELECT, INSERT, UPDATE, DELETE ON device_registry FROM admin_bff</rollback>
+    </changeSet>
+
+    <!-- ════════════════════════ device_ssh_license ══════════════════════════════ -->
+
+    <changeSet id="011-device-ssh-license" author="hugmesh">
+        <comment>device_ssh_license — the explicit (operator x device|domain) grant rows,
+                 pinned to the exact SSH pubkey fingerprint(s) [FIX-PINKEY]. Revoke is a
+                 CAS active->revoked (never deleted = audit); generation +
+                 propagation_state drive the ACK-revoke [FIX-REVOKE].</comment>
+        <createTable tableName="device_ssh_license">
+            <column name="id" type="varchar(36)">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="operator" type="varchar(400)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="scope_type" type="varchar(16)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- NOT NULL iff scope_type='DEVICE' (the chk_scope_shape XOR enforces it). -->
+            <column name="device_id" type="varchar(36)"/>
+            <!-- NOT NULL iff scope_type='DOMAIN' (the chk_scope_shape XOR enforces it). -->
+            <column name="target_domain" type="varchar(64)"/>
+            <!-- FIX-PINKEY: the exact SSH pubkey fingerprint(s) the operator may present
+                 (comma/space-separated; the export only emits a key whose %f matches). -->
+            <column name="key_fingerprints" type="varchar(2048)"/>
+            <column name="state" type="varchar(16)" defaultValue="active">
+                <constraints nullable="false"/>
+            </column>
+            <column name="granted_by" type="varchar(400)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="granted_at" type="timestamp with time zone" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+            <column name="revoked_at" type="timestamp with time zone"/>
+            <column name="revoked_by" type="varchar(400)"/>
+            <!-- home/tenant discriminator for the ADMIN read view (defaults 'default'
+                 like the 010 tenant discriminator; a scoped admin reads only their
+                 brand's license rows). -->
+            <column name="domain" type="varchar(64)" defaultValue="default">
+                <constraints nullable="false"/>
+            </column>
+            <!-- FIX-REVOKE: the ACK-revoke propagation outcome the UI surfaces. -->
+            <column name="propagation_state" type="varchar(16)" defaultValue="pending">
+                <constraints nullable="false"/>
+            </column>
+            <!-- FIX-SIGNCACHE/FIX-REVOKE: monotonic generation bumped on every mutate;
+                 the signed export carries max(generation) so a node rejects a rolled-back
+                 (generation <= current) payload. -->
+            <column name="generation" type="bigint" defaultValueNumeric="0">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+    </changeSet>
+
+    <changeSet id="011-device-ssh-license-scope-type-check" author="hugmesh">
+        <comment>CHECK: scope_type is DEVICE (a single node) or DOMAIN (all nodes
+                 resident in target_domain).</comment>
+        <sql>
+            ALTER TABLE device_ssh_license
+                ADD CONSTRAINT ck_device_ssh_license_scope_type
+                CHECK (scope_type IN ('DEVICE', 'DOMAIN'))
+        </sql>
+        <rollback>ALTER TABLE device_ssh_license DROP CONSTRAINT ck_device_ssh_license_scope_type</rollback>
+    </changeSet>
+
+    <changeSet id="011-device-ssh-license-state-check" author="hugmesh">
+        <comment>CHECK: state is one of the two lifecycle values (active = grants SSH;
+                 revoked = CAS active->revoked, never deleted).</comment>
+        <sql>
+            ALTER TABLE device_ssh_license
+                ADD CONSTRAINT ck_device_ssh_license_state
+                CHECK (state IN ('active', 'revoked'))
+        </sql>
+        <rollback>ALTER TABLE device_ssh_license DROP CONSTRAINT ck_device_ssh_license_state</rollback>
+    </changeSet>
+
+    <changeSet id="011-device-ssh-license-propagation-check" author="hugmesh">
+        <comment>CHECK: propagation_state is one of the four push-with-ack outcomes.</comment>
+        <sql>
+            ALTER TABLE device_ssh_license
+                ADD CONSTRAINT ck_device_ssh_license_propagation
+                CHECK (propagation_state IN ('pending', 'applied', 'failed', 'degraded'))
+        </sql>
+        <rollback>ALTER TABLE device_ssh_license DROP CONSTRAINT ck_device_ssh_license_propagation</rollback>
+    </changeSet>
+
+    <changeSet id="011-device-ssh-license-scope-shape-check" author="hugmesh">
+        <comment>CHECK (chk_scope_shape): the XOR that ties the scope shape to its target
+                 — a DEVICE license has a device_id and NO target_domain; a DOMAIN license
+                 has a target_domain and NO device_id. A malformed row (both/neither) is
+                 rejected at the DB.</comment>
+        <sql>
+            ALTER TABLE device_ssh_license
+                ADD CONSTRAINT chk_scope_shape
+                CHECK (
+                    (scope_type = 'DEVICE' AND device_id IS NOT NULL AND target_domain IS NULL)
+                 OR (scope_type = 'DOMAIN' AND target_domain IS NOT NULL AND device_id IS NULL)
+                )
+        </sql>
+        <rollback>ALTER TABLE device_ssh_license DROP CONSTRAINT chk_scope_shape</rollback>
+    </changeSet>
+
+    <changeSet id="011-device-ssh-license-device-fk" author="hugmesh">
+        <comment>FK: a DEVICE license's device_id references a real device_registry row.
+                 (DOMAIN licenses leave device_id NULL — the chk_scope_shape XOR.)</comment>
+        <addForeignKeyConstraint
+                constraintName="fk_device_ssh_license_device"
+                baseTableName="device_ssh_license" baseColumnNames="device_id"
+                referencedTableName="device_registry" referencedColumnNames="id"/>
+        <rollback>
+            <dropForeignKeyConstraint baseTableName="device_ssh_license"
+                                      constraintName="fk_device_ssh_license_device"/>
+        </rollback>
+    </changeSet>
+
+    <!--
+      The two partial UNIQUE indexes below are PARTIAL (... WHERE state='active').
+      PostgreSQL supports partial indexes; the H2 (PG-compat) slice-test store does NOT,
+      so each is gated with a dbms=postgresql precondition (onFail=MARK_RAN) and applies
+      only on Postgres. On H2 the at-most-one-active-license invariant is enforced by the
+      service (findActive-before-insert), exactly as 009 does — an idempotent grant
+      resolves an existing active row rather than writing a duplicate.
+    -->
+    <changeSet id="011-device-ssh-license-active-device-unique" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>Partial UNIQUE: at most one ACTIVE device license per (operator,
+                 device_id). Revoked rows are excluded so the audit trail can hold many
+                 historical grant/revoke cycles.</comment>
+        <sql>
+            CREATE UNIQUE INDEX uq_device_ssh_license_active_device
+                ON device_ssh_license (operator, device_id)
+                WHERE state = 'active'
+        </sql>
+        <rollback>DROP INDEX uq_device_ssh_license_active_device</rollback>
+    </changeSet>
+
+    <changeSet id="011-device-ssh-license-active-domain-unique" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>Partial UNIQUE: at most one ACTIVE domain license per (operator,
+                 target_domain).</comment>
+        <sql>
+            CREATE UNIQUE INDEX uq_device_ssh_license_active_domain
+                ON device_ssh_license (operator, target_domain)
+                WHERE state = 'active'
+        </sql>
+        <rollback>DROP INDEX uq_device_ssh_license_active_domain</rollback>
+    </changeSet>
+
+    <changeSet id="011-device-ssh-license-domain-index" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>Index the per-tenant read predicate (the ADMIN license view) on
+                 device_ssh_license.</comment>
+        <sql>CREATE INDEX idx_device_ssh_license_domain ON device_ssh_license (domain)</sql>
+        <rollback>DROP INDEX idx_device_ssh_license_domain</rollback>
+    </changeSet>
+
+    <changeSet id="011-device-ssh-license-grant" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>GRANT SELECT,INSERT,UPDATE on device_ssh_license to the admin_bff role
+                 (revoke is a CAS UPDATE — the row is never DELETEd = the audit trail).</comment>
+        <sql>GRANT SELECT, INSERT, UPDATE ON device_ssh_license TO admin_bff</sql>
+        <rollback>REVOKE SELECT, INSERT, UPDATE ON device_ssh_license FROM admin_bff</rollback>
+    </changeSet>
+</databaseChangeLog>

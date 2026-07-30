@@ -1,0 +1,379 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+      DB-GENERATED UUID PRIMARY KEYS — the org-wide admin-bff migration (exemplar:
+      merged mod-bff #36, changelog 009-mod-action-db-generated-id.xml).
+
+      Decision (pinned): stop minting UUID primary keys in Java
+      (UUID.randomUUID()); let Postgres generate them via a column DEFAULT and read
+      the generated id back on insert (INSERT ... RETURNING id). The column type and
+      the entity @Id type are UNCHANGED — only the SOURCE of the id moves from the app
+      to the database.
+
+      One changelog file for the whole admin-bff migration: STAGE 1 CREATES this file
+      and migrates the 3 NATIVE uuid PK tables (the clean mod_action-style case); later
+      stages APPEND more changeSets to THIS file (and do NOT touch the master include
+      again — the single include below covers every future changeSet here).
+
+      The admin-bff slice tests already run over a REAL Postgres (Testcontainers,
+      TestDatabaseConfig + AdminBffPostgresTestSupport), so gen_random_uuid() and
+      INSERT ... RETURNING run for real against the same engine as production — no
+      test-infra change is needed.
+
+      Numbered 200 — a band ABOVE the current max (190) in db.changelog-master.xml.
+      Registered LAST in the master with a SINGLE <include> (Stage 1 only).
+
+      ── STAGE 1 native-uuid PK tables ──────────────────────────────────────────────
+        gateway_route_access (001) — uuid PK; was RouteAccessRepository.add()
+        announcement         (060) — uuid PK; was AnnouncementRepository.insert()
+        backup_history       (050) — uuid PK; was BackupRepository.insert()
+      Each adds a gen_random_uuid() DEFAULT to its uuid id column; the repository INSERT
+      omits id and RETURNING id reads the generated UUIDv4 back. The 32 unmigrated tables
+      are unaffected (these DEFAULTs are harmless to them).
+    -->
+
+    <!-- FIRST: ensure gen_random_uuid() is available. Built-in on PG13+, but install
+         pgcrypto defensively (idempotent + harmless if already present) — mirrors the
+         mod-bff exemplar's 009-pgcrypto-extension changeSet. Gated to PostgreSQL: the
+         test store IS Postgres, and the production runtime is Postgres. -->
+    <changeSet id="200-pgcrypto-extension" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>Install pgcrypto so gen_random_uuid() is available as the
+                 DB-generated-UUID column DEFAULT. IF NOT EXISTS — idempotent.</comment>
+        <sql>CREATE EXTENSION IF NOT EXISTS pgcrypto;</sql>
+    </changeSet>
+
+    <!-- gateway_route_access.id (native uuid, changelog 001): DB-generate via
+         gen_random_uuid() instead of RouteAccessRepository minting UUID.randomUUID().
+         The column stays uuid PK; the repository INSERT omits id and RETURNING id reads
+         the generated UUID back. -->
+    <changeSet id="200-gen-uuid-gateway_route_access" author="hugmesh">
+        <comment>DB-generate gateway_route_access.id (gen_random_uuid()) instead of the
+                 app minting it; INSERT omits id, RETURNING id reads it back.</comment>
+        <addDefaultValue tableName="gateway_route_access"
+                         columnName="id"
+                         columnDataType="uuid"
+                         defaultValueComputed="gen_random_uuid()"/>
+    </changeSet>
+
+    <!-- announcement.id (native uuid, changelog 060): DB-generate via gen_random_uuid()
+         instead of AnnouncementRepository minting UUID.randomUUID(). -->
+    <changeSet id="200-gen-uuid-announcement" author="hugmesh">
+        <comment>DB-generate announcement.id (gen_random_uuid()) instead of the app
+                 minting it; INSERT omits id, RETURNING id reads it back.</comment>
+        <addDefaultValue tableName="announcement"
+                         columnName="id"
+                         columnDataType="uuid"
+                         defaultValueComputed="gen_random_uuid()"/>
+    </changeSet>
+
+    <!-- backup_history.id (native uuid, changelog 050): DB-generate via gen_random_uuid()
+         instead of BackupRepository minting UUID.randomUUID(). -->
+    <changeSet id="200-gen-uuid-backup_history" author="hugmesh">
+        <comment>DB-generate backup_history.id (gen_random_uuid()) instead of the app
+                 minting it; INSERT omits id, RETURNING id reads it back.</comment>
+        <addDefaultValue tableName="backup_history"
+                         columnName="id"
+                         columnDataType="uuid"
+                         defaultValueComputed="gen_random_uuid()"/>
+    </changeSet>
+
+    <!--
+      ── STAGE 2 varchar(36) PK tables ───────────────────────────────────────────────
+      Sixteen tables whose {@code id} is a {@code varchar(36)} string PK that was minted in
+      Java as {@code UUID.randomUUID().toString()}. For a varchar id the DB default casts the
+      native uuid to text — {@code (gen_random_uuid())::text} — which yields the lowercase
+      36-char hyphenated form, BYTE-IDENTICAL to {@code UUID.randomUUID().toString()}. The
+      column type + the entity @Id type stay {@code String}; only the id SOURCE moves to the
+      DB. Each repository INSERT omits {@code id} and {@code RETURNING id} reads the generated
+      string back (the deterministic, mod-bff-proven path). Idempotent inserts keep their
+      dedup signal UNCHANGED from main: notification_outbox.insertIfAbsent + notification_delivery.record
+      use a PLAIN {@code INSERT ... RETURNING id} (NO {@code ON CONFLICT}) and dedup in Java by
+      catching the UNIQUE-violation ({@code .thenReturn(1L).onErrorResume(isDuplicate, -> 0L)}),
+      exactly as the pre-migration code did — so a redelivered event still creates no second row
+      and is reported as deduped (the fresh-vs-deduped 1/0 the facade maps is preserved).
+    -->
+
+    <changeSet id="200-gen-uuid-access_suspension" author="hugmesh">
+        <comment>DB-generate access_suspension.id ((gen_random_uuid())::text) instead of the
+                 app minting it; INSERT omits id, RETURNING id reads it back.</comment>
+        <addDefaultValue tableName="access_suspension" columnName="id"
+                         columnDataType="varchar(36)"
+                         defaultValueComputed="(gen_random_uuid())::text"/>
+    </changeSet>
+
+    <changeSet id="200-gen-uuid-domain_lock" author="hugmesh">
+        <comment>DB-generate domain_lock.id ((gen_random_uuid())::text) instead of the
+                 app minting it; INSERT omits id, RETURNING id reads it back.</comment>
+        <addDefaultValue tableName="domain_lock" columnName="id"
+                         columnDataType="varchar(36)"
+                         defaultValueComputed="(gen_random_uuid())::text"/>
+    </changeSet>
+
+    <changeSet id="200-gen-uuid-device_registry" author="hugmesh">
+        <comment>DB-generate device_registry.id ((gen_random_uuid())::text) instead of the
+                 app minting it; INSERT omits id, RETURNING id reads it back.</comment>
+        <addDefaultValue tableName="device_registry" columnName="id"
+                         columnDataType="varchar(36)"
+                         defaultValueComputed="(gen_random_uuid())::text"/>
+    </changeSet>
+
+    <changeSet id="200-gen-uuid-device_ssh_license" author="hugmesh">
+        <comment>DB-generate device_ssh_license.id ((gen_random_uuid())::text) instead of the
+                 app minting it; INSERT omits id, RETURNING id reads it back.</comment>
+        <addDefaultValue tableName="device_ssh_license" columnName="id"
+                         columnDataType="varchar(36)"
+                         defaultValueComputed="(gen_random_uuid())::text"/>
+    </changeSet>
+
+    <changeSet id="200-gen-uuid-domain_registry" author="hugmesh">
+        <comment>DB-generate domain_registry.id ((gen_random_uuid())::text) instead of the
+                 app minting it; INSERT omits id, RETURNING id reads it back.</comment>
+        <addDefaultValue tableName="domain_registry" columnName="id"
+                         columnDataType="varchar(36)"
+                         defaultValueComputed="(gen_random_uuid())::text"/>
+    </changeSet>
+
+    <changeSet id="200-gen-uuid-notification_outbox" author="hugmesh">
+        <comment>DB-generate notification_outbox.id ((gen_random_uuid())::text). INSERT omits
+                 id; insertIfAbsent does a PLAIN INSERT ... RETURNING id and dedups in Java by
+                 catching the natural-key UNIQUE violation (no ON CONFLICT) — unchanged from main.</comment>
+        <addDefaultValue tableName="notification_outbox" columnName="id"
+                         columnDataType="varchar(36)"
+                         defaultValueComputed="(gen_random_uuid())::text"/>
+    </changeSet>
+
+    <changeSet id="200-gen-uuid-notification_delivery" author="hugmesh">
+        <comment>DB-generate notification_delivery.id ((gen_random_uuid())::text). INSERT omits
+                 id; record() does a PLAIN INSERT ... RETURNING id and dedups in Java by catching
+                 the UNIQUE(outbox_id,channel) violation (no ON CONFLICT) — unchanged from main.</comment>
+        <addDefaultValue tableName="notification_delivery" columnName="id"
+                         columnDataType="varchar(36)"
+                         defaultValueComputed="(gen_random_uuid())::text"/>
+    </changeSet>
+
+    <changeSet id="200-gen-uuid-test_run" author="hugmesh">
+        <comment>DB-generate test_run.id ((gen_random_uuid())::text) instead of the
+                 app minting it; INSERT omits id, RETURNING id reads it back.</comment>
+        <addDefaultValue tableName="test_run" columnName="id"
+                         columnDataType="varchar(36)"
+                         defaultValueComputed="(gen_random_uuid())::text"/>
+    </changeSet>
+
+    <changeSet id="200-gen-uuid-test_run_result" author="hugmesh">
+        <comment>DB-generate test_run_result.id ((gen_random_uuid())::text). The upsert's
+                 INSERT branch omits id, RETURNING id reads it back.</comment>
+        <addDefaultValue tableName="test_run_result" columnName="id"
+                         columnDataType="varchar(36)"
+                         defaultValueComputed="(gen_random_uuid())::text"/>
+    </changeSet>
+
+    <changeSet id="200-gen-uuid-vpn_config" author="hugmesh">
+        <comment>DB-generate vpn_config.id ((gen_random_uuid())::text) instead of the
+                 app minting it; INSERT omits id, RETURNING id reads it back.</comment>
+        <addDefaultValue tableName="vpn_config" columnName="id"
+                         columnDataType="varchar(36)"
+                         defaultValueComputed="(gen_random_uuid())::text"/>
+    </changeSet>
+
+    <changeSet id="200-gen-uuid-vpn_node_assignment" author="hugmesh">
+        <comment>DB-generate vpn_node_assignment.id ((gen_random_uuid())::text) instead of the
+                 app minting it; INSERT omits id, RETURNING id reads it back.</comment>
+        <addDefaultValue tableName="vpn_node_assignment" columnName="id"
+                         columnDataType="varchar(36)"
+                         defaultValueComputed="(gen_random_uuid())::text"/>
+    </changeSet>
+
+    <changeSet id="200-gen-uuid-node_storage_pool" author="hugmesh">
+        <comment>DB-generate node_storage_pool.id ((gen_random_uuid())::text) instead of the
+                 app minting it; INSERT omits id, RETURNING id reads it back.</comment>
+        <addDefaultValue tableName="node_storage_pool" columnName="id"
+                         columnDataType="varchar(36)"
+                         defaultValueComputed="(gen_random_uuid())::text"/>
+    </changeSet>
+
+    <changeSet id="200-gen-uuid-storage_service_assignment" author="hugmesh">
+        <comment>DB-generate storage_service_assignment.id ((gen_random_uuid())::text) instead
+                 of the app minting it; INSERT omits id, RETURNING id reads it back.</comment>
+        <addDefaultValue tableName="storage_service_assignment" columnName="id"
+                         columnDataType="varchar(36)"
+                         defaultValueComputed="(gen_random_uuid())::text"/>
+    </changeSet>
+
+    <changeSet id="200-gen-uuid-game_server_catalog" author="hugmesh">
+        <comment>DB-generate game_server_catalog.id ((gen_random_uuid())::text) instead of the
+                 app minting it; INSERT omits id, RETURNING id reads it back.</comment>
+        <addDefaultValue tableName="game_server_catalog" columnName="id"
+                         columnDataType="varchar(36)"
+                         defaultValueComputed="(gen_random_uuid())::text"/>
+    </changeSet>
+
+    <changeSet id="200-gen-uuid-game_server_domain_offer" author="hugmesh">
+        <comment>DB-generate game_server_domain_offer.id ((gen_random_uuid())::text) instead of
+                 the app minting it; INSERT omits id, RETURNING id reads it back.</comment>
+        <addDefaultValue tableName="game_server_domain_offer" columnName="id"
+                         columnDataType="varchar(36)"
+                         defaultValueComputed="(gen_random_uuid())::text"/>
+    </changeSet>
+
+    <changeSet id="200-gen-uuid-game_instance" author="hugmesh">
+        <comment>DB-generate game_instance.id ((gen_random_uuid())::text) instead of the
+                 app minting it; INSERT omits id, RETURNING id reads it back.</comment>
+        <addDefaultValue tableName="game_instance" columnName="id"
+                         columnDataType="varchar(36)"
+                         defaultValueComputed="(gen_random_uuid())::text"/>
+    </changeSet>
+
+    <!--
+      ── STAGE 3 (FINAL) varchar(36) PK tables ───────────────────────────────────────
+      The remaining sixteen tables whose {@code id} is a {@code varchar(36)} string PK that
+      was minted in Java as {@code UUID.randomUUID().toString()}. Same recipe as Stage 2: the
+      DB default casts the native uuid to text — {@code (gen_random_uuid())::text} — yielding
+      the lowercase 36-char hyphenated form, BYTE-IDENTICAL to {@code
+      UUID.randomUUID().toString()}. The column type + the entity @Id type stay {@code String};
+      only the id SOURCE moves to the DB. Each repository INSERT omits {@code id} and {@code
+      RETURNING id} reads the generated string back (the deterministic, mod-bff-proven path).
+      Upsert insert-branches (workload_console_config) RETURN the id on the fresh-row path; the
+      update-branch is unchanged. With Stage 1 (3 native) + Stage 2 (16 varchar) this completes
+      all 35 admin-bff PK tables.
+    -->
+
+    <changeSet id="200-gen-uuid-service_curation" author="hugmesh">
+        <comment>DB-generate service_curation.id ((gen_random_uuid())::text) instead of the
+                 app minting it; INSERT omits id, RETURNING id reads it back.</comment>
+        <addDefaultValue tableName="service_curation" columnName="id"
+                         columnDataType="varchar(36)"
+                         defaultValueComputed="(gen_random_uuid())::text"/>
+    </changeSet>
+
+    <changeSet id="200-gen-uuid-app_profile" author="hugmesh">
+        <comment>DB-generate app_profile.id ((gen_random_uuid())::text) instead of the
+                 app minting it; INSERT omits id, RETURNING id reads it back.</comment>
+        <addDefaultValue tableName="app_profile" columnName="id"
+                         columnDataType="varchar(36)"
+                         defaultValueComputed="(gen_random_uuid())::text"/>
+    </changeSet>
+
+    <changeSet id="200-gen-uuid-service_deployment" author="hugmesh">
+        <comment>DB-generate service_deployment.id ((gen_random_uuid())::text) instead of the
+                 app minting it; INSERT omits id, RETURNING id reads it back.</comment>
+        <addDefaultValue tableName="service_deployment" columnName="id"
+                         columnDataType="varchar(36)"
+                         defaultValueComputed="(gen_random_uuid())::text"/>
+    </changeSet>
+
+    <changeSet id="200-gen-uuid-workload_console_grant" author="hugmesh">
+        <comment>DB-generate workload_console_grant.id ((gen_random_uuid())::text) instead of
+                 the app minting it; INSERT omits id, RETURNING id reads it back.</comment>
+        <addDefaultValue tableName="workload_console_grant" columnName="id"
+                         columnDataType="varchar(36)"
+                         defaultValueComputed="(gen_random_uuid())::text"/>
+    </changeSet>
+
+    <changeSet id="200-gen-uuid-workload_console_intent" author="hugmesh">
+        <comment>DB-generate workload_console_intent.id ((gen_random_uuid())::text) instead of
+                 the app minting it; INSERT omits id, RETURNING id reads it back.</comment>
+        <addDefaultValue tableName="workload_console_intent" columnName="id"
+                         columnDataType="varchar(36)"
+                         defaultValueComputed="(gen_random_uuid())::text"/>
+    </changeSet>
+
+    <changeSet id="200-gen-uuid-workload_console_config" author="hugmesh">
+        <comment>DB-generate workload_console_config.id ((gen_random_uuid())::text). The upsert's
+                 INSERT branch omits id, RETURNING id reads it back; the UPDATE branch is
+                 unchanged.</comment>
+        <addDefaultValue tableName="workload_console_config" columnName="id"
+                         columnDataType="varchar(36)"
+                         defaultValueComputed="(gen_random_uuid())::text"/>
+    </changeSet>
+
+    <changeSet id="200-gen-uuid-device_enrollment" author="hugmesh">
+        <comment>DB-generate device_enrollment.id ((gen_random_uuid())::text). The upsert's
+                 first-report INSERT branch omits id, RETURNING id reads it back; the re-report
+                 bump UPDATE is unchanged.</comment>
+        <addDefaultValue tableName="device_enrollment" columnName="id"
+                         columnDataType="varchar(36)"
+                         defaultValueComputed="(gen_random_uuid())::text"/>
+    </changeSet>
+
+    <changeSet id="200-gen-uuid-desktop_app_catalog" author="hugmesh">
+        <comment>DB-generate desktop_app_catalog.id ((gen_random_uuid())::text) instead of the
+                 app minting it; INSERT omits id, RETURNING id reads it back.</comment>
+        <addDefaultValue tableName="desktop_app_catalog" columnName="id"
+                         columnDataType="varchar(36)"
+                         defaultValueComputed="(gen_random_uuid())::text"/>
+    </changeSet>
+
+    <changeSet id="200-gen-uuid-desktop_install_request" author="hugmesh">
+        <comment>DB-generate desktop_install_request.id ((gen_random_uuid())::text) instead of
+                 the app minting it; INSERT omits id, RETURNING id reads it back.</comment>
+        <addDefaultValue tableName="desktop_install_request" columnName="id"
+                         columnDataType="varchar(36)"
+                         defaultValueComputed="(gen_random_uuid())::text"/>
+    </changeSet>
+
+    <changeSet id="200-gen-uuid-desktop_sudo_grant" author="hugmesh">
+        <comment>DB-generate desktop_sudo_grant.id ((gen_random_uuid())::text) instead of the
+                 app minting it; INSERT omits id, RETURNING id reads it back.</comment>
+        <addDefaultValue tableName="desktop_sudo_grant" columnName="id"
+                         columnDataType="varchar(36)"
+                         defaultValueComputed="(gen_random_uuid())::text"/>
+    </changeSet>
+
+    <changeSet id="200-gen-uuid-backup_destination" author="hugmesh">
+        <comment>DB-generate backup_destination.id ((gen_random_uuid())::text). The upsert's
+                 INSERT branch omits id, RETURNING id reads it back; the per-domain UPDATE branch
+                 is unchanged.</comment>
+        <addDefaultValue tableName="backup_destination" columnName="id"
+                         columnDataType="varchar(36)"
+                         defaultValueComputed="(gen_random_uuid())::text"/>
+    </changeSet>
+
+    <changeSet id="200-gen-uuid-backup_set" author="hugmesh">
+        <comment>DB-generate backup_set.id ((gen_random_uuid())::text) instead of the
+                 app minting it; INSERT omits id, RETURNING id reads it back.</comment>
+        <addDefaultValue tableName="backup_set" columnName="id"
+                         columnDataType="varchar(36)"
+                         defaultValueComputed="(gen_random_uuid())::text"/>
+    </changeSet>
+
+    <changeSet id="200-gen-uuid-backup_artifact" author="hugmesh">
+        <comment>DB-generate backup_artifact.id ((gen_random_uuid())::text) instead of the
+                 app minting it; INSERT omits id, RETURNING id reads it back.</comment>
+        <addDefaultValue tableName="backup_artifact" columnName="id"
+                         columnDataType="varchar(36)"
+                         defaultValueComputed="(gen_random_uuid())::text"/>
+    </changeSet>
+
+    <changeSet id="200-gen-uuid-device_ssh_dial" author="hugmesh">
+        <comment>DB-generate device_ssh_dial.id ((gen_random_uuid())::text) instead of the
+                 app minting it; INSERT omits id, RETURNING id reads it back.</comment>
+        <addDefaultValue tableName="device_ssh_dial" columnName="id"
+                         columnDataType="varchar(36)"
+                         defaultValueComputed="(gen_random_uuid())::text"/>
+    </changeSet>
+
+    <changeSet id="200-gen-uuid-image_build" author="hugmesh">
+        <comment>DB-generate image_build.id ((gen_random_uuid())::text) instead of the
+                 app minting it; INSERT omits id, RETURNING id reads it back.</comment>
+        <addDefaultValue tableName="image_build" columnName="id"
+                         columnDataType="varchar(36)"
+                         defaultValueComputed="(gen_random_uuid())::text"/>
+    </changeSet>
+
+    <changeSet id="200-gen-uuid-admin_ssh_issued_key" author="hugmesh">
+        <comment>DB-generate admin_ssh_issued_key.id ((gen_random_uuid())::text) instead of the
+                 app minting it; INSERT omits id, RETURNING id reads it back.</comment>
+        <addDefaultValue tableName="admin_ssh_issued_key" columnName="id"
+                         columnDataType="varchar(36)"
+                         defaultValueComputed="(gen_random_uuid())::text"/>
+    </changeSet>
+
+</databaseChangeLog>

@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  CONSUMER Maven settings for resolving the PRIVATE systems.hugmesh parent
+  (and, once this service uses them, hugmesh-commons/auth-core) from the org's
+  GitLab GROUP-level Maven Package Registry. Copied from the admin-bff-api
+  exemplar — two resolution paths, no secrets in git:
+
+  1. LOCAL DEV: hugmesh-parent is `mvn install`ed into ~/.m2/repository, so a
+     plain `mvn test` resolves it locally and never consults this file's remote.
+  2. CI / Docker: auth is the GitLab CI_JOB_TOKEN (short-lived, job-scoped,
+     injected by GitLab) referenced via ${env.CI_JOB_TOKEN} — nothing committed.
+
+  Run with:   mvn -s settings.xml <goals>
+  In Docker:  the build stage copies this file and passes CI_JOB_TOKEN as a secret.
+-->
+<settings xmlns="http://maven.apache.org/SETTINGS/1.0.0"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.0.0
+                              https://maven.apache.org/xsd/settings-1.0.0.xsd">
+
+  <servers>
+    <!-- The credential for the gitlab-maven repository below. In GitLab CI the
+         CI_JOB_TOKEN env var is present; the header auth is what the GitLab Maven
+         registry expects for a CI_JOB_TOKEN. Locally (no env var) this server is
+         simply never consulted because the artifacts already live in ~/.m2. -->
+    <server>
+      <id>gitlab-maven</id>
+      <configuration>
+        <httpHeaders>
+          <property>
+            <name>Job-Token</name>
+            <value>${env.CI_JOB_TOKEN}</value>
+          </property>
+        </httpHeaders>
+      </configuration>
+    </server>
+  </servers>
+
+  <profiles>
+    <profile>
+      <id>gitlab</id>
+      <repositories>
+        <!-- Resolve hugmesh-parent (+ siblings) from the org GROUP-level
+             GitLab Maven registry. CI_API_V4_URL + the group id are GitLab CI
+             vars; the GROUP endpoint lets this project pull a sibling project's
+             package. Set GITLAB_GROUP_ID in CI. -->
+        <repository>
+          <id>gitlab-maven</id>
+          <url>${env.CI_API_V4_URL}/groups/${env.GITLAB_GROUP_ID}/-/packages/maven</url>
+          <releases><enabled>true</enabled></releases>
+          <snapshots><enabled>true</enabled></snapshots>
+        </repository>
+      </repositories>
+      <pluginRepositories>
+        <pluginRepository>
+          <id>gitlab-maven</id>
+          <url>${env.CI_API_V4_URL}/groups/${env.GITLAB_GROUP_ID}/-/packages/maven</url>
+          <releases><enabled>true</enabled></releases>
+          <snapshots><enabled>true</enabled></snapshots>
+        </pluginRepository>
+      </pluginRepositories>
+    </profile>
+  </profiles>
+
+  <activeProfiles>
+    <activeProfile>gitlab</activeProfile>
+  </activeProfiles>
+</settings>

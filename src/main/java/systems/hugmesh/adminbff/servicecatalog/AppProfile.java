@@ -1,0 +1,28 @@
+package systems.hugmesh.adminbff.servicecatalog;
+
+import java.time.Instant;
+
+/**
+ * A single {@code app_profile} row — a reusable, SUPERADMIN-owned deploy TEMPLATE for the
+ * App-Store (schema in Liquibase {@code db/changelog/101-app-profile.xml}).
+ *
+ * <p>A profile is a named bundle of resource/role/cert/exposure DEFAULTS (carried opaque
+ * in {@link #profileJson()}) a {@link ServiceDeployment} can reference, so a superadmin
+ * curates a small set of templates and stamps them onto many deployments.
+ *
+ * <p><b>GLOBAL, not per-domain.</b> Unlike {@link ServiceCuration} and
+ * {@link ServiceDeployment}, app_profile carries NO per-row tenant discriminator: the
+ * templates are a shared, superadmin-owned library reused ACROSS brands. It is therefore
+ * inherently CROSS-DOMAIN and only ever read/written by the cross-domain SUPERADMIN role.
+ * {@link #name()} is the UNIQUE natural key. {@link #profileJson()} is opaque template
+ * data in PR1 — the app does not parse it; the later effector resolves it.
+ */
+public record AppProfile(
+        String id,
+        String name,
+        String profileJson,
+        /** The SUPERADMIN subject ({@code jwt.getSubject()}) who created the template. */
+        String createdBySubject,
+        Instant createdAt,
+        Instant updatedAt) {
+}

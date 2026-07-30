@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+      210 — DB-GENERATED UUID PRIMARY KEYS for the four auth-core MFA tables.
+
+      Companion to auth-core 2.3.0 (PR #6), which drops UUID.randomUUID() mints
+      from MfaEnrollmentService and WebAuthnChallengeStore and replaces every INSERT
+      with a non-@Modifying "INSERT ... RETURNING id" query. This changeset adds the
+      matching (gen_random_uuid())::text column DEFAULT so Postgres fills the id column
+      on any INSERT that omits it.
+
+      Tables (all varchar(36) id PK, created in changesets 151-152):
+        mfa_factor          — TOTP/WebAuthn factor rows (151)
+        mfa_recovery_code   — salted-HMAC recovery code rows (151)
+        webauthn_credential — registered WebAuthn credentials (151)
+        webauthn_challenge  — durable pending WebAuthn challenge (152)
+
+      The column type (varchar(36)) and the entity @Id type (String) are UNCHANGED —
+      only the id SOURCE moves from the app to the database. The cast
+      (gen_random_uuid())::text yields the lowercase 36-char hyphenated form,
+      BYTE-IDENTICAL to UUID.randomUUID().toString().
+
+      pgcrypto is already installed by the 200 migration (changeSet
+      200-pgcrypto-extension) which runs before this band. The preCondition here is
+      still present as defence-in-depth (idempotent; onFail=MARK_RAN).
+
+      SHIPS DARK: every /bff/mfa/* endpoint 503s while app.casdoor.mfa.enabled=false.
+      No behaviour changes — only the id source moves to the DB.
+
+      Band 210: the NEXT FREE band above the 200-db-generated-uuid-pks include.
+      Appended LAST — all four tables already exist by here.
+    -->
+
+    <!-- Ensure pgcrypto is available (defence-in-depth; 200 already installs it). -->
+    <changeSet id="210-pgcrypto-extension" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>Ensure pgcrypto is installed so gen_random_uuid() is available as the
+                 MFA-table id DEFAULT. Idempotent — 200 already installs it.</comment>
+        <sql>CREATE EXTENSION IF NOT EXISTS pgcrypto;</sql>
+    </changeSet>
+
+    <!-- mfa_factor.id (varchar(36), changeset 151): DB-generate via
+         (gen_random_uuid())::text instead of MfaEnrollmentService minting
+         UUID.randomUUID().toString(). -->
+    <changeSet id="210-gen-uuid-mfa_factor" author="hugmesh">
+        <comment>DB-generate mfa_factor.id ((gen_random_uuid())::text) instead of the
+                 app minting it; INSERT omits id, RETURNING id reads it back.</comment>
+        <addDefaultValue tableName="mfa_factor"
+                         columnName="id"
+                         columnDataType="varchar(36)"
+                         defaultValueComputed="(gen_random_uuid())::text"/>
+    </changeSet>
+
+    <!-- mfa_recovery_code.id (varchar(36), changeset 151): DB-generate via
+         (gen_random_uuid())::text instead of MfaEnrollmentService minting
+         UUID.randomUUID().toString(). -->
+    <changeSet id="210-gen-uuid-mfa_recovery_code" author="hugmesh">
+        <comment>DB-generate mfa_recovery_code.id ((gen_random_uuid())::text) instead of
+                 the app minting it; INSERT omits id, RETURNING id reads it back.</comment>
+        <addDefaultValue tableName="mfa_recovery_code"
+                         columnName="id"
+                         columnDataType="varchar(36)"
+                         defaultValueComputed="(gen_random_uuid())::text"/>
+    </changeSet>
+
+    <!-- webauthn_credential.id (varchar(36), changeset 151): DB-generate via
+         (gen_random_uuid())::text instead of MfaEnrollmentService minting
+         UUID.randomUUID().toString(). -->
+    <changeSet id="210-gen-uuid-webauthn_credential" author="hugmesh">
+        <comment>DB-generate webauthn_credential.id ((gen_random_uuid())::text) instead of
+                 the app minting it; INSERT omits id, RETURNING id reads it back.</comment>
+        <addDefaultValue tableName="webauthn_credential"
+                         columnName="id"
+                         columnDataType="varchar(36)"
+                         defaultValueComputed="(gen_random_uuid())::text"/>
+    </changeSet>
+
+    <!-- webauthn_challenge.id (varchar(36), changeset 152): DB-generate via
+         (gen_random_uuid())::text instead of WebAuthnChallengeStore minting
+         UUID.randomUUID().toString(). -->
+    <changeSet id="210-gen-uuid-webauthn_challenge" author="hugmesh">
+        <comment>DB-generate webauthn_challenge.id ((gen_random_uuid())::text) instead of
+                 the app minting it; INSERT omits id, RETURNING id reads it back.</comment>
+        <addDefaultValue tableName="webauthn_challenge"
+                         columnName="id"
+                         columnDataType="varchar(36)"
+                         defaultValueComputed="(gen_random_uuid())::text"/>
+    </changeSet>
+
+</databaseChangeLog>

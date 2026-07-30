@@ -1,0 +1,26 @@
+# The cloud-backups effector ServiceAccount — the IDENTITY the admin-bff pod runs
+# as (deployment.yaml: serviceAccountName: backups-effector) so the cloudbackup
+# VeleroBackupEffector's fabric8 in-cluster client can apply velero.io Backup/
+# Restore CRs.
+#
+# WHY IT LIVES HERE (not in manifests/velero): the admin-bff Deployment references
+# this SA by name and is synced by the AUTOMATED admin-bff-api Application, while
+# the Velero install + its Role/RoleBinding ship behind a MANUAL (superadmin)
+# sync. The SA must EXIST whenever the admin-bff pod schedules — so it is created
+# with the admin-bff (always present). The least-privilege Role + RoleBinding in
+# the `velero` namespace (manifests/velero/rbac.yaml) GRANT this SA its CR-apply
+# verbs; until that manual-sync RBAC is applied the SA has NO permissions, so the
+# SA existing here grants nothing on its own (defence-in-depth: identity without
+# authority until backups are deliberately enabled).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: backups-effector
+  namespace: hugmesh-backend
+  labels:
+    app.kubernetes.io/name: cloud-backups
+    app.kubernetes.io/component: effector
+    app.kubernetes.io/part-of: hugmesh.systems
+# The admin-bff Deployment mounts this SA's token via automountServiceAccountToken
+# on the pod spec; no other pod in the namespace uses this SA.
+automountServiceAccountToken: false

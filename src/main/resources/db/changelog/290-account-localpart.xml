@@ -1,0 +1,136 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+      290 — account.localpart: the account-takeover-by-collision fix.
+
+      BUG: two DIFFERENT (provider, handle) accounts can derive the SAME homeserver
+      (Matrix/Mastodon) localpart via ServiceTokenBroker.matrixUser (this jar) /
+      ServiceTokenBroker.localpart (user-bff-api's own copy) — both just
+      handle.split("@")[0].toLowerCase() then strip non [a-z0-9._=/-]. Changeset
+      181-casdoor-provider.xml relaxed ck_account_provider to allow 'google', 'discord'
+      AND 'casdoor' to coexist, so e.g. google:alice@x.com and casdoor:alice@y.com are
+      BOTH legitimate rows that fold to the same localpart 'alice'. Because both BFFs'
+      ServiceTokenBroker register-or-logins against the homeserver with ONE SHARED
+      service password, whichever account is PROVISIONED SECOND silently password-logs
+      into the FIRST account's already-registered homeserver identity — a real
+      account-takeover-by-collision (not hypothetical; the account table has always
+      permitted the colliding rows, only nothing has ever checked for the collision).
+
+      FIX (provision-time uniqueness, not provider-namespacing — see the fuller
+      rationale in AuthController / InternalAccountController / AccountLocalpartService):
+      persist the RESOLVED, collision-checked localpart on the account row itself, at
+      the ONE place every account is created (all 3 creation call sites are in THIS
+      repo/THIS DB — registerGoogle, registerDiscord, InternalAccountController#ensureAccount),
+      and have every homeserver-mint call site (AuthController#provision here;
+      MatrixProxyController/MastodonProxyController in user-bff-api, over the internal
+      account-read API) READ that persisted value instead of re-deriving it from
+      whatever identity string happens to be at hand (Account.handle(), a Casdoor JWT
+      claim, ...) at mint time.
+
+      DELIBERATELY NULLABLE (no NOT NULL here): AccountStore.ensureAccount (auth-core,
+      a versioned EXTERNAL dependency — see the pom.xml dependency comment; not
+      modified by this changeset, to avoid a version-bump chain through auth-core's
+      other consumer) INSERTs a fresh account row via Spring Data R2DBC's AccountRow
+      entity, whose generated INSERT column list does NOT include this new column (the
+      entity has no localpart field). A NOT NULL here without a column DEFAULT would
+      therefore fail EVERY account creation outright; a DEFAULT would collide with the
+      UNIQUE constraint the second any two accounts were created. Postgres UNIQUE
+      already permits any number of NULL rows (NULLs are pairwise distinct for
+      uniqueness purposes), so nullable + UNIQUE is the correct combination: the
+      window between "row inserted" and "localpart resolved+persisted" is a few
+      milliseconds within the SAME request (AccountLocalpartService.resolveAndPersist
+      runs immediately after store.ensureAccount(...) in registerGoogle/
+      registerDiscord/InternalAccountController#ensureAccount, before the HTTP
+      response is returned), and AuthController#provision() cannot be reached for an
+      account until its SEPARATE registration-complete step runs afterward — so a real
+      caller can never observe a null localpart on their own account.
+
+      BACKFILL: derives each EXISTING row's localpart with the exact same sanitizer
+      (regexp_replace/split_part mirror ServiceTokenBroker.matrixUser/localpart's
+      handle.split("@")[0].toLowerCase() + strip-non-[a-z0-9._=/-] + empty-&gt;"user"),
+      then deterministically disambiguates any collision AMONG EXISTING rows: the
+      account table carries no created_at column (only updated_at, which IS rewritten
+      on some later writes — e.g. AccountStore#ensureAccount(provider,handle,roles)
+      rewrites it on every native-login sign-in — so it is an imperfect but the ONLY
+      available proxy for "first created"; a true fix would need a new created_at
+      column, a materially bigger schema change out of scope for this fix), tie-broken
+      by id for full determinism, so the migration is reproducible. The first-created
+      keeps the bare candidate; later collisions get an id-hash suffix rather than
+      failing the migration. Verified against this checkout's own test/seed fixtures
+      before writing this changeset: no cross-provider handle collisions exist in any
+      committed fixture data (compose-stack personas are single-provider e2e-*
+      handles) — this backfill logic is exercised by DataConstraintsTest /
+      AccountStoreTest's real-Postgres slice tests regardless, so it is verified
+      against live Postgres semantics (window functions, regexp_replace, split_part),
+      not just reasoned about.
+
+      CROSS-PARTITION SUFFIX-COLLISION HARDENING (round-2 review, low-severity, fixed
+      while already in this file): the first draft suffixed later collisions with a
+      small sequential integer (candidate || '-' || rn, i.e. 'alice', 'alice-2', ...).
+      That is disambiguated WITHIN one candidate's own partition, but two DIFFERENT
+      partitions can still coincide AFTER suffixing — e.g. a group of 'alice' rows
+      contributes a literal 'alice-2', which can collide with a wholly separate
+      pre-existing row whose OWN bare candidate is genuinely 'alice-2' (its own
+      partition, rn=1) — and the UNIQUE constraint below would then fail the
+      migration. Suffixing with a short hash of the row's own globally-unique id
+      instead of a small dense integer makes that cross-partition coincidence
+      astronomically less likely (still not a mathematical impossibility — the
+      UNIQUE constraint remains the actual backstop and would fail the migration
+      loudly, never silently, on the residual chance) without requiring a recursive/
+      iterative disambiguation loop in pure SQL, which is not a "cheap" fix.
+
+      Band 290: next free above 280. Appended LAST.
+    -->
+
+    <changeSet id="290-account-localpart-add-column" author="hugmesh">
+        <comment>account.localpart — nullable (see rationale above), the resolved
+                 collision-checked homeserver localpart for this account.</comment>
+        <addColumn tableName="account">
+            <column name="localpart" type="varchar(320)"/>
+        </addColumn>
+    </changeSet>
+
+    <changeSet id="290-account-localpart-backfill" author="hugmesh">
+        <comment>Backfill localpart for pre-existing rows: same sanitizer as
+                 ServiceTokenBroker.matrixUser/localpart, collisions among EXISTING
+                 rows deterministically disambiguated by updated_at/id order, later
+                 collisions suffixed with a short hash of the row's own globally-unique
+                 id (not a small sequential integer — see the cross-partition
+                 suffix-collision hardening note above) so this never fails the
+                 migration on the common case.</comment>
+        <sql>
+            WITH candidates AS (
+                SELECT id, updated_at,
+                       CASE
+                           WHEN regexp_replace(lower(split_part(handle, '@', 1)), '[^a-z0-9._=/-]', '', 'g') = ''
+                           THEN 'user'
+                           ELSE regexp_replace(lower(split_part(handle, '@', 1)), '[^a-z0-9._=/-]', '', 'g')
+                       END AS candidate
+                FROM account
+            ), ranked AS (
+                SELECT id, candidate,
+                       ROW_NUMBER() OVER (PARTITION BY candidate ORDER BY updated_at ASC, id ASC) AS rn
+                FROM candidates
+            )
+            UPDATE account a
+            SET localpart = CASE WHEN r.rn = 1 THEN r.candidate
+                                  ELSE r.candidate || '-' || substr(md5(r.id), 1, 8) END
+            FROM ranked r
+            WHERE a.id = r.id;
+        </sql>
+    </changeSet>
+
+    <changeSet id="290-account-localpart-unique" author="hugmesh">
+        <comment>UNIQUE(localpart) — the actual enforcement boundary (NULLs exempt,
+                 see rationale above); the collision check at each creation call site
+                 is the application-level guard, this is the DB-level backstop.</comment>
+        <addUniqueConstraint tableName="account" columnNames="localpart"
+                             constraintName="uq_account_localpart"/>
+    </changeSet>
+
+</databaseChangeLog>

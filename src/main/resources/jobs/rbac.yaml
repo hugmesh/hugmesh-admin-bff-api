@@ -1,0 +1,73 @@
+# RBAC the operator must apply ONCE so the admin BFF can launch backup/restore
+# worker Jobs and the worker can read the data it backs up. Apply with:
+#   kubectl apply -f rbac.yaml
+#
+# Least privilege: the worker reads Secrets/ConfigMaps (to back them up) and the
+# BFF can create/observe/delete ONLY the backup worker Jobs + their ephemeral
+# password Secrets in the hugmesh-backend namespace. etcd snapshot/restore is
+# control-plane and intentionally NOT granted here (documented in README.md).
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: backup-worker
+  namespace: hugmesh-backend
+---
+# The worker's cluster-wide READ access to the things it snapshots.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: hugmesh-backup-worker
+rules:
+  - apiGroups: [""]
+    resources: ["secrets", "configmaps"]
+    verbs: ["get", "list"]   # backup. (Restore re-apply uses a separate, operator-gated grant.)
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: hugmesh-backup-worker
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: hugmesh-backup-worker
+subjects:
+  - kind: ServiceAccount
+    name: backup-worker
+    namespace: hugmesh-backend
+---
+# The BFF's namespaced access to manage the worker Jobs + their ephemeral
+# password Secrets. The BFF runs as the admin-bff ServiceAccount; bind this Role
+# to THAT SA (subject below — adjust the name to your admin-bff SA).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: hugmesh-backup-launcher
+  namespace: hugmesh-backend
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "get", "list", "watch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs: ["get", "list", "watch"]   # tail worker progress for the SSE stream
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create", "delete"]       # the ephemeral per-job password Secret
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: hugmesh-backup-launcher
+  namespace: hugmesh-backend
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: hugmesh-backup-launcher
+subjects:
+  - kind: ServiceAccount
+    name: admin-bff          # the BFF's ServiceAccount — adjust to your deployment
+    namespace: hugmesh-backend

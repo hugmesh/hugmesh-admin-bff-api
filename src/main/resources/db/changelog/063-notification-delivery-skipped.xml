@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+      notification_delivery 'skipped' status (Notifications PR4 part B — the reconciler).
+
+      PR2 (changeset 062) created notification_delivery with
+        CHECK (status IN ('pending', 'sent', 'failed'))
+      because nothing wrote the table yet (it shipped dark). The PR4b in-app reconciler
+      is the FIRST writer, and it needs a FOURTH terminal status — 'skipped' — to record
+      a notification user-bff ACCEPTED but SUPPRESSED (the recipient silenced that
+      category). 'skipped' is a SUCCESSFUL, terminal outcome distinct from:
+        - 'sent'   (delivered to the recipient), and
+        - 'failed' (the poison-row dead-letter: the call kept failing).
+      Keeping the three apart lets ops tell "the user chose not to receive this" from
+      "we gave up after N failures" in the delivery audit.
+
+      This widens the existing CHECK (additive — every value previously allowed is still
+      allowed). Done as a NEW changeset (063) rather than editing the immutable 062
+      changeset, so an already-applied 062 deployment migrates forward cleanly.
+      Numbered 063, one above 062 (the current max); appended LAST in the master.
+    -->
+
+    <changeSet id="063-notification-delivery-status-add-skipped" author="hugmesh">
+        <comment>Widen the notification_delivery status CHECK to add the terminal
+                 'skipped' value (user-bff accepted but the recipient suppressed the
+                 category). Additive — drops then re-creates the named CHECK with the
+                 superset of values.</comment>
+        <sql>ALTER TABLE notification_delivery DROP CONSTRAINT ck_notification_delivery_status</sql>
+        <sql>
+            ALTER TABLE notification_delivery
+                ADD CONSTRAINT ck_notification_delivery_status
+                CHECK (status IN ('pending', 'sent', 'failed', 'skipped'))
+        </sql>
+        <rollback>
+            ALTER TABLE notification_delivery DROP CONSTRAINT ck_notification_delivery_status;
+            ALTER TABLE notification_delivery
+                ADD CONSTRAINT ck_notification_delivery_status
+                CHECK (status IN ('pending', 'sent', 'failed'))
+        </rollback>
+    </changeSet>
+
+</databaseChangeLog>

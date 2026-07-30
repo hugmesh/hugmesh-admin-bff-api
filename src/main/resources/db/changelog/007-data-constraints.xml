@@ -1,0 +1,112 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+      Security hardening: API<->DB constraint parity. The BFF's API layer already
+      enforces a number of closed vocabularies / membership rules (AccountStore +
+      AdminController + AuthController); this changeset pushes them DOWN into the
+      database as CHECK / FK constraints so a non-controller write path (a future
+      code path, a manual INSERT, a migration script) cannot persist a row that
+      violates the same invariant the API rejects.
+
+      Numbered 007 to sit ABOVE the current max changeset (006) on main AND on the
+      two still-open branches (feat/reserved-usernames, feat/argocd-admin-module),
+      both of which also top out at 006 — so this never collides on merge.
+
+      Constraints added (each maps to an existing API-enforced rule):
+        - allowlist.provider  IN (google, discord)   [AccountStore.invite* only ever
+                                                       writes google|discord]
+        - account.provider    IN (google, discord)   [AccountStore.ensureAccount /
+                                                       AuthController register/login]
+        - account.roles       IN (user, "user,admin")[AccountStore writes exactly
+                                                       String.join(",", roles)]
+        - namespace_grant.namespace IN (the 5 NAMESPACES)
+                                                      [AdminController.grant gates on
+                                                       AccountStore.isValidNamespace]
+        - bff_session.account_id  FK -> account(id) ON DELETE CASCADE
+                                                      [a session is only ever minted
+                                                       for a real account row]
+        - non-blank guards on the route-access string columns
+                                                      [AdminController rejects blank
+                                                       gateway/url_pattern/role via str()]
+
+      Portable DDL: plain ALTER TABLE ... ADD CONSTRAINT runs identically on
+      PostgreSQL and on the H2 (PostgreSQL-compat, NON_KEYWORDS) test store. Each
+      constraint is its own changeSet (independent redeploy reporting) with a
+      rollback.
+    -->
+
+    <changeSet id="007-allowlist-provider-check" author="hugmesh">
+        <comment>CHECK: allowlist.provider is one of the supported OAuth providers.</comment>
+        <sql>
+            ALTER TABLE allowlist
+                ADD CONSTRAINT ck_allowlist_provider
+                CHECK (provider IN ('google', 'discord'))
+        </sql>
+        <rollback>ALTER TABLE allowlist DROP CONSTRAINT ck_allowlist_provider</rollback>
+    </changeSet>
+
+    <changeSet id="007-account-provider-check" author="hugmesh">
+        <comment>CHECK: account.provider is one of the supported OAuth providers.</comment>
+        <sql>
+            ALTER TABLE account
+                ADD CONSTRAINT ck_account_provider
+                CHECK (provider IN ('google', 'discord'))
+        </sql>
+        <rollback>ALTER TABLE account DROP CONSTRAINT ck_account_provider</rollback>
+    </changeSet>
+
+    <changeSet id="007-account-roles-check" author="hugmesh">
+        <comment>CHECK: account.roles is one of the two values the API writes.</comment>
+        <sql>
+            ALTER TABLE account
+                ADD CONSTRAINT ck_account_roles
+                CHECK (roles IN ('user', 'user,admin'))
+        </sql>
+        <rollback>ALTER TABLE account DROP CONSTRAINT ck_account_roles</rollback>
+    </changeSet>
+
+    <changeSet id="007-namespace-grant-namespace-check" author="hugmesh">
+        <comment>CHECK: namespace_grant.namespace is one of the platform namespaces
+                 (mirrors AccountStore.NAMESPACES / isValidNamespace).</comment>
+        <sql>
+            ALTER TABLE namespace_grant
+                ADD CONSTRAINT ck_namespace_grant_namespace
+                CHECK (namespace IN (
+                    'hugmesh-pki', 'hugmesh-backend', 'hugmesh-frontend',
+                    'hugmesh-games', 'observability'))
+        </sql>
+        <rollback>ALTER TABLE namespace_grant DROP CONSTRAINT ck_namespace_grant_namespace</rollback>
+    </changeSet>
+
+    <changeSet id="007-bff-session-account-fk" author="hugmesh">
+        <comment>FK: bff_session.account_id references a real account; a deleted
+                 account takes its sessions with it (a session is only ever minted
+                 for an existing account row in AccountStore.newSession).</comment>
+        <addForeignKeyConstraint
+                baseTableName="bff_session" baseColumnNames="account_id"
+                referencedTableName="account" referencedColumnNames="id"
+                constraintName="fk_bff_session_account"
+                onDelete="CASCADE"/>
+        <rollback>
+            ALTER TABLE bff_session DROP CONSTRAINT fk_bff_session_account
+        </rollback>
+    </changeSet>
+
+    <changeSet id="007-route-access-nonblank-checks" author="hugmesh">
+        <comment>CHECK: the route-access string columns the API requires non-blank
+                 (AdminController.addRouteRule rejects blank gateway/url_pattern/role).</comment>
+        <sql>
+            ALTER TABLE gateway_route_access
+                ADD CONSTRAINT ck_gra_nonblank
+                CHECK (length(trim(gateway)) > 0
+                   AND length(trim(url_pattern)) > 0
+                   AND length(trim(role)) > 0)
+        </sql>
+        <rollback>ALTER TABLE gateway_route_access DROP CONSTRAINT ck_gra_nonblank</rollback>
+    </changeSet>
+</databaseChangeLog>

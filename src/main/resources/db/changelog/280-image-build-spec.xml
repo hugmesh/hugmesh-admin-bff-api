@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+      280 — image-build spec channel (the FULL per-image IMAGE_SPEC_JSON leg, additive over
+      the legacy 6-env manifest path — worklist redesign item 1b). Adds ONE nullable column
+      to image_build (171):
+
+        - image_spec_json (text, NULLABLE) — the MATERIALIZED flat per-image ImageConfig spec
+          (ImageConfig.to_dict, SECRET_FIELDS blanked) for one worklist entry, the durable twin
+          of what the orchestrator emits as the per-build `hugmesh-image-spec-<id>` ConfigMap
+          (mounted at /image-spec/spec.json in the image-gen Job). When NULL, the build renders
+          the LEGACY single-doc Job with the 6 substituted env vars (build-image.sh BUILD_MODE=
+          legacy fallback) — so the column is a pure ADDITIVE opt-in, zero behaviour change for a
+          row that carries no spec.
+
+      SECURITY: the spec is SERVER-authoritative content that BYPASSES the renderManifest
+      yamlSafe() scalar guard (it is written into a ConfigMap block-scalar, not a substituted
+      env scalar), so it MUST pass the worklist.v1 WorklistEnvelopeValidator (fail-closed
+      spec-injection gate: no SECRET_FIELDS, valid package atoms, valid domain names) BEFORE it
+      is ever persisted here or written to a ConfigMap. Tenancy (${DOMAIN}) stays server-derived
+      from image_build.domain, NEVER from the spec's cluster_domain.
+
+      ── Band: 280 ─────────────────────────────────────────────────────────────────────────
+      171 (image_build) carries no spec column; 172 and every band up to 270 (go-live-intent)
+      are taken. 280 is the NEXT FREE band above 270. A pure addColumn — the table already
+      exists by here (171 include ran long ago), and the existing 171-image-build-grant table
+      GRANT covers the new column (Postgres table-level privileges extend to future columns), so
+      no new GRANT changeSet is needed. Appended LAST at the include site.
+    -->
+
+    <changeSet id="280-image-build-spec-json" author="hugmesh">
+        <comment>image_build.image_spec_json — the nullable MATERIALIZED per-image spec (the
+                 additive IMAGE_SPEC_JSON channel). NULL => legacy 6-env manifest path. Content
+                 is validated by the worklist.v1 envelope validator BEFORE persistence.</comment>
+        <addColumn tableName="image_build">
+            <!-- the materialized flat ImageConfig spec for this build (secrets blanked), or NULL
+                 for the legacy 6-env path. text = arbitrary-length JSON document. -->
+            <column name="image_spec_json" type="text"/>
+        </addColumn>
+    </changeSet>
+</databaseChangeLog>

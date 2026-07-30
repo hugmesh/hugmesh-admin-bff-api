@@ -1,0 +1,155 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+      go_live_intent — the SIGNED-INTENT ledger for the superadmin GO-LIVE WIZARD (the admin
+      web-UI half of go-live wizard v1; ships dark behind app.go-live.enabled=false).
+
+      ── WHAT THIS TABLE IS (and is NOT) ───────────────────────────────────────────────
+      The go-live MECHANISM lives on the HOST, not here: /etc/hugmesh/release-state
+      (internal|public, baked default internal) plus the live-override marker
+      /etc/hugmesh/go-live, converged by the host-side hugmesh-firewall-reconcile
+      (boot oneshot + 60s cron, fail-closed). admin-bff runs IN-CLUSTER and therefore can
+      NEVER write that host file — and per the pinned contract it must NEVER pretend it did.
+
+      This table is the durable RECORD OF INTENT only: one row per superadmin request to take
+      a brand public (target_state='public') or roll it back internal (target_state='internal').
+      The BFF writes status='recorded' (or 'withdrawn'); ONLY the host-side go-live agent —
+      which pulls the signed /bff/admin/go-live/export, verifies the detached Ed25519
+      signature against the key-USB-baked public half, and writes the marker itself — may
+      later acknowledge an intent as 'applied' (applied_at/applied_by are its write surface,
+      NEVER the BFF's; they ship dark exactly like the band-190 provisioning-status columns).
+
+      ── NO SECRETS, EVER ───────────────────────────────────────────────────────────────
+      provider is a CATALOG KEY (e.g. 'cloudflare-tunnel'); there is NO column for tunnel
+      tokens / DNS API tokens / DDNS tokens. Per the wizard design, secret material routes to
+      the keys-USB/Vault paths on the generator side — never this DB, never the export.
+
+      ── Portable DDL (mirrors 172-admin-ssh-issued-key.xml / 012-domain-registry.xml) ──
+      id is a varchar(36) UUID string with the org-wide DB-generated DEFAULT
+      ((gen_random_uuid())::text, the changelog-200 idiom): the INSERT omits id and reads it
+      back via RETURNING id. timestamptz -> the portable 'timestamp with time zone' generic
+      type, defaultValueComputed="now()". One changeSet per CHECK / index / GRANT (independent
+      redeploy + rollback); index + GRANT gated dbms=postgresql onFail/onError=MARK_RAN.
+      NEVER a DELETE grant — the row is the audit trail (withdraw is a CAS
+      recorded->withdrawn, never a delete).
+
+      ── generation (monotonic, drives the signed export forward) ───────────────────────
+      Every BFF mutation (record / withdraw) stamps generation = max(generation)+1 across the
+      table (the 011 device_ssh_license idiom), so the export-level generation — max over ALL
+      rows — STRICTLY ADVANCES on every change, including a withdraw whose row leaves the
+      compiled body. The host agent's strict-monotonic rollback guard therefore accepts the
+      "intent withdrawn" (absent-from-body) update instead of rejecting a stale-generation
+      replay.
+
+      ── Band: 270 ─────────────────────────────────────────────────────────────────────
+      Current max band on main is 260 (account-roles-check-relax). 270 is the NEXT FREE band.
+      Appended LAST at the include site in db.changelog-master.xml, after the 260 include.
+    -->
+
+    <changeSet id="270-go-live-intent" author="hugmesh">
+        <comment>go_live_intent — the durable SIGNED-INTENT ledger for the superadmin go-live
+                 wizard (ships dark behind app.go-live.enabled=false). The in-cluster BFF
+                 records/withdraws intent ONLY; the host-side agent verifies the signed export
+                 and writes the /etc/hugmesh/go-live marker itself (applied_at/applied_by
+                 are ITS ack surface, never the BFF's). NO secret columns — provider is a
+                 catalog key; tokens route to keys-USB/Vault, never this DB.</comment>
+        <createTable tableName="go_live_intent">
+            <column name="id" type="varchar(36)" defaultValueComputed="(gen_random_uuid())::text">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <!-- The brand's base domain the intent targets (domain_registry natural-key shaped;
+                 no FK — a single-brand device's baked CLUSTER_DOMAIN need not be registered). -->
+            <column name="cluster_domain" type="varchar(253)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- 'public' (go live) | 'internal' (roll back). Mirrors the host RELEASE_STATE
+                 vocabulary exactly. -->
+            <column name="target_state" type="varchar(16)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- Wizard step-1 exposure model: 'tunnel' | 'public_dns' | 'funnel'. NULL for a
+                 roll-back-internal intent (no edge to provision). -->
+            <column name="exposure_model" type="varchar(32)"/>
+            <!-- The provider CATALOG KEY (GoLiveProviderCatalog), e.g. 'cloudflare-tunnel'.
+                 NEVER a token/credential. NULL for a roll-back intent. -->
+            <column name="provider" type="varchar(64)"/>
+            <!-- 'recorded' (BFF write) -> 'withdrawn' (BFF CAS) | 'applied' (HOST AGENT ack
+                 ONLY — the BFF never writes 'applied'; ships dark like band 190). -->
+            <column name="status" type="varchar(16)" defaultValue="recorded">
+                <constraints nullable="false"/>
+            </column>
+            <!-- Free-text operator note rendered in the wizard history. Non-secret. -->
+            <column name="note" type="varchar(512)"/>
+            <column name="requested_by_subject" type="varchar(255)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="created_at" type="timestamp with time zone" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+            <column name="updated_at" type="timestamp with time zone" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+            <!-- Monotonic table-wide generation stamped max+1 on every BFF mutation, so the
+                 signed export strictly advances (the 011 idiom; see the file header). -->
+            <column name="generation" type="bigint" defaultValueNumeric="0">
+                <constraints nullable="false"/>
+            </column>
+            <!-- HOST-AGENT ack surface (ships dark; the BFF NEVER writes these). -->
+            <column name="applied_at" type="timestamp with time zone"/>
+            <column name="applied_by" type="varchar(255)"/>
+        </createTable>
+        <rollback>
+            <dropTable tableName="go_live_intent"/>
+        </rollback>
+    </changeSet>
+
+    <changeSet id="270-go-live-intent-target-state-check" author="hugmesh">
+        <comment>API&lt;-&gt;DB parity: target_state pinned to the host RELEASE_STATE vocabulary.</comment>
+        <sql>ALTER TABLE go_live_intent ADD CONSTRAINT ck_go_live_intent_target_state
+             CHECK (target_state IN ('public', 'internal'))</sql>
+        <rollback>ALTER TABLE go_live_intent DROP CONSTRAINT ck_go_live_intent_target_state</rollback>
+    </changeSet>
+
+    <changeSet id="270-go-live-intent-status-check" author="hugmesh">
+        <comment>status pinned to recorded/withdrawn/applied ('applied' is the host agent's
+                 ack, never the BFF's write).</comment>
+        <sql>ALTER TABLE go_live_intent ADD CONSTRAINT ck_go_live_intent_status
+             CHECK (status IN ('recorded', 'withdrawn', 'applied'))</sql>
+        <rollback>ALTER TABLE go_live_intent DROP CONSTRAINT ck_go_live_intent_status</rollback>
+    </changeSet>
+
+    <changeSet id="270-go-live-intent-exposure-model-check" author="hugmesh">
+        <comment>exposure_model pinned to the wizard's v1 models (NULL allowed — a roll-back
+                 intent has no edge to provision).</comment>
+        <sql>ALTER TABLE go_live_intent ADD CONSTRAINT ck_go_live_intent_exposure_model
+             CHECK (exposure_model IS NULL OR exposure_model IN ('tunnel', 'public_dns', 'funnel'))</sql>
+        <rollback>ALTER TABLE go_live_intent DROP CONSTRAINT ck_go_live_intent_exposure_model</rollback>
+    </changeSet>
+
+    <!-- ═══════════════════════ indexes + GRANT (PG only) ═══════════════════════ -->
+
+    <changeSet id="270-go-live-intent-idx-status" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>Read-path index for the export compile (status='recorded') + wizard history.</comment>
+        <sql>CREATE INDEX idx_go_live_intent_status ON go_live_intent (status, cluster_domain)</sql>
+        <rollback>DROP INDEX idx_go_live_intent_status</rollback>
+    </changeSet>
+
+    <changeSet id="270-go-live-intent-grant" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>GRANT SELECT,INSERT,UPDATE on go_live_intent to admin_bff. NEVER DELETE —
+                 withdraw is a CAS recorded-&gt;withdrawn (audit rows are never deleted).</comment>
+        <sql>GRANT SELECT, INSERT, UPDATE ON go_live_intent TO admin_bff</sql>
+        <rollback>REVOKE SELECT, INSERT, UPDATE ON go_live_intent FROM admin_bff</rollback>
+    </changeSet>
+
+</databaseChangeLog>

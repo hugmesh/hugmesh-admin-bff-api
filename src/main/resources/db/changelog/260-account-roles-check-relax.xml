@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+      260 — drop the account.roles CHECK constraint (changeset 007-account-roles-check).
+
+      That constraint pinned account.roles to EXACTLY 'user' or 'user,admin' — an
+      "API<->DB parity" check documenting the two literal values AccountStore.ensureAccount
+      ever wrote at the time (the google-admin-emails-only heuristic). It was never a
+      security boundary; it was a snapshot of the API's own then-current write set.
+
+      AccountStore.ensureAccount(provider, handle, roles) now SYNCS the native-login
+      account's roles from the Casdoor id_token's `roles` claim (normalized to lowercase,
+      unprefixed strings — see InternalAccountController.rolesFromIdToken) on every login,
+      so a real principal can carry any of the platform's role vocabulary (mod, superadmin,
+      matrix, mastodon, forum, wiki, owncast, tube, games, and the *_domainlocked /
+      *_external_client variants, in any combination) — not just user/admin. The fixed
+      2-value CHECK would reject every one of those with a hard DB error.
+
+      Deliberately DROPPED rather than replaced with a longer enum: the role vocabulary is
+      still growing (session.service.ts's hasRole() already matches arbitrary per-service
+      role strings case-insensitively) and a CHECK enumerating every valid CSV combination
+      is both unmaintainable (every new ROLE_* addition would need a migration here too)
+      and unnecessary — this column is never itself an authorization DECISION boundary
+      (that's the gateway's Casdoor-JWT-based RBAC, wholly independent of this cached
+      session-display field); it only drives which nav items the shell shows. A malformed
+      value here degrades to a nav item not rendering, not a privilege change.
+    -->
+    <changeSet id="260-account-roles-check-drop" author="hugmesh">
+        <comment>DROP the stale 2-value account.roles CHECK — the native-login role sync
+                 now legitimately writes the full platform role vocabulary here.</comment>
+        <sql>ALTER TABLE account DROP CONSTRAINT ck_account_roles</sql>
+        <rollback>
+            <sql>
+                ALTER TABLE account
+                    ADD CONSTRAINT ck_account_roles
+                    CHECK (roles IN ('user', 'user,admin'))
+            </sql>
+        </rollback>
+    </changeSet>
+</databaseChangeLog>

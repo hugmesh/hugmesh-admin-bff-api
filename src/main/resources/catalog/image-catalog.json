@@ -1,0 +1,510 @@
+{
+  "platform_labels": {
+    "frite": "Libre AML-S805X La Frite family (arm64)",
+    "jetson": "NVIDIA Jetson Orin (arm64) \u2014 EXPERIMENTAL: hardware validation pending",
+    "orangepi5": "Orange Pi 5 / 5 Plus (Rockchip RK3588/RK3588S, arm64) \u2014 EXPERIMENTAL: hardware validation pending",
+    "orangepizero2": "Orange Pi Zero 2 (Allwinner H616, arm64) \u2014 HEADLESS APPLIANCE, no desktop mode ever \u2014 EXPERIMENTAL: hardware validation pending",
+    "rpi5": "Raspberry Pi 5 / Pi 4 / Pi 3 (arm64; --board rpi5 [DEFAULT] | rpi4 | rpi3 [desktop-only])",
+    "x86": "x86_64 host"
+  },
+  "role_class": {
+    "desktop": [
+      "laptop",
+      "chromebook",
+      "desktop",
+      "standalone-thin",
+      "standalone-thick",
+      "standalone-unaffiliated",
+      "rpi5-desktop",
+      "jetson-desktop",
+      "frite",
+      "orangepi5"
+    ],
+    "node": [
+      "pki",
+      "be",
+      "fe",
+      "be+gpu",
+      "omnibus",
+      "edge_ai",
+      "full",
+      "gpu-host",
+      "orangepizero2",
+      "generic"
+    ]
+  },
+  "roles": {
+    "cloud": [
+      {
+        "image_class": "desktop",
+        "label": "Laptop client \u2014 tailnet + SSO",
+        "platforms": [
+          {
+            "axes": {
+              "desktop": [
+                "thin",
+                "full"
+              ]
+            },
+            "platform": "x86"
+          }
+        ],
+        "role": "laptop"
+      },
+      {
+        "image_class": "desktop",
+        "label": "Chromebook client \u2014 tailnet + SSO",
+        "platforms": [
+          {
+            "axes": {
+              "desktop": [
+                "thin",
+                "full"
+              ]
+            },
+            "platform": "x86"
+          }
+        ],
+        "role": "chromebook"
+      },
+      {
+        "image_class": "desktop",
+        "label": "Desktop client \u2014 tailnet + SSO",
+        "platforms": [
+          {
+            "axes": {
+              "desktop": [
+                "thin",
+                "full"
+              ]
+            },
+            "platform": "x86"
+          }
+        ],
+        "role": "desktop"
+      },
+      {
+        "image_class": "desktop",
+        "label": "Raspberry Pi 5 / 4 arm64 client \u2014 tailnet + SSO (board axis)",
+        "platforms": [
+          {
+            "axes": {
+              "board": [
+                "rpi5",
+                "rpi4",
+                "rpi3"
+              ]
+            },
+            "platform": "rpi5"
+          }
+        ],
+        "role": "rpi5-desktop"
+      },
+      {
+        "image_class": "desktop",
+        "label": "La Frite family arm64 client (board + live/installer flavor)",
+        "platforms": [
+          {
+            "axes": {
+              "board": [
+                "la-frite",
+                "le-potato",
+                "sweet-potato"
+              ],
+              "desktop": [
+                "light",
+                "none"
+              ],
+              "flavor": [
+                "live",
+                "installer",
+                "both"
+              ]
+            },
+            "platform": "frite"
+          }
+        ],
+        "role": "frite"
+      },
+      {
+        "image_class": "desktop",
+        "label": "Orange Pi 5 / 5 Plus arm64 client \u2014 EXPERIMENTAL (board + live/installer flavor)",
+        "platforms": [
+          {
+            "axes": {
+              "board": [
+                "orange-pi-5-plus",
+                "orange-pi-5"
+              ],
+              "flavor": [
+                "live",
+                "installer",
+                "both"
+              ]
+            },
+            "platform": "orangepi5"
+          }
+        ],
+        "role": "orangepi5"
+      },
+      {
+        "image_class": "node",
+        "label": "Orange Pi Zero 2 arm64 HEADLESS APPLIANCE \u2014 EXPERIMENTAL (live/installer flavor only; no board/desktop axis)",
+        "platforms": [
+          {
+            "axes": {
+              "flavor": [
+                "live",
+                "installer",
+                "both"
+              ]
+            },
+            "platform": "orangepizero2"
+          }
+        ],
+        "role": "orangepizero2"
+      }
+    ],
+    "mesh": [
+      {
+        "image_class": "node",
+        "label": "PKI node \u2014 cluster certificate authority",
+        "platforms": [
+          {
+            "axes": {
+              "desktop": [
+                "thin",
+                "full"
+              ]
+            },
+            "platform": "x86"
+          },
+          {
+            "axes": {
+              "board": [
+                "rpi5",
+                "rpi4",
+                "rpi3"
+              ]
+            },
+            "platform": "rpi5"
+          }
+        ],
+        "role": "pki"
+      },
+      {
+        "image_class": "node",
+        "label": "Backend node",
+        "platforms": [
+          {
+            "axes": {
+              "desktop": [
+                "thin",
+                "full"
+              ]
+            },
+            "platform": "x86"
+          },
+          {
+            "axes": {
+              "board": [
+                "rpi5",
+                "rpi4",
+                "rpi3"
+              ]
+            },
+            "platform": "rpi5"
+          }
+        ],
+        "role": "be"
+      },
+      {
+        "image_class": "node",
+        "label": "Frontend node",
+        "platforms": [
+          {
+            "axes": {
+              "desktop": [
+                "thin",
+                "full"
+              ]
+            },
+            "platform": "x86"
+          },
+          {
+            "axes": {
+              "board": [
+                "rpi5",
+                "rpi4",
+                "rpi3"
+              ]
+            },
+            "platform": "rpi5"
+          }
+        ],
+        "role": "fe"
+      },
+      {
+        "image_class": "node",
+        "label": "Backend + GPU node",
+        "platforms": [
+          {
+            "axes": {
+              "desktop": [
+                "thin",
+                "full"
+              ]
+            },
+            "platform": "x86"
+          }
+        ],
+        "role": "be+gpu"
+      },
+      {
+        "image_class": "node",
+        "label": "Omnibus \u2014 every cluster role on one node",
+        "platforms": [
+          {
+            "axes": {
+              "desktop": [
+                "thin",
+                "full"
+              ]
+            },
+            "platform": "x86"
+          }
+        ],
+        "role": "omnibus"
+      },
+      {
+        "image_class": "desktop",
+        "label": "RPi5 desktop \u2014 arm64 client (compose with --standalone for FDE, no mesh)",
+        "platforms": [
+          {
+            "axes": {
+              "board": [
+                "rpi5",
+                "rpi4",
+                "rpi3"
+              ]
+            },
+            "platform": "rpi5"
+          }
+        ],
+        "role": "rpi5-desktop"
+      },
+      {
+        "image_class": "node",
+        "label": "Edge-AI node \u2014 GPU + OpenAI-compatible model API",
+        "platforms": [
+          {
+            "axes": {
+              "desktop": [
+                "thin",
+                "full"
+              ]
+            },
+            "platform": "x86"
+          },
+          {
+            "axes": {
+              "board": [
+                "orin-nano",
+                "orin-nano-4gb",
+                "orin-nx-8gb",
+                "orin-nx-16gb"
+              ]
+            },
+            "platform": "jetson"
+          }
+        ],
+        "role": "edge_ai"
+      },
+      {
+        "image_class": "node",
+        "label": "Jetson full-stack node \u2014 EXPERIMENTAL, hardware validation pending",
+        "platforms": [
+          {
+            "axes": {
+              "board": [
+                "orin-nano",
+                "orin-nano-4gb",
+                "orin-nx-8gb",
+                "orin-nx-16gb"
+              ]
+            },
+            "platform": "jetson"
+          }
+        ],
+        "role": "full"
+      },
+      {
+        "image_class": "node",
+        "label": "Jetson GPU host \u2014 EXPERIMENTAL, hardware validation pending",
+        "platforms": [
+          {
+            "axes": {
+              "board": [
+                "orin-nano",
+                "orin-nano-4gb",
+                "orin-nx-8gb",
+                "orin-nx-16gb"
+              ]
+            },
+            "platform": "jetson"
+          }
+        ],
+        "role": "gpu-host"
+      },
+      {
+        "image_class": "desktop",
+        "label": "Jetson desktop \u2014 EXPERIMENTAL, hardware validation pending",
+        "platforms": [
+          {
+            "axes": {
+              "board": [
+                "orin-nano",
+                "orin-nano-4gb",
+                "orin-nx-8gb",
+                "orin-nx-16gb"
+              ]
+            },
+            "platform": "jetson"
+          }
+        ],
+        "role": "jetson-desktop"
+      }
+    ],
+    "standalone": [
+      {
+        "image_class": "desktop",
+        "label": "Standalone thin \u2014 hardened LXDE desktop, no mesh/SSO",
+        "platforms": [
+          {
+            "axes": {
+              "desktop": [
+                "thin",
+                "full"
+              ]
+            },
+            "platform": "x86"
+          }
+        ],
+        "role": "standalone-thin"
+      },
+      {
+        "image_class": "desktop",
+        "label": "Standalone thick \u2014 hardened full desktop, no mesh/SSO",
+        "platforms": [
+          {
+            "axes": {
+              "desktop": [
+                "thin",
+                "full"
+              ]
+            },
+            "platform": "x86"
+          }
+        ],
+        "role": "standalone-thick"
+      },
+      {
+        "image_class": "desktop",
+        "label": "Unaffiliated desktop \u2014 plain Gentoo, no HugMesh (zero branding/tooling baked)",
+        "platforms": [
+          {
+            "axes": {
+              "desktop": [
+                "thin",
+                "full"
+              ]
+            },
+            "platform": "x86"
+          }
+        ],
+        "role": "standalone-unaffiliated"
+      },
+      {
+        "image_class": "node",
+        "label": "Generic arm64 server \u2014 plain Gentoo Raspberry Pi 5, unbranded (builder default role)",
+        "platforms": [
+          {
+            "axes": {
+              "board": [
+                "rpi5",
+                "rpi4",
+                "rpi3"
+              ]
+            },
+            "platform": "rpi5"
+          }
+        ],
+        "role": "generic"
+      },
+      {
+        "image_class": "desktop",
+        "label": "La Frite family arm64 standalone (FDE local desktop; board + flavor)",
+        "platforms": [
+          {
+            "axes": {
+              "board": [
+                "la-frite",
+                "le-potato",
+                "sweet-potato"
+              ],
+              "desktop": [
+                "light",
+                "none"
+              ],
+              "flavor": [
+                "live",
+                "installer",
+                "both"
+              ]
+            },
+            "platform": "frite"
+          }
+        ],
+        "role": "frite"
+      },
+      {
+        "image_class": "desktop",
+        "label": "Orange Pi 5 / 5 Plus arm64 standalone \u2014 EXPERIMENTAL (FDE local desktop; board + flavor)",
+        "platforms": [
+          {
+            "axes": {
+              "board": [
+                "orange-pi-5-plus",
+                "orange-pi-5"
+              ],
+              "flavor": [
+                "live",
+                "installer",
+                "both"
+              ]
+            },
+            "platform": "orangepi5"
+          }
+        ],
+        "role": "orangepi5"
+      },
+      {
+        "image_class": "node",
+        "label": "Orange Pi Zero 2 arm64 standalone HEADLESS APPLIANCE \u2014 EXPERIMENTAL (FDE; flavor only)",
+        "platforms": [
+          {
+            "axes": {
+              "flavor": [
+                "live",
+                "installer",
+                "both"
+              ]
+            },
+            "platform": "orangepizero2"
+          }
+        ],
+        "role": "orangepizero2"
+      }
+    ]
+  }
+}

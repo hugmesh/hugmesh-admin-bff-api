@@ -1,0 +1,170 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+      device-ssh-keys — the dial-key REGISTRY backing the in-UI SSH terminal's REAL dial
+      (PR-1 of the 7-PR ships-dark plan). One row per device. This table is the BFF's
+      pointer to the per-device dial material the dial factory (a LATER PR) will use to
+      open a real SSH channel to a mesh node — but it stores ONLY NON-SECRET material:
+
+        - the device's PUBLIC host key (host_key_pub) + its fingerprint (host_key_fp), so
+          the dial can pin-verify the node it connects to (TOFU is rejected);
+        - the dial USER (dial_user) the BFF connects as;
+        - the fingerprint of the BFF's dial PUBLIC key (dial_pub_fp) seeded into the node's
+          authorized_keys at build time — NOT the private key;
+        - a Vault POINTER (vault_ref) + the K8s Secret name (k8s_secret_name) where the
+          PRIVATE dial key actually lives.
+
+      The PRIVATE dial key NEVER lands in this DB (or in any column here) — it rides Vault
+      via ESO into a K8s Secret; this table only references it. This mirrors the platform
+      rule the device-license registry (011) and cloud-backups (160) follow: secret_ref /
+      vault_ref / k8s_secret_name are REFERENCES only, never credential bytes.
+
+      ── SHIPS DARK ───────────────────────────────────────────────────────────────────
+      This leg adds the schema + repos ONLY. There is NO dial factory, NO controller, NO
+      sshj usage — nothing reads or writes this table at runtime yet. status starts
+      'PENDING' (no ACTIVE dial exists until a later PR seeds + flips it).
+
+      ── Portable DDL (mirrors 011-device-license-registry.xml / 160-cloud-backups.xml
+         EXACTLY) ─────────────────────────────────────────────────────────────────────
+      id is an app-generated varchar(36) UUID string (NOT a Postgres uuid column with
+      gen_random_uuid()), so the INSERT is portable across Postgres and the H2
+      (PostgreSQL-compat, NON_KEYWORDS) test store with no pgcrypto dependency, and the app
+      can return the new row id. timestamptz -> the portable Liquibase 'timestamp with time
+      zone' generic type, defaultValueComputed="now()". One changeSet per CHECK / unique /
+      FK / index / GRANT (independent redeploy + rollback). The index + GRANT are gated with
+      a dbms=postgresql precondition (onFail/onError=MARK_RAN) so they apply only on
+      Postgres; the H2 path relies on the at-most-one-per-device invariant the UNIQUE
+      constraint + the repo findByDeviceId guard enforce (exactly like 011/160).
+
+      ── Band: 170 ────────────────────────────────────────────────────────────────────
+      Current max changelog band on main is 160-162 (cloud-backups); 150-159 is RESERVED
+      for the Casdoor MFA build. 170 is the NEXT FREE band. Appended LAST at the include
+      site in db.changelog-master.xml, after the 160 include.
+    -->
+
+    <changeSet id="170-device-ssh-dial" author="hugmesh">
+        <comment>device_ssh_dial — the per-device dial-key registry pointer. NON-SECRET only:
+                 public host key + fingerprints + the dial user + a Vault/K8s-Secret REF to
+                 the private key (which lives in Vault, NOT here). One row per device.</comment>
+        <createTable tableName="device_ssh_dial">
+            <column name="id" type="varchar(36)">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <!-- the device this dial material belongs to (FK -> device_registry; UNIQUE: one
+                 dial row per device). -->
+            <column name="device_id" type="varchar(36)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- the SSH user the BFF dials the node as (e.g. a least-privileged ops account). -->
+            <column name="dial_user" type="varchar(64)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- the device's PUBLIC host key (authorized_keys-style line) — used to PIN the
+                 node identity on connect (reject TOFU). NON-SECRET. -->
+            <column name="host_key_pub" type="varchar(1024)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- the fingerprint of host_key_pub (the value the dial compares on connect). -->
+            <column name="host_key_fp" type="varchar(128)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- the fingerprint of the BFF's dial PUBLIC key seeded into the node's
+                 authorized_keys at build time. NON-SECRET (the matching PRIVATE key is in
+                 Vault, referenced by vault_ref). -->
+            <column name="dial_pub_fp" type="varchar(128)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- POINTER to the private dial key in Vault (e.g. a KV path). NEVER the key
+                 bytes. -->
+            <column name="vault_ref" type="varchar(256)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- the K8s Secret name ESO syncs the private key into for the dial factory to
+                 mount/read. A NAME only — never the key bytes. -->
+            <column name="k8s_secret_name" type="varchar(253)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- the image_build that seeded this dial material (provenance), if any. -->
+            <column name="seeded_by_build_id" type="varchar(36)"/>
+            <!-- PENDING (seeded, not yet usable) -> ACTIVE (live dial) -> REVOKED (rotated
+                 out / disabled). Starts PENDING — no ACTIVE dial until a later PR flips it. -->
+            <column name="status" type="varchar(16)" defaultValue="PENDING">
+                <constraints nullable="false"/>
+            </column>
+            <!-- monotonic generation bumped on every rotation (the dial-key rotation
+                 counter); the seeder/rotator allocates +1, mirroring the 011 generation
+                 idiom. -->
+            <column name="generation" type="bigint" defaultValueNumeric="1">
+                <constraints nullable="false"/>
+            </column>
+            <column name="created_at" type="timestamp with time zone" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+            <column name="rotated_at" type="timestamp with time zone"/>
+        </createTable>
+    </changeSet>
+
+    <changeSet id="170-device-ssh-dial-device-unique" author="hugmesh">
+        <comment>UNIQUE per device_id: at most one dial-key row per device (rotation is an
+                 in-place UPDATE bumping generation, never a second row). Portable plain
+                 UNIQUE (works on Postgres + H2).</comment>
+        <addUniqueConstraint tableName="device_ssh_dial"
+                             columnNames="device_id"
+                             constraintName="uq_device_ssh_dial_device"/>
+        <rollback>
+            <dropUniqueConstraint tableName="device_ssh_dial"
+                                  constraintName="uq_device_ssh_dial_device"/>
+        </rollback>
+    </changeSet>
+
+    <changeSet id="170-device-ssh-dial-device-fk" author="hugmesh">
+        <comment>FK: device_id references a real device_registry row; ON DELETE CASCADE so
+                 de-registering a node reaps its dial material.</comment>
+        <addForeignKeyConstraint
+                constraintName="fk_device_ssh_dial_device"
+                baseTableName="device_ssh_dial" baseColumnNames="device_id"
+                referencedTableName="device_registry" referencedColumnNames="id"
+                onDelete="CASCADE"/>
+        <rollback>
+            <dropForeignKeyConstraint baseTableName="device_ssh_dial"
+                                      constraintName="fk_device_ssh_dial_device"/>
+        </rollback>
+    </changeSet>
+
+    <changeSet id="170-device-ssh-dial-status-check" author="hugmesh">
+        <comment>CHECK: status is one of the three lifecycle values (PENDING seeded |
+                 ACTIVE live | REVOKED rotated-out).</comment>
+        <sql>
+            ALTER TABLE device_ssh_dial
+                ADD CONSTRAINT ck_device_ssh_dial_status
+                CHECK (status IN ('PENDING', 'ACTIVE', 'REVOKED'))
+        </sql>
+        <rollback>ALTER TABLE device_ssh_dial DROP CONSTRAINT ck_device_ssh_dial_status</rollback>
+    </changeSet>
+
+    <changeSet id="170-device-ssh-dial-device-index" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>Index the per-device dial lookup (the findByDeviceId predicate the dial
+                 factory uses).</comment>
+        <sql>CREATE INDEX idx_device_ssh_dial_device ON device_ssh_dial (device_id)</sql>
+        <rollback>DROP INDEX idx_device_ssh_dial_device</rollback>
+    </changeSet>
+
+    <changeSet id="170-device-ssh-dial-grant" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>GRANT SELECT,INSERT,UPDATE on device_ssh_dial to the admin_bff role (seed
+                 INSERTs, rotation/status are UPDATEs; rows are reaped via the FK cascade,
+                 not app DELETE).</comment>
+        <sql>GRANT SELECT, INSERT, UPDATE ON device_ssh_dial TO admin_bff</sql>
+        <rollback>REVOKE SELECT, INSERT, UPDATE ON device_ssh_dial FROM admin_bff</rollback>
+    </changeSet>
+</databaseChangeLog>

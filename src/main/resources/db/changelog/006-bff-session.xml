@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!-- bff_session: the opaque "bff_<token>" the UIs carry as Authorization:
+         Bearer. Was a per-pod in-memory map (lost on restart, not shared across
+         replicas); now a durable table with a TTL (expires_at) so a restart /
+         replica does not drop a live session. Resolution is by token (PK); a
+         background sweep / lazy-on-read drop reaps expired rows. -->
+    <changeSet id="006-bff-session" author="hugmesh">
+        <createTable tableName="bff_session">
+            <column name="token" type="varchar(64)">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="account_id" type="varchar(400)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="created_at" type="timestamp" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+            <column name="expires_at" type="timestamp">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+    </changeSet>
+</databaseChangeLog>

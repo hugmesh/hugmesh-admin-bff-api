@@ -1,0 +1,981 @@
+spring:
+  application:
+    name: hugmesh-admin-bff-api
+  # The Cassandra java-driver-core is on the classpath ONLY for the best-effort
+  # CassandraRouteMirror, which builds its own CqlSession lazily + gated. We do
+  # NOT want Spring Boot to auto-manage a CqlSession (it would eagerly dial
+  # Cassandra at startup and the actuator CassandraHealthContributor would fail
+  # a no-Cassandra boot). Exclude the auto-config so startup never depends on a
+  # reachable Cassandra — matching the "driver only, no spring-data autoconfig"
+  # design.
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.cassandra.autoconfigure.CassandraAutoConfiguration
+      - org.springframework.boot.cassandra.autoconfigure.health.CassandraHealthContributorAutoConfiguration
+      - org.springframework.boot.cassandra.autoconfigure.health.CassandraReactiveHealthContributorAutoConfiguration
+  cloud:
+    # spring-cloud 2025.1.x declares strict compatibility with Boot 4.0.x; this BFF
+    # runs Boot 4.0.7 (via hugmesh-parent 2.7.0). The compatibility verifier is
+    # advisory — disable it so boot does not fail the strict version cross-check
+    # (the only spring-cloud consumer now is spring-cloud-kubernetes).
+    compatibility-verifier:
+      enabled: false
+    # spring-cloud-kubernetes is on the classpath ONLY for the fabric8 LEADER
+    # election (the single-writer Lease for the access_suspension reconcile loop).
+    # It is OFF by default so a cluster-less dev/test/CI run never dials the k8s API:
+    #  - kubernetes.enabled=false   → no config/discovery/leader k8s wiring;
+    #  - kubernetes.leader.enabled=false → the Fabric8LeaderAutoConfiguration
+    #    (matchIfMissing=true) does NOT activate (it would require a KubernetesClient
+    #    + an Integration Candidate bean and dial the API at startup).
+    # The in-cluster, multi-replica deployment flips BOTH true together with
+    # app.access-suspension.lease.enabled=true to use the real Lease (config-only).
+    kubernetes:
+      enabled: "${SPRING_CLOUD_KUBERNETES_ENABLED:false}"
+      leader:
+        enabled: "${SPRING_CLOUD_KUBERNETES_LEADER_ENABLED:false}"
+        role: "${SPRING_CLOUD_KUBERNETES_LEADER_ROLE:access-suspension}"
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: "${CASDOOR_ISSUER_URI:https://id.hugmesh.systems}"
+          # Explicit JWKS so the resource server does NOT do OIDC discovery against issuer-uri
+          # (unreachable in-container when issuer-uri is the browser-facing localhost:8000, which
+          # 500s every authenticated call). Mirrors hugmesh-actions + the gateway; compose sets
+          # CASDOOR_JWKS_URI=http://casdoor:8000/.well-known/jwks. iss is still validated via issuer-uri.
+          jwk-set-uri: "${CASDOOR_JWKS_URI:${CASDOOR_ISSUER_URI:https://id.hugmesh.systems}/.well-known/jwks}"
+
+  # Runtime data access is REACTIVE (R2DBC) over the config datastore: the durable
+  # account / allowlist / session / namespace-grant tables + iso_artifacts +
+  # gateway_route_access. (The deployment's separate ROUTE_ACCESS_R2DBC_URL handle
+  # to the pki-gateway route-access Postgres is documented in openIssues; here a
+  # single R2DBC handle backs everything for operational simplicity.)
+  r2dbc:
+    url: "${SPRING_R2DBC_URL:r2dbc:postgresql://hugmesh-pg.hugmesh-backend.svc.cluster.local:5432/hugmesh}"
+    username: "${SPRING_R2DBC_USERNAME:hugmesh}"
+    password: "${SPRING_R2DBC_PASSWORD:}"
+
+  # Liquibase owns schema migrations. It has NO R2DBC runner, so it uses a plain
+  # JDBC datasource — the ONLY JDBC use in the app; all runtime access is R2DBC.
+  liquibase:
+    enabled: true
+    change-log: "classpath:db/changelog/db.changelog-master.xml"
+    url: "${SPRING_LIQUIBASE_URL:jdbc:postgresql://hugmesh-pg.hugmesh-backend.svc.cluster.local:5432/hugmesh}"
+    user: "${SPRING_LIQUIBASE_USER:hugmesh}"
+    password: "${SPRING_LIQUIBASE_PASSWORD:}"
+
+  kafka:
+    bootstrap-servers: "${SPRING_KAFKA_BOOTSTRAP_SERVERS:kafka:9092}"
+
+clickhouse:
+  # Usage analytics store. Best-effort: if unreachable the BFF serves the
+  # in-memory usage log so the admin Usage view still reflects the live run.
+  url: "${CLICKHOUSE_URL:http://clickhouse:8123}"
+  user: "${CLICKHOUSE_USER:snap}"
+  password: "${CLICKHOUSE_PASSWORD:snap}"
+
+broker:
+  # Real-service token brokering — the BFF mints Matrix/Mastodon access tokens
+  # server-side so the UI never holds homeserver admin creds.
+  #
+  # account-states design: repoint these at the per-pod mTLS proxy sidecars
+  # (akkoma-proxy:4443 / tuwunel-proxy:4443) once they exist so brokered traffic is
+  # gated by the gateway revocation filter — config-only (override the two -url envs
+  # + present client certs). The defaults stay on the direct services until the
+  # proxies land. The broker ALSO refuses to mint for a suspended localpart
+  # (access_suspension is the source of truth) regardless of the URL repoint.
+  synapse-url: "${SYNAPSE_URL:http://matrix-synapse.hugmesh-backend.svc.cluster.local:8008}"
+  mastodon-url: "${MASTODON_URL:http://mastodon-web.hugmesh-backend.svc.cluster.local:3000}"
+  # MANDATORY — no baked default. This password brokers REAL Synapse/Mastodon access
+  # tokens server-side; a hard-coded fallback (the old "hugmesh-svc-pw") would let a
+  # deployment that forgot to set SVC_PASSWORD silently mint tokens against a
+  # publicly-known credential. With no default the app FAILS TO START unless SVC_PASSWORD
+  # is explicitly provided (fail-closed on a missing secret). Tests supply it via the
+  # 'test' profile (application-test.yml); prod injects it from the Vault/ESO-backed secret.
+  svc-password: "${SVC_PASSWORD}"
+  # Email domain for broker-owned Mastodon/Akkoma accounts. Load-bearing for BOTH
+  # mastodon mint legs (the password grant authenticates by EMAIL; the register leg
+  # must supply one — <localpart>@<this-domain>), so EMPTY DEFAULT + FAIL-CLOSED at
+  # mint time (502 naming the gap) rather than a baked guess. Set it to a domain the
+  # target instance accepts (compose mastodon-web allowlists e2e.local; a cluster
+  # deploy picks what its Akkoma accepts). Mirrors user-bff-api's
+  # app.hs-token.mastodon-email-domain.
+  mastodon-email-domain: "${MASTODON_EMAIL_DOMAIN:}"
+  # hs_tokens registry write (kind=brokered) at mint time. Writes a row to
+  # hugmesh_gateway.hs_tokens via the same Cassandra session as the route mirror.
+  # OFF by default so a Cassandra-less dev/test/CI run boots clean.
+  # Flip true (BROKER_HS_TOKEN_REGISTRY_ENABLED=true) once the gateway hs_tokens
+  # table (migration 006 in GatewayRevocationController) is reachable.
+  hs-token-registry:
+    enabled: "${BROKER_HS_TOKEN_REGISTRY_ENABLED:false}"
+  # Gateway URL — used by GatewayRevocationClient to POST coarse ban keys
+  # (hs:<platform>:<localpart>) after a ROLE_MATRIX / ROLE_MASTODON suspension.
+  # Defaults to the PKI gateway (the same base the BFF already uses for Casdoor
+  # token validation); override if admin-bff must reach the gateway on a different
+  # address (e.g. a direct ClusterIP bypassing the ingress).
+  gateway-url: "${BROKER_GATEWAY_URL:http://hugmesh-pki-gateway.hugmesh-pki.svc.cluster.local:8080}"
+  # Coarse gateway revocation write. OFF by default so a gateway-less run boots
+  # clean. Flip true (BROKER_GATEWAY_REVOCATION_ENABLED=true) once the gateway
+  # GatewayRevocationController /api/gateway/revocations endpoint is deployed and
+  # reachable from admin-bff.
+  gateway-revocation:
+    enabled: "${BROKER_GATEWAY_REVOCATION_ENABLED:false}"
+
+# Homeserver account-state admin (akkoma suspend/unsuspend + tuwunel deactivate/
+# activate) — the shared GATED STUB-SEAM the access_suspension reconcile loop calls.
+# enabled=false by default so an akkoma/tuwunel-less run boots clean; even when
+# enabled the calls stay STUBBED until the confirmed admin verbs/tokens are wired in
+# (see HomeserverAdminClient). Repoint the *-url at akkoma-proxy:4443 / tuwunel-proxy
+# :4443 (mTLS sidecars) when they exist — config-only.
+homeserver:
+  admin:
+    enabled: "${HOMESERVER_ADMIN_ENABLED:false}"
+    akkoma-url: "${HOMESERVER_AKKOMA_URL:http://akkoma.hugmesh-backend.svc.cluster.local:4000}"
+    tuwunel-url: "${HOMESERVER_TUWUNEL_URL:http://tuwunel.hugmesh-backend.svc.cluster.local:8008}"
+  # DOMAIN-LOCK (force local-only / no-federation) force-local seams — SEPARATE gate
+  # from homeserver.admin.enabled. SHIPS DARK: default false so the domain-lock role
+  # lands safely without advertising the homeserver/egress force-local effect as
+  # enforced. The AUTHORITATIVE enforcement is the generator akkoma-MRF
+  # (ForceLocalForUsersPolicy reading the domain_lock active set) + the egress
+  # NetworkPolicy; until those are real the role is DEGRADED (BFF/allowlist only) and
+  # this seam stays STUBBED (never hard-fails). Flip true ONLY once the MRF image +
+  # egress policy are deployed — config-only, no code change.
+  domainlock:
+    enabled: "${HOMESERVER_DOMAINLOCK_ENABLED:false}"
+
+# Resilience4j circuit breakers for the access_suspension reconcile + expiry loop.
+# akkoma/tuwunel guard the per-homeserver suspend seam; casdoor (reused) guards the
+# expiry role re-add. Tuning mirrors the hugmesh-actions routeAccess/casdoor
+# breaker (window 10, minCalls 5, 50% failure, 30s open, 3 half-open).
+# On-prem GPU edge-AI inference (the edge_ai role's Ollama-style mesh API). Ships DARK —
+# enabled=false so a cluster without a GPU/edge-AI node boots clean and every inference call
+# returns a disabled sentinel (capability-gating). Repoint base-url at the tailnet edge-AI
+# endpoint / a per-domain model. No token is sent; all inference is on-prem.
+inference:
+  edge-ai:
+    enabled: "${INFERENCE_EDGE_AI_ENABLED:false}"
+    base-url: "${INFERENCE_EDGE_AI_BASE_URL:http://edge-ai.hugmesh-backend.svc.cluster.local:11434}"
+    model: "${INFERENCE_EDGE_AI_MODEL:qwen2.5:0.5b}"
+    timeout-ms: "${INFERENCE_EDGE_AI_TIMEOUT_MS:30000}"
+
+resilience4j:
+  circuitbreaker:
+    instances:
+      edge-ai:
+        sliding-window-size: 10
+        minimum-number-of-calls: 5
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 30s
+        permitted-number-of-calls-in-half-open-state: 3
+      akkoma:
+        sliding-window-size: 10
+        minimum-number-of-calls: 5
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 30s
+        permitted-number-of-calls-in-half-open-state: 3
+      tuwunel:
+        sliding-window-size: 10
+        minimum-number-of-calls: 5
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 30s
+        permitted-number-of-calls-in-half-open-state: 3
+      casdoor:
+        sliding-window-size: 10
+        minimum-number-of-calls: 5
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 30s
+        permitted-number-of-calls-in-half-open-state: 3
+      # The admin-bff -> forum-bff forum-console leg (PhpbbAdminClient). Wraps the
+      # real call once the stub-seam is un-stubbed (external.forum.enabled=true +
+      # contract pinned); identical shape to the akkoma/tuwunel/casdoor breakers.
+      forum:
+        sliding-window-size: 10
+        minimum-number-of-calls: 5
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 30s
+        permitted-number-of-calls-in-half-open-state: 3
+
+# Username-derivation GATE — before the BFF mints a Casdoor username from a
+# provider handle (Gmail local-part / Discord handle) it checks the derived
+# username against the federation registry's INTERNAL confusable/skeleton engine
+# (GET /api/federation/username/{candidate}/availability) + the local reserved
+# fast-path, and rejects/auto-disambiguates a reserved/confusable collision.
+#
+# enabled=false by default so a federation-less dev/test/CI run boots clean —
+# with the gate OFF the local ReservedNames fast-path is the only check (which is
+# still the real DB-backed invariant). The in-cluster deployment flips
+# FEDERATION_USERNAME_GATE_ENABLED=true once the availability endpoint is live —
+# config-only. The endpoint is internal/ROLE_SERVICE, so the call carries the
+# X-Internal-Token service credential (env-injected; never in git).
+federation:
+  username-gate:
+    enabled: "${FEDERATION_USERNAME_GATE_ENABLED:false}"
+    base-url: "${FEDERATION_USERNAME_GATE_BASE_URL:http://hugmesh-federation-api.hugmesh-backend.svc.cluster.local:8080}"
+    internal-token-header: "${FEDERATION_USERNAME_GATE_INTERNAL_TOKEN_HEADER:X-Internal-Token}"
+    internal-token: "${FEDERATION_USERNAME_GATE_INTERNAL_TOKEN:}"
+
+casdoor:
+  # The BFF reaches Casdoor THROUGH the hugmesh-pki gateway (JWT) for normal
+  # traffic; the ADMIN write API (add-user/update-role) is reached with Basic
+  # client-credentials. Gated by casdoor.admin.enabled (default false) so a
+  # Casdoor-less run / unit tests boot clean.
+  gateway-base: "${PKI_GATEWAY_BASE:http://hugmesh-pki-gateway.hugmesh-pki.svc.cluster.local:8080}"
+  organization: "${CASDOOR_ORG:hugmesh}"
+  admin:
+    enabled: "${CASDOOR_ADMIN_ENABLED:false}"
+    base-url: "${CASDOOR_ADMIN_BASE_URL:http://casdoor.hugmesh-pki.svc.cluster.local:8000}"
+    client-id: "${CASDOOR_ADMIN_CLIENT_ID:app-admin-bff}"
+    client-secret: "${CASDOOR_ADMIN_CLIENT_SECRET:}"
+    organization: "${CASDOOR_ORG:hugmesh}"
+    signup-application: "${CASDOOR_ADMIN_SIGNUP_APP:app-admin-bff}"
+
+# akkoma (Mastodon-API) propagation for announcements with target_akkoma. A
+# published target_akkoma announcement is propagated as a LOCAL-ONLY akkoma server
+# announcement and removed on unpublish/archive/expire/delete. SAFE GATED stub-seam
+# (mirrors hugmesh-mod-bff-api ExternalAdminConfig): enabled=false by default so
+# an akkoma-less dev/test/CI run boots clean; even when enabled the external call
+# stays stubbed until a confirmed akkoma admin shape + token are wired in. Never
+# hard-fails — a akkoma outage never blocks the admin announcement write.
+external:
+  mastodon:
+    enabled: "${EXTERNAL_MASTODON_ENABLED:false}"
+    base-url: "${EXTERNAL_MASTODON_BASE_URL:http://akkoma.hugmesh-backend.svc.cluster.local:4000}"
+  # FORUM CONSOLE seam — the admin-bff ForumAdminController (/bff/admin/forum/**,
+  # ROLE_ADMIN) PROXIES the full phpBB ACP capability + stats by calling forum-bff's
+  # ForumAdminController (/bff/forum/admin/**), which owns the single phpBB client to
+  # the headless hugmesh/forum-api extension. SAFE GATED seam: enabled=false by
+  # default so a forum-bff-less dev/test/CI run boots clean (the call stays STUBBED).
+  # The forum-bff /bff/forum/admin/** contract is now IMPLEMENTED + tested, so flipping
+  # EXTERNAL_FORUM_ENABLED=true makes the REAL JWT-forwarded call to forum-bff — which
+  # itself keeps the phpBB HTTP leg DARK behind its OWN phpbb.enabled gate until the
+  # hugmesh/forum-api extension shape is pinned on-cluster. Never hard-fails — a
+  # forum-bff/phpBB outage never blocks (only degrades) the console.
+  # base-url defaults to the DIRECT forum-bff service; the deployment repoints it to
+  # the forum-bff mTLS service + flips EXTERNAL_FORUM_ENABLED=true — config-only, the
+  # whole leg gated hasRole('ADMIN') end-to-end.
+  forum:
+    enabled: "${EXTERNAL_FORUM_ENABLED:false}"
+    base-url: "${EXTERNAL_FORUM_BASE_URL:http://hugmesh-forum-bff-api.hugmesh-backend.svc.cluster.local:8080}"
+
+announcement:
+  # The @Scheduled reconcile sweep that removes akkoma posts for expired/unpublished
+  # announcements (idempotent). Intervals are in ms.
+  akkoma:
+    reconcile-interval-ms: "${ANNOUNCEMENT_AKKOMA_RECONCILE_INTERVAL_MS:300000}"
+    reconcile-initial-delay-ms: "${ANNOUNCEMENT_AKKOMA_RECONCILE_INITIAL_DELAY_MS:60000}"
+
+testreports:
+  # The admin Test-Reports console backend (list/download/run/SSE for the
+  # test-architecture runs). The run TRIGGER launches the real test-runner k8s Job
+  # via fabric8 — but ONLY when launch.enabled=true. Default false → the cluster-less
+  # NoopJobLauncher (a documented seam, like the backup applyJob) so dev/test/CI boot
+  # clean and the start→ingest→SSE→durable-status contract is still exercisable. The
+  # deployment flips launch.enabled=true once the test-runner ServiceAccount + RBAC +
+  # report PVC (jobs/test-runner-rbac.yaml) are applied.
+  launch:
+    enabled: "${TESTREPORTS_LAUNCH_ENABLED:false}"
+    namespace: "${TESTREPORTS_LAUNCH_NAMESPACE:hugmesh-backend}"
+  # Where the runner writes + the BFF reads the artifact bundles (the test-reports PVC
+  # mount). Download re-scrubs every text entry under this root and refuses any path
+  # that escapes it.
+  storage:
+    dir: "${TESTREPORTS_STORAGE_DIR:/var/hugmesh/test-reports}"
+  # Bounded per-run SSE replay buffer (a long HEAVY run cannot grow the per-pod buffer
+  # without limit; the durable per-(suite,role) matrix lives in test_run_result).
+  sse:
+    replay-buffer: "${TESTREPORTS_SSE_REPLAY_BUFFER:256}"
+  # The git commit the runner image / suite was built from (provenance recorded on the
+  # test_run row when an on-demand trigger does not pin its own commitSha).
+  runner:
+    commit: "${TESTREPORTS_RUNNER_COMMIT:}"
+
+imagegen:
+  # The admin image-generation console backend (trigger/SSE/download for building a device
+  # image for a target user). The TRIGGER launches the real image-gen k8s Job via fabric8 —
+  # but ONLY when launch.enabled=true. Default false → SHIPS DARK: the cluster-less
+  # NoopImageJobLauncher (a documented seam) so dev/test/CI boot clean and the
+  # trigger→ingest→SSE→download contract is still exercisable WITHOUT ever launching a real
+  # build. The deployment flips launch.enabled=true once the image-gen ServiceAccount + RBAC +
+  # artifacts PVC (jobs/image-gen-rbac.yaml) are applied. DISTINCT keys from testreports.* /
+  # app.device-terminal.* / app.backups.* so nothing collides.
+  launch:
+    enabled: "${IMAGEGEN_LAUNCH_ENABLED:false}"
+    namespace: "${IMAGEGEN_LAUNCH_NAMESPACE:hugmesh-backend}"
+  # Where the builder writes + the BFF reads the built image + NON-SECRET keys bundle (the
+  # image-artifacts PVC mount). Download refuses any path that escapes this root. This volume
+  # holds NO secrets — the private dial key lives in Vault, never here.
+  artifacts:
+    dir: "${IMAGEGEN_ARTIFACTS_DIR:/var/hugmesh/image-artifacts}"
+  # Bounded per-build SSE replay buffer (a long build cannot grow the per-pod buffer without
+  # limit; the durable terminal status lives on the image_build row).
+  sse:
+    replay-buffer: "${IMAGEGEN_SSE_REPLAY_BUFFER:256}"
+  # Mesh orchestration settings (worklist redesign item 5). The SUPERDOMAIN all mesh nodes join
+  # is NON_ARGV: it rides the mesh manifest + the KEYS MagicDNS channel, NEVER a builder flag,
+  # a ${SUPERDOMAIN} Job env, or a go-live-flippable value (I7 — permanently internal). When a
+  # mesh build carries no operator superdomain override, the effective value is derived
+  # <brand>.<suffix> — byte-for-byte with the generator's effective_superdomain (<brand>.internal).
+  mesh:
+    superdomain-suffix: "${IMAGEGEN_MESH_SUPERDOMAIN_SUFFIX:internal}"
+
+app:
+  # Passwordless local-secrets login (contract v1) — the /bff/login/local endpoint.
+  # SHIPS DARK: enabled=false => the LocalSecretVerifier bean is NOT created, so the
+  # endpoint FAILS CLOSED (401 on every call) and there is NO local-login trust surface.
+  # When enabled, the endpoint validates the agent-vended username+secret against Casdoor
+  # via a real resource-owner-password grant (grant_type=password) BEFORE minting a
+  # session — the agent is never trusted, the client-asserted roleId is telemetry only.
+  # Enabling it requires the Casdoor admin-bff application to PERMIT the password grant.
+  # Endpoint + credentials default off the SAME casdoor.admin.* env the write client uses.
+  local-login:
+    enabled: "${APP_LOCAL_LOGIN_ENABLED:false}"
+    casdoor-base-url: "${APP_LOCAL_LOGIN_CASDOOR_BASE_URL:${CASDOOR_ADMIN_BASE_URL:http://casdoor.hugmesh-pki.svc.cluster.local:8000}}"
+    token-path: "${APP_LOCAL_LOGIN_TOKEN_PATH:/api/login/oauth/access_token}"
+    client-id: "${APP_LOCAL_LOGIN_CLIENT_ID:${CASDOOR_ADMIN_CLIENT_ID:app-admin-bff}}"
+    # Never logged, never in git (env-injected, default empty).
+    client-secret: "${APP_LOCAL_LOGIN_CLIENT_SECRET:${CASDOOR_ADMIN_CLIENT_SECRET:}}"
+    # Per-IP AND per-(IP,username) throttle in front of the Casdoor grant_type=password verify()
+    # call (PR #198 security review, MEDIUM finding; the per-(IP,username) shape below is PR #199
+    # security review, HIGH finding — LocalLoginRateLimiter has the full rationale for both). A
+    # request over EITHER budget is 429'd BEFORE Casdoor is ever called. Defaults are deliberately
+    # tight (the loopback-agent handoff this endpoint serves is a human retrying at most a couple
+    # of mistyped secrets, not a scripted loop): 10 attempts/60s per source IP, 5 attempts/60s per
+    # (source IP, username) PAIR (tighter — a single attacker-chosen username from a single source
+    # is the actual oracle target; the IP bucket is the backstop against one source spraying many
+    # usernames). Keying the tighter bucket on the PAIR rather than username alone is deliberate:
+    # a global per-username-only bucket lets an attacker exhaust one victim role's entire login
+    # budget by spraying garbage secrets from many different source IPs (the username is
+    # structurally predictable — roleId@tenant-domain — and the budget was shared by every IP on
+    # earth); scoping to the pair gives each source IP its own small budget against that username
+    # instead. Widen per-ip first if legitimate traffic behind a shared NAT/egress IP trips it;
+    # the tighter per-ip-username bound is the one actually guarding the credential oracle and
+    # should stay conservative.
+    rate-limit:
+      per-ip:
+        attempts: "${APP_LOCAL_LOGIN_RATE_LIMIT_IP_ATTEMPTS:10}"
+        window-ms: "${APP_LOCAL_LOGIN_RATE_LIMIT_IP_WINDOW_MS:60000}"
+      per-ip-username:
+        attempts: "${APP_LOCAL_LOGIN_RATE_LIMIT_IP_USERNAME_ATTEMPTS:5}"
+        window-ms: "${APP_LOCAL_LOGIN_RATE_LIMIT_IP_USERNAME_WINDOW_MS:60000}"
+  # App-layer DEFENCE-IN-DEPTH credential for the /bff/internal/** surface (the
+  # in-cluster node-to-BFF prefix that is permitAll() and otherwise relies SOLELY on
+  # mTLS). The desktop sudo ENTITLEMENT read under it leaks per-(subject,device) sudo
+  # state, so InternalTokenWebFilter layers a required service token on top of the
+  # transport. Named consistently with the federation internal-token config.
+  # BLANK by default (dev/test/CI): the filter is then a NO-OP (matches the federation
+  # outbound "blank => no header" semantics) so local runs boot clean. The in-cluster
+  # deployment injects INTERNAL_TOKEN and the filter becomes REQUIRED + fail-closed
+  # (missing/mismatched -> 401). Never logged, never in git (env-injected, default empty).
+  internal:
+    token-header: "${INTERNAL_TOKEN_HEADER:X-Internal-Token}"
+    token: "${INTERNAL_TOKEN:}"
+  # D8 converter MFA_SATISFIED marker (gateway-parity copy). DEFAULT false -> SHIPS
+  # DARK: the Casdoor JWT->Spring authorities converter emits the BYTE-IDENTICAL legacy
+  # authority set and the MFA_SATISFIED marker is NEVER produced. When enabled, a FRESH
+  # BFF-written `mfa_satisfied_at` JWT-Custom claim (0 <= now - ts <= freshness-window)
+  # adds the non-role MFA_SATISFIED authority. This is the JWT-side lever (distinct from
+  # app.casdoor.mfa.*, which gates the opaque-session step-up leg). Mirrors the merged
+  # hugmesh-gateway app.mfa.* wiring so the 10-repo fan-out stays in lockstep.
+  mfa:
+    enabled: "${APP_MFA_ENABLED:false}"
+    # Freshness window in MILLIS for the mfa_satisfied_at claim (default 10m = 600000).
+    freshness-window: "${APP_MFA_FRESHNESS_WINDOW:600000}"
+    # D6+D8 ENROLLMENT leg (BFF-owned factor lifecycle). The BFF generates the TOTP secret
+    # itself + verifies in-BFF (Casdoor cannot verify a factor for a session-less web user),
+    # so it needs a secret-store key to (a) AES-256-GCM-encrypt the TOTP secret AT REST and
+    # (b) key the recovery-code HMAC. SOURCED FROM ESO/Vault — NEVER hardcoded/committed/logged.
+    # EMPTY by default -> the cipher is INERT and TOTP enroll / recovery generation refuse
+    # (no plaintext-secret fallback); the whole feature is already dark behind
+    # app.casdoor.mfa.enabled, so an unprovisioned key never matters until launch. A 32-byte
+    # base64/base64url CSPRNG key is preferred; a passphrase is folded to 32 bytes via SHA-256.
+    factor-key: "${APP_MFA_FACTOR_KEY:}"
+    totp:
+      # The otpauth:// issuer (brand) shown in the authenticator app + the WebAuthn RP name.
+      issuer: "${APP_MFA_TOTP_ISSUER:HugMesh}"
+    webauthn:
+      # The WebAuthn Relying Party ID (the registrable domain, e.g. hugmesh.systems). The
+      # registration/assertion ceremonies enforce this RP ID + the origin allowlist below.
+      rp-id: "${APP_MFA_WEBAUTHN_RP_ID:localhost}"
+      # CSV origin allowlist for the WebAuthn ceremonies (e.g.
+      # https://admin.hugmesh.systems). A response from any other origin is rejected.
+      origins: "${APP_MFA_WEBAUTHN_ORIGINS:https://localhost}"
+  # A2 opaque-session COOKIE bridge (D6+D8). The cookie-OR-bearer dual-READ
+  # (SessionCookieWebFilter) is ALWAYS-ON + UNFLAGGED + backward-compatible. This flag
+  # gates ONLY the cookie MINT (login/register/sessionOut Set-Cookie) AND the
+  # double-submit CSRF (enabled in the SAME flag, so there is never a
+  # cookie-accepted-without-CSRF window). DEFAULT false -> SHIPS DARK: the token still
+  # rides the response body, the legacy Bearer-header path is unchanged + CSRF-exempt,
+  # and CSRF stays disabled. Flip true once the cookie-mode UIs are wired.
+  session:
+    cookie:
+      enabled: "${APP_SESSION_COOKIE_ENABLED:false}"
+      # Secure attribute on the session cookie (TLS-only). Default true; a plain-HTTP
+      # local dev run may set false. NEVER false in a deployed/public instance.
+      secure: "${APP_SESSION_COOKIE_SECURE:true}"
+      # Cookie Max-Age; matches the bff_session row TTL (12h) by default.
+      ttl: "${APP_SESSION_COOKIE_TTL:PT12H}"
+  # A3+A5 Casdoor-MFA step-up leg (D6+D8). DEFAULT false -> SHIPS DARK: the MFA leg of
+  # the unified step-up never satisfies, so only the workload step-up token works
+  # (today's behaviour). bff_session.mfa_satisfied defaults false at the schema (band
+  # 150), so mfa-gated paths fail CLOSED. When enabled, a FRESH bff_session MFA stamp is
+  # a co-equal, license-INDEPENDENT step-up satisfier within the freshness window.
+  casdoor:
+    mfa:
+      enabled: "${APP_CASDOOR_MFA_ENABLED:false}"
+      # The user-chosen freshness window for an MFA stamp to satisfy step-up. Default
+      # 10m. ISO-8601 duration (e.g. PT10M, PT5M). A stale stamp no longer satisfies.
+      freshness: "${APP_CASDOOR_MFA_FRESHNESS:PT10M}"
+  # Per-brand Casdoor issuers for multi-tenant mode. OPT-IN: empty = single-issuer.
+  # Format: comma-separated issuerUri=domainName pairs.
+  # When non-empty, TenancyResourceServerConfig activates; unknown issuers → 401.
+  tenancy:
+    issuers: "${APP_TENANCY_ISSUERS:}"
+  # Gmail addresses that are admins by default (also seeds the durable allowlist).
+  # The google account for one of these gets roles ["user","admin"].
+  admin-emails: "${ADMIN_EMAILS:admin@hugmesh.systems}"
+  # Access-role ban / timed-suspension reconcile + expiry loop (the single-writer
+  # effector of the access_suspension desired state).
+  access-suspension:
+    # Single-writer guard. enabled=false (default) → AlwaysLeader (single replica /
+    # dev / test). In-cluster multi-replica flips this true (with
+    # spring.cloud.kubernetes.{enabled,leader.enabled}=true) to use the k8s Lease.
+    lease:
+      enabled: "${ACCESS_SUSPENSION_LEASE_ENABLED:false}"
+      role: "${ACCESS_SUSPENSION_LEASE_ROLE:access-suspension}"
+    reconcile:
+      interval-ms: "${ACCESS_SUSPENSION_RECONCILE_INTERVAL_MS:30000}"
+      initial-delay-ms: "${ACCESS_SUSPENSION_RECONCILE_INITIAL_DELAY_MS:15000}"
+    expiry:
+      interval-ms: "${ACCESS_SUSPENSION_EXPIRY_INTERVAL_MS:10000}"
+      initial-delay-ms: "${ACCESS_SUSPENSION_EXPIRY_INITIAL_DELAY_MS:12000}"
+  # DOMAIN-LOCK (force local-only) reconcile loop — the single-writer effector of the
+  # domain_lock desired state (ADD-active sibling of the access-suspension loop). It
+  # reuses the SAME LeaderElection (single-writer guard, app.access-suspension.lease)
+  # so both reconcile families share one Lease; only the @Scheduled cadence differs.
+  domain-lock:
+    reconcile:
+      interval-ms: "${DOMAIN_LOCK_RECONCILE_INTERVAL_MS:30000}"
+      initial-delay-ms: "${DOMAIN_LOCK_RECONCILE_INITIAL_DELAY_MS:18000}"
+  # DEVICE-LICENSE REGISTRY (schema 011) — the source of truth governing which operator
+  # may SSH into which mesh node. SECURITY-CRITICAL.
+  registry:
+    # FIX-NODEFAULT footgun override. Device registration REFUSES to stamp a residency
+    # when the platform is NOT multi-issuer (every token would map to DOMAIN_default, so
+    # a per-domain SSH boundary cannot be drawn) UNLESS this is explicitly true. Default
+    # false — a single-issuer cluster must opt in deliberately. The service ALSO rejects
+    # domain=='default' outright regardless of this flag.
+    allow-single-issuer: "${APP_REGISTRY_ALLOW_SINGLE_ISSUER:false}"
+    # FIX-SIGNCACHE detached-signature key for the /export both enforcement layers verify.
+    # NEVER COMMIT A REAL KEY. The deployment injects ONE of:
+    #   - APP_REGISTRY_SIGNING_KEY      base64 PKCS#8 Ed25519 private key (env/secret), OR
+    #   - APP_REGISTRY_SIGNING_KEY_PATH a path to a mounted PKCS#8 key file (secret mount).
+    # The public half (APP_REGISTRY_PUBLIC_KEY, base64 X.509) is advertised on /export and
+    # is the SAME key baked into each node's key-USB to verify. With NO key configured the
+    # export is served UNSIGNED and consumers MUST fail closed (keep their last-good cache).
+    # The defaults here embed NO secret — all three are empty.
+    signing-key: "${APP_REGISTRY_SIGNING_KEY:}"
+    signing-key-path: "${APP_REGISTRY_SIGNING_KEY_PATH:}"
+    public-key: "${APP_REGISTRY_PUBLIC_KEY:}"
+    # ── HEADSCALE-ANCHORED machine_key_fp AUTO-CAPTURE (SHIPS DARK / ADVISORY) ──────
+    # Headscale is the trust gate (it MINTS the machine keys). The superadmin picks an
+    # enrolled node from a headscale-backed PENDING list and assigns owner_type/domain/
+    # image_type; the fingerprint is an OPAQUE token (never typed/normalised). At register
+    # the BFF re-queries headscale to confirm the fp is still enrolled + the mesh matches.
+    headscale:
+      # Whether to shell out to `headscale nodes list -o json` at all. DEFAULT false so a
+      # deployment with no headscale binary (CI/dev/every test) boots clean: GET /pending
+      # then degrades to the registry-only view + register skips the re-query.
+      enabled: "${APP_REGISTRY_HEADSCALE_ENABLED:false}"
+      binary: "${APP_REGISTRY_HEADSCALE_BINARY:/usr/bin/headscale}"
+      # ⚠ PR-0 BLOCKER — which JSON field carries the canonical machine-key fingerprint
+      # (machineKey vs nodeKey) CANNOT be confirmed without a LIVE control node. provision.sh
+      # bakes the node's `.Self.PublicKey` (the NODE key), surfaced by `headscale nodes list`
+      # under `nodeKey`. Copying the WRONG field FAITHFULLY fail-closed-denies EVERYONE. This
+      # is a CONFIG PARAMETER, default = the design's best guess matching provision.sh. Confirm
+      # on a live node, freeze in docs/CANONICAL-FP.md, THEN trust it.
+      fp-field: "${APP_REGISTRY_HEADSCALE_FP_FIELD:nodeKey}"
+      # BREAK-GLASS, default ON (ships dark): when the register-time headscale re-validation
+      # fails / is unavailable, ACCEPT the superadmin-supplied opaque fingerprint anyway (with
+      # a loud WARN) rather than 409. This keeps the boundary ADVISORY until the canonical fp
+      # field is live-confirmed + frozen. Flip to false to make register fail-closed.
+      allow-manual-fp: "${APP_REGISTRY_HEADSCALE_ALLOW_MANUAL_FP:true}"
+      timeout-ms: "${APP_REGISTRY_HEADSCALE_TIMEOUT_MS:8000}"
+    # ── LAYER-A headscale ACL PUSH + reconcile loop (SHIPS DARK / OFF BY DEFAULT) ────
+    # The WRITE counterpart to the READ-ONLY `headscale` block above: this leg COMPILES
+    # the signed device-license export into a headscale ACL policy and PUSHES it via the
+    # headscale policy API (PUT /api/v1/policy). Layer-B (per-node sshd AuthorizedKeysCommand)
+    # remains the load-bearing SSH boundary; this loop only opens the headscale edge.
+    headscale-acl:
+      # Whether the reconcile loop may actually PUSH the compiled policy. DEFAULT false so a
+      # deployment with no headscale control node + no API key (CI/dev/every test/a fresh
+      # single-stick) boots clean: the loop compiles + diffs every tick through the Noop client
+      # and mutates NOTHING. Flip true ONLY after (1) the canonical machine_key_fp field is
+      # live-confirmed (docs/CANONICAL-FP.md — same blocker the READ side carries; the compiled
+      # policy keys nodes by that fp) and (2) an API key is provisioned.
+      enabled: "${APP_REGISTRY_HEADSCALE_ACL_ENABLED:false}"
+      # The headscale control-plane gRPC-gateway REST base URL (only used when enabled).
+      base-url: "${APP_REGISTRY_HEADSCALE_ACL_BASE_URL:http://headscale.headscale.svc.cluster.local:8080}"
+      # The headscale admin API key — Vault hugmesh/headscale-admin property `api-key`
+      # via ESO, injected as APP_REGISTRY_HEADSCALE_ACL_API_KEY. PLACEHOLDER-ONLY, NEVER inline
+      # a real key. Blank by default → no Authorization header (a real enabled push REQUIRES it).
+      api-key: "${APP_REGISTRY_HEADSCALE_ACL_API_KEY:}"
+      # The mesh whose signed export is compiled into headscale's single policy.
+      mesh-id: "${APP_REGISTRY_HEADSCALE_ACL_MESH_ID:mesh_default}"
+      reconcile-interval-ms: "${APP_REGISTRY_HEADSCALE_ACL_RECONCILE_INTERVAL_MS:60000}"
+      reconcile-initial-delay-ms: "${APP_REGISTRY_HEADSCALE_ACL_RECONCILE_INITIAL_DELAY_MS:30000}"
+      timeout-ms: "${APP_REGISTRY_HEADSCALE_ACL_TIMEOUT_MS:8000}"
+  # Kafka usage-event bus. enabled=false by default so a broker-less run boots
+  # clean (UsageService falls back to a direct ClickHouse write, clearly marked
+  # degraded). The deployment sets app.kafka.enabled=true.
+  kafka:
+    enabled: "${APP_KAFKA_ENABLED:false}"
+    topic:
+      usage-events: "${APP_KAFKA_TOPIC_USAGE_EVENTS:usage_events}"
+    consumer:
+      group-id: "${APP_KAFKA_CONSUMER_GROUP_ID:hugmesh-admin-bff-api-usage}"
+  # Anubis proof-of-work management proxy (Anubis is its own optional-service Deployment,
+  # not a sidecar of this BFF). enabled=false by default so a deployment without the
+  # Anubis optional service turned on does not get 503 cascades on the admin UI.
+  # The generator's admin-bff-api deployment manifest sets ANUBIS_ENABLED=true when the
+  # Anubis optional service is on for a brand.
+  # management-url is the Anubis internal management port (NOT the challenge port :8923).
+  # difficulty mirrors the ANUBIS_DIFFICULTY env var set on the Anubis pod — used only
+  # for display in the admin UI; this BFF does not enforce it.
+  anubis:
+    enabled: "${ANUBIS_ENABLED:false}"
+    management-url: "${ANUBIS_MANAGEMENT_URL:http://localhost:9090}"
+    difficulty: "${ANUBIS_DIFFICULTY:5}"
+  # PLATFORM-CAPABILITY detection — feeds GET /bff/admin/platform-capabilities so the admin UI
+  # can gracefully degrade its infra-dependent consoles (Backup & Recovery, ArgoCD dashboard,
+  # app-store) with a "not possible without that" notice instead of erroring when the
+  # foundational infra (x86 build node -> ArgoCD -> generated images, plus Velero) is ABSENT.
+  platform-capabilities:
+    k8s:
+      # The k8s probe seam. DEFAULT true -> the read-only, fail-safe Fabric8PlatformCapabilityProbe,
+      # so accurate ABSENCE/PRESENCE detection is the default rather than over-degrading to "absent"
+      # on a working cluster. The probe is fully READ-ONLY (LIST/GET only) and NEVER 500s: a k8s
+      # error / RBAC-denied / no client all degrade to the capability false + a warning (never a
+      # faked true). Set false (the NoopPlatformCapabilityProbe) to disable cluster dialing entirely
+      # — it then reports every runtime capability absent + a NOT_WIRED warning, which the UI now
+      # surfaces honestly as "couldn't determine" rather than asserting factual absence.
+      #
+      # RBAC: for accurate detection the admin-bff ServiceAccount needs READ (list/get) on the
+      # probed resources — get on the argoproj/velero CRDs (apiextensions
+      # customresourcedefinitions), get on Deployments in the argocd + velero namespaces, and list
+      # on Nodes. Without that grant the probe RBAC-denies -> reports the capabilities undetected
+      # (false + warning), which is surfaced honestly in the UI. Granting that read-only RBAC is an
+      # owed GitOps/generator follow-up.
+      enabled: "${PLATFORM_CAPABILITIES_K8S_ENABLED:true}"
+  # Best-effort mirror of route-access rules into the Cassandra table the gateways
+  # poll (hugmesh_gateway.gateway_route_access) + the authoritative url_registry.
+  mirror:
+    cassandra:
+      enabled: "${ROUTE_MIRROR_ENABLED:true}"
+      contact-point: "${ROUTE_MIRROR_CASSANDRA:cassandra.hugmesh-pki.svc.cluster.local:9042}"
+      keyspace: "${ROUTE_MIRROR_KEYSPACE:hugmesh_gateway}"
+      local-dc: "${ROUTE_MIRROR_LOCAL_DC:dc1}"
+      # SELF-HEALING route-mirror reconcile (G3 upsert self-heal + G4 guarded delete-reconcile).
+      reconcile:
+        # G4: whether the guarded orphan-prune pass runs — it DELETEs mirror rows whose
+        # authoritative Postgres rule was removed but whose per-write mirror.delete was
+        # swallowed (closes the delete-side over-grant gap). DEFAULT true. The empty/failed
+        # Postgres-read guard (never mass-evict on a transiently-empty/failed read) applies
+        # REGARDLESS of this flag; the flag only turns the prune pass on/off.
+        prune-orphans: "${ROUTE_MIRROR_RECONCILE_PRUNE_ORPHANS:true}"
+      # SHIPS DARK — Cassandra connection HARDENING (auth + TLS) applied by the
+      # programmatic CqlSession builders via CassandraSessionFactory. The DataStax
+      # driver is wired by Java API (CassandraAutoConfiguration is excluded, so the
+      # spring.cassandra.* username/ssl keys are INERT here). BOTH legs default OFF:
+      # with them off the produced session is the prior plaintext / no-auth session,
+      # so merging is INERT until the operator flips a flag. These flags are
+      # INDEPENDENT of the enabled / hs-token-registry connectivity gates above —
+      # flipping a hardening flag never changes connectivity semantics.
+      # GATE: do NOT enable until the Cassandra cluster itself has auth + TLS turned
+      # on, or every dial fails closed.
+      auth:
+        # Cassandra-native auth (PlainTextAuthProvider). DEFAULT false.
+        enabled: "${CASSANDRA_AUTH_ENABLED:false}"
+        # Credentials from env / ESO-synced Secret — NEVER in git. Blank by default.
+        username: "${CASSANDRA_USERNAME:}"
+        password: "${CASSANDRA_PASSWORD:}"
+      ssl:
+        # Driver-side TLS (.withSslContext from a PKCS12 truststore). DEFAULT false.
+        enabled: "${CASSANDRA_SSL_ENABLED:false}"
+        # Truststore PATH mirrors the server.ssl /stores layout (mounted into the
+        # pod). Truststore PASSWORD via env (in-pod generated) — blank by default,
+        # NEVER in git.
+        trust-store: "${CASSANDRA_SSL_TRUST_STORE:/stores/cassandra-truststore.p12}"
+        trust-store-type: "${CASSANDRA_SSL_TRUST_STORE_TYPE:PKCS12}"
+        trust-store-password: "${CASSANDRA_SSL_TRUST_STORE_PASSWORD:}"
+        # Optional client keystore for MUTUAL TLS (omit for server-auth-only TLS).
+        # Blank by default; password via env, NEVER in git.
+        key-store: "${CASSANDRA_SSL_KEY_STORE:}"
+        key-store-type: "${CASSANDRA_SSL_KEY_STORE_TYPE:PKCS12}"
+        key-store-password: "${CASSANDRA_SSL_KEY_STORE_PASSWORD:}"
+  # WORKLOAD CONSOLE (podman/OpenShift-equivalent pod mgmt + live-log + interactive TTY).
+  # SHIPS DARK — THREE independent OFFs: this generator gate (enabled), the DB master flag
+  # (workload_console_config.admin_enabled / dangerous_tier_enabled), and an active grant.
+  workload-console:
+    # The generator gate. DEFAULT false. When the generator emits the feature
+    # (workloadConsole.enabled=true) it sets this true AND provisions the two least-privilege
+    # ServiceAccounts + the namespace allowlist below. With it false the WebFilter 404s the
+    # whole /bff/{admin,superadmin}/workloads/** prefix (the prefix does not exist).
+    enabled: "${WORKLOAD_CONSOLE_ENABLED:false}"
+    # The k8s seam. DEFAULT false -> the fail-closed NoopWorkloadClient (every call 503s; no
+    # k8s API is dialed). The in-cluster deployment flips this true (with the read/mutate SA
+    # tokens mounted) to use Fabric8WorkloadClient.
+    k8s:
+      enabled: "${WORKLOAD_CONSOLE_K8S_ENABLED:false}"
+    # STEP-0b APP-TIER namespace allowlist — the ONLY namespaces the console may EVER touch,
+    # checked BEFORE any k8s call. EXCLUDES every infra tier (hugmesh-pki / devops /
+    # observability) so a cross-TIER reach is impossible. EMPTY by default (fail-closed: every
+    # {ns} is out-of-allowlist -> 403). The generator emits the real app-tier list.
+    namespace-allowlist: "${WORKLOAD_CONSOLE_NAMESPACE_ALLOWLIST:}"
+    # The read-only exec command allowlist (first token). EMPTY by default.
+    exec-read-only-commands: "${WORKLOAD_CONSOLE_EXEC_READONLY:}"
+    # Curated port-forward (namespace, workload, port) triples — EXCLUDING every datastore/
+    # Vault/PKI/Casdoor. EMPTY by default; the generator emits the curated list. Bind via
+    # WORKLOAD_CONSOLE_PORT_FORWARD_* env or a mounted config (a list of {namespace,workload,
+    # port}).
+    port-forward-allowlist: []
+    # Default grant TTL (~24h, DECISION 4/6).
+    grant-ttl-hours: "${WORKLOAD_CONSOLE_GRANT_TTL_HOURS:24}"
+    # The grant-expiry sweep cadence (Lease-gated single-writer; reuses the suspension-expiry
+    # shape). Returns a granted admin to dark when the TTL lease elapses.
+    expiry:
+      interval-ms: "${WORKLOAD_CONSOLE_EXPIRY_INTERVAL_MS:30000}"
+      initial-delay-ms: "${WORKLOAD_CONSOLE_EXPIRY_INITIAL_DELAY_MS:20000}"
+  # IN-UI DEVICE SSH-TERMINAL — the LIVE transport behind the (already-shipped)
+  # /bff/admin/desktop/ssh-terminal authorize endpoint: a WebSocket at
+  # /bff/admin/device-terminal/{deviceId} that, AFTER the connect-time gates (authenticated
+  # principal + domain-from-validated-issuer + active own-domain device-ssh-license re-check +
+  # step-up), streams an interactive xterm.js shell to an authorized mesh device.
+  # SHIPS DARK — TWO independent OFFs: this gate (enabled), AND the dial seam. enabled=false
+  # (DEFAULT) wires the no-dial StubDeviceSshTransport; enabled=true wires the REAL
+  # SshDeviceTerminalTransport (idle-timeout + max-sessions + real PTY lifecycle), but it dials
+  # through the DeviceSshChannelFactory whose only shipped impl FAILS CLOSED — there is no SSH
+  # library + no device host-key (known-hosts) source yet (a FLAGGED follow-on decision), so even
+  # flag-on NO real device is reached until a concrete host-key-verifying factory lands. The
+  # connect-time gates (license re-check + step-up) ALWAYS run regardless.
+  #
+  # STEP-UP CONTRACT (changed in this leg): the token rides the X-Device-Terminal-StepUp header
+  # (non-browser) OR a Sec-WebSocket-Protocol subprotocol value prefixed
+  # "hugmesh.device-terminal.stepup." (browser). The old ?stepUp= URL query is REMOVED
+  # (token-in-URL leak). No UI consumes this yet.
+  device-terminal:
+    # The gate. DEFAULT false. The connect-time license + step-up re-checks ALWAYS run; this only
+    # decides whether the LIVE transport is opened after they pass.
+    enabled: "${DEVICE_TERMINAL_ENABLED:false}"
+    # ENFORCED by the real transport: a session idle (no stdin/resize/output) longer than
+    # idle-timeout is torn down; an open past max-sessions (per replica) is rejected. 0 disables.
+    idle-timeout: "${DEVICE_TERMINAL_IDLE_TIMEOUT:15m}"
+    max-sessions: "${DEVICE_TERMINAL_MAX_SESSIONS:16}"
+    # The SECOND, INDEPENDENT ships-dark gate — the REAL DIAL. DEFAULT false, so the dial seam is
+    # the fail-closed UnconfiguredDeviceSshChannelFactory and NO real device is ever dialed even
+    # with the transport enabled above. Flipping dial.enabled=true wires the host-key-PINNED
+    # SshjDeviceSshChannelFactory (sshj): it refuses unless an ACTIVE device_ssh_dial row exists for
+    # the device AND the device's presented host key matches the pinned host_key_fp (TOFU FORBIDDEN
+    # — no PromiscuousVerifier, no auto-accept), and it authenticates with the per-device dial
+    # PRIVATE key read at dial time from the ESO-synced K8s Secret mounted at key-mount-path (the
+    # Secret is named per device by device_ssh_dial.k8s_secret_name). The key bytes are NEVER
+    # logged/persisted. Enabling this REQUIRES a mandatory security re-review.
+    dial:
+      enabled: "${DEVICE_TERMINAL_DIAL_ENABLED:false}"
+      # Mount dir of the per-device ESO-synced K8s Secret holding the private dial key. A PATH only.
+      key-mount-path: "${DEVICE_TERMINAL_DIAL_KEY_MOUNT:/var/run/secrets/device-ssh-dial}"
+      # File within key-mount-path that holds the PEM/OpenSSH private dial key.
+      key-file: "${DEVICE_TERMINAL_DIAL_KEY_FILE:id_dial}"
+      # The node sshd port the BFF dials.
+      port: "${DEVICE_TERMINAL_DIAL_PORT:22}"
+      # Socket connect timeout for the dial.
+      connect-timeout: "${DEVICE_TERMINAL_DIAL_CONNECT_TIMEOUT:10s}"
+  # ADMIN SSH KEY-ISSUANCE (SSH PR-4, Option B) — MINT an Ed25519 credential for an operator to
+  # SSH a licensed device by registering its SHA256 fingerprint into the backing
+  # device_ssh_license (schema 011); the node's AuthorizedKeysCommand already matches the offered
+  # key's %f against key_fingerprints and re-emits it, so NO generator change is needed and the
+  # private key is held only transiently (leader-pinned, single-use, 5m TTL) for ONE download —
+  # never persisted (audit row in schema 172 stores ONLY the non-secret public line + fingerprint).
+  # SHIPS DARK: DEFAULT false. While false, the issue/download/revoke verbs refuse (503 dark
+  # descriptor / no keygen) but the SUPERADMIN-only role + step-up + own-domain authorization is
+  # REAL and runs first. The in-cluster deployment flips this true (with the workload-console
+  # step-up mint path reachable) once the feature is greenlit.
+  ssh-issue:
+    enabled: "${APP_SSH_ISSUE_ENABLED:false}"
+  # SUPERADMIN GO-LIVE WIZARD backend (go-live wizard v1, the admin web-UI half). SHIPS
+  # DARK: DEFAULT false. While false, the mutating verbs (record/withdraw an intent) refuse
+  # (503 dark descriptor / no DB write) but the SUPERADMIN role + step-up authorization is
+  # REAL and runs first, and the reads (status / provider catalog / signed export) stay live
+  # so the wizard UI renders honestly and the export channel is testable. CONTRACT: even
+  # when ENABLED, this in-cluster service records SIGNED INTENT ONLY — the go-live switch is
+  # the HOST file /etc/hugmesh/go-live (+ release-state), which ONLY the host-side
+  # go-live agent writes after verifying the detached-Ed25519 /bff/admin/go-live/export
+  # (RegistrySigner key, app.registry.signing-key*) against its key-USB-baked public half;
+  # the BFF never flips (or claims to have flipped) the marker. NO secrets ride this
+  # feature: provider is a catalog key; tunnel/DNS/DDNS tokens route to keys-USB/Vault on
+  # the generator side, never this service.
+  go-live:
+    enabled: "${APP_GO_LIVE_ENABLED:false}"
+  # MANAGED BACKING-SERVICES admin plane (the admin web-UI half of the managed/self-hosted
+  # axis, cloud-deploy DESIGN I8-DESIGN Lane M3). SHIPS DARK: DEFAULT false. While false the
+  # mutating verb (PUT /bff/superadmin/backing-services/{id}/mode) refuses (503 dark descriptor
+  # / no DB write) but the SUPERADMIN role + step-up (X-BackingServices-StepUp) authorization is
+  # REAL and runs first, and the reads (catalog + current recorded mode per service) stay live
+  # so the console renders honestly. CONTRACT: even when ENABLED, this records desired-state
+  # INTENT ONLY — the live flip (prune the in-mesh workload + re-point the consumers' endpoints
+  # at a managed cloud service) is a build-time act (the generator's gate_backing_services()) or
+  # a future reconciler act; tier-3 (docs-only) services are REFUSED a mode change (409). NO
+  # secrets ride this feature: endpoint is a coordinate, creds_ref a reference; managed creds
+  # route to ESO/Vault on the generator side, never this service. Property-switched only
+  # (@ConditionalOnProperty / env), never a profile-named additional-location file.
+  backing-services:
+    enabled: "${APP_BACKING_SERVICES_ENABLED:false}"
+    # The Lease-gated single-writer reconcile loop SKELETON. SHIPS DARK — DEFAULT false: the
+    # scheduled tick returns early, so nothing runs at defaults. When enabled it still only
+    # calls the Noop effector (v1 logs-only; the real managed-mode flip is deferred to a
+    # follow-on generator/effector leg). Reuses the SHARED LeaderElection
+    # (app.access-suspension.lease), so single-replica / dev / test fall back to AlwaysLeader.
+    reconcile:
+      enabled: "${APP_BACKING_SERVICES_RECONCILE_ENABLED:false}"
+      # Reconcile cadence (fixedDelay, ms) + boot grace before the first tick (ms).
+      interval-ms: "${APP_BACKING_SERVICES_RECONCILE_INTERVAL_MS:30000}"
+      initial-delay-ms: "${APP_BACKING_SERVICES_RECONCILE_INITIAL_DELAY_MS:24000}"
+  # SUPERADMIN APP-STORE provisioning EFFECTOR (the AddService deploy-path + the
+  # service_deployment teardown leg). SHIPS DARK — DEFAULT false. When false the
+  # ArgoCdConfig wires the NoopArgoCdClient: the AddServiceEffector still runs its full
+  # sequence (per-service Casdoor role → route-access rule → ArgoCD Application) but the
+  # ArgoCD leg makes NO real call, so a dev/test/CI run dials no ArgoCD. The in-cluster
+  # deployment flips this true (with the ArgoCD API token mounted) to use RestArgoCdClient.
+  # The Casdoor role leg is independently gated by casdoor.admin.enabled (a null
+  # CasdoorAdminClient → the role step is skipped). DOCKERFILE/ZIP sources stay guarded
+  # until the in-cluster Kaniko builder is enabled below AND a real x86 build node is
+  # present (see GET /bff/superadmin/service-store/builder, ServiceCatalogBuilderController).
+  appstore:
+    effector:
+      enabled: "${APPSTORE_EFFECTOR_ENABLED:false}"
+    argocd:
+      # The ArgoCD API server (in-cluster). Only dialed when the effector is enabled.
+      base-url: "${APPSTORE_ARGOCD_BASE_URL:https://argocd-server.argocd.svc.cluster.local}"
+      # ArgoCD API auth token — NEVER in git; injected by the deployment (empty default).
+      auth-token: "${APPSTORE_ARGOCD_AUTH_TOKEN:}"
+      # The ArgoCD AppProject new Applications are created under.
+      project: "${APPSTORE_ARGOCD_PROJECT:default}"
+    # In-cluster Kaniko image builder for DOCKERFILE/ZIP Service Catalog sources
+    # (KanikoBuildLauncher, PR #152). SHIPS DARK — DEFAULT false: with the flag off,
+    # NO KanikoBuildLauncher bean is created (@ConditionalOnProperty) and
+    # AddServiceEffector rejects DOCKERFILE/ZIP with a 400 "requires the in-cluster
+    # builder". Flipping this true is NECESSARY but not SUFFICIENT for a real build —
+    # the cluster also needs an actual x86/amd64 Node labelled
+    # `hugmesh.systems/build-node=true` (Fabric8PlatformCapabilityProbe.BUILD_NODE_LABEL)
+    # for a Kaniko Job to schedule. GET /bff/superadmin/service-store/builder reports
+    # BOTH the config flag and the live build-node presence so the UI reflects the
+    # true capability instead of a hardcoded static gate.
+    builder:
+      enabled: "${APPSTORE_BUILDER_ENABLED:false}"
+      # The namespace Kaniko build Jobs are created in. Only used when the builder is enabled.
+      namespace: "${APPSTORE_BUILDER_NAMESPACE:hugmesh-service-catalog-builds}"
+      # The registry base the built image is pushed to (<registry>/<brand>/<serviceKey>:<sha>).
+      registry: "${APPSTORE_BUILDER_REGISTRY:registry.hugmesh.systems}"
+    # Optional CSV host allowlist (LAYER-2 SSRF backstop) applied to both the LIVE
+    # (SELECT/GIT → ArgoCD) and BUILD (DOCKERFILE/ZIP → Kaniko) repoUrl paths. Empty
+    # (the default) means any well-formed https/git/ssh host with a non-empty host
+    # is accepted (the structural scheme/host guard still runs).
+    repo-host-allowlist: "${APPSTORE_REPO_HOST_ALLOWLIST:}"
+    # Service-Store FEDERATE leg — registers a freshly-scaffolded/deployed service's UI as a
+    # federation module against federation-api's SUPERADMIN admin API
+    # (/api/federation/admin/modules). SHIPS DARK — DEFAULT false: with the flag off, NO
+    # RestFederationModuleClient bean is created (@ConditionalOnProperty) and the fail-closed
+    # NoopFederationModuleClient is the bean, so a federate call is LOGGED only, dials no
+    # federation-api, and FederateOutcome.federationReal is false. Flip
+    # APPSTORE_FEDERATION_ENABLED=true (with auth-token provisioned) to make the real call. The
+    # auth-token MUST be a Casdoor JWT carrying ROLE_SUPERADMIN (federation-api's admin API is
+    # hasRole('SUPERADMIN') — there is no X-Internal-Token path); NEVER in git, empty default.
+    federation:
+      enabled: "${APPSTORE_FEDERATION_ENABLED:false}"
+      base-url: "${APPSTORE_FEDERATION_BASE_URL:http://hugmesh-federation-api.hugmesh-backend.svc.cluster.local:8080}"
+      # Casdoor SUPERADMIN JWT for the federation-api admin API. NEVER in git; env-injected,
+      # empty default (a real enabled federate REQUIRES it).
+      auth-token: "${APPSTORE_FEDERATION_AUTH_TOKEN:}"
+    # SCAFFOLD render tokens — the NON-secret coordinates substituted into the embedded
+    # example-codebase skeletons (resources/scaffold/*). The per-service IDENTITY tokens
+    # (APP_SLUG / BRAND / HOST_NAME / REPO_NAME / …) are derived per request from
+    # (domain, serviceKey, displayName); these are the fixed org/infra tokens whose VALUES follow
+    # the generator's own render-repo-tree.sh derivations (NPM_SCOPE = slug(org); GENERATOR_ORG_GROUP
+    # = <npmScope>/hugmesh-generator). Only org / generator-org-group feed today's four
+    # skeletons (via NPM_SCOPE + GENERATOR_ORG_GROUP); the rest are carried so a re-vendored
+    # skeleton that introduces one renders without a code change.
+    scaffold:
+      # The org whose slug becomes the npm scope (@<slug>/…) + the CI-include group.
+      org: "${APPSTORE_SCAFFOLD_ORG:hugmesh}"
+      # Optional OVERRIDE for the GitLab CI-include project path. BLANK (default) derives
+      # <slug(org)>/hugmesh-generator (the group/project the .gitlab-ci.yml `include:` needs);
+      # set it to pin a different include path.
+      generator-org-group: "${APPSTORE_SCAFFOLD_GENERATOR_ORG_GROUP:}"
+      harbor-project: "${APPSTORE_SCAFFOLD_HARBOR_PROJECT:hugmesh}"
+      mesh-tag: "${APPSTORE_SCAFFOLD_MESH_TAG:mesh_default}"
+      ns-prefix: "${APPSTORE_SCAFFOLD_NS_PREFIX:hugmesh}"
+      headscale-url: "${APPSTORE_SCAFFOLD_HEADSCALE_URL:http://headscale.headscale.svc.cluster.local:8080}"
+      profile: "${APPSTORE_SCAFFOLD_PROFILE:prod}"
+  # CLOUD-BACKUPS Velero leg. SHIPS DARK — DEFAULT false. The `effector.enabled` flag gates BOTH
+  # the Velero CR effector (PR #76 — applies Backup/Restore CRs + reads the installed-services
+  # ConfigMap via VeleroBackupEffector + ConfigMapRunningServiceProvider) AND this leg's
+  # catalog-write STATUS RECONCILER + its fabric8 status reader (BackupStatusReconcilerConfig).
+  # With the flag off the foundation's NoopBackupEffector + StubRunningServiceProvider stay the
+  # beans, NO reconciler bean is created, no @Scheduled sweep runs, and nothing lists Velero CRs
+  # or dials a cluster — a created backup_set is written to the catalog but no Velero CR is
+  # emitted and no cluster ConfigMap is read. The in-cluster deployment flips this true (with the
+  # least-privilege Velero ServiceAccount token mounted) to use the real effector + reader. The
+  # fabric8 KubernetesClient is built LAZILY (per apply/read) so a missing in-cluster context
+  # never fails BFF boot. The restore path stays STEP-UP-gated (X-Backup-StepUp) AND flag-gated —
+  # this flag does not loosen any authz.
+  backups:
+    effector:
+      enabled: "${BACKUPS_EFFECTOR_ENABLED:false}"
+      # The namespace Velero (and therefore its Backup/Restore CRs) lives in. The reconciler lists
+      # CRs here; the effector applies them here. Only used when enabled.
+      velero-namespace: "${BACKUPS_VELERO_NAMESPACE:velero}"
+      # The per-brand namespace suffixes a DOMAIN backup includes (<domainSlug>-<suffix>) — the
+      # <domain>-be PerServiceIdentity convention. A DOMAIN backup is ALSO walled by the
+      # hugmesh.systems/domain labelSelector (brand isolation), so these are the namespace
+      # leg of the double wall.
+      brand-namespace-suffixes: "${BACKUPS_BRAND_NAMESPACE_SUFFIXES:be,fe}"
+      # Velero backup TTL (the CR spec.ttl). Empty omits it (Velero install default).
+      backup-ttl: "${BACKUPS_BACKUP_TTL:720h0m0s}"
+      # The namespace the per-brand installed-services ConfigMap
+      # (hugmesh-installed-services-<domainSlug>) is read from for the per-service menu.
+      installed-services-namespace: "${BACKUPS_INSTALLED_SERVICES_NAMESPACE:hugmesh-backend}"
+    # The status-sweep reconciler cadence (only active when effector.enabled=true).
+    reconcile:
+      # How often the status sweep runs (fixedDelay, ms). 30s: a backup that finishes is reflected
+      # in the catalog within ~one cadence.
+      interval-ms: "${BACKUPS_RECONCILE_INTERVAL_MS:30000}"
+      # Boot grace before the first sweep (ms) — lets the app + DB settle, as the games loop does.
+      initial-delay-ms: "${BACKUPS_RECONCILE_INITIAL_DELAY_MS:20000}"
+
+  # OPTIONAL-SERVICES live add/remove reconciler — the Lease-gated single writer of the
+  # optional-services ApplicationSet element list (apps/13a) + the installed-services
+  # ConfigMap greying booleans, reconciled from the OptionalService CRs
+  # (platform.hugmesh.systems/v1alpha1). See docs/OPTIONAL-SERVICES.md §7.1.
+  #
+  # SHIPS DARK: enabled=false (the DEFAULT — every dev/test/CI run and every deployment
+  # until deliberately switched on). With the flag off the three Noop seams
+  # (NoopOptionalServiceClient + the two Noop writers) are the beans, so the OptionalService
+  # reconciler's scheduled tick reads an EMPTY CR list and writes nothing — no cluster is
+  # dialed and 13a + the ConfigMap stay whatever the build rendered. The reconciler reuses
+  # the SHARED LeaderElection (app.access-suspension.lease) as its single-writer guard, so
+  # single-replica / dev / test fall back to AlwaysLeader.
+  #
+  # ⚠ Enabling this on a LIVE cluster REQUIRES the hardcoded-app cut-over first
+  # (docs/OPTIONAL-SERVICES.md §10): flipping akkoma/tuwunel/phpbb on before deleting the
+  # hardcoded apps/30-* Applications double-manages the same manifests. It also relies on
+  # the ignoreDifferences keystone on both ArgoCD roots + apps/16 (generator repo).
+  optional-services:
+    reconcile:
+      enabled: "${APP_OPTIONAL_SERVICES_RECONCILE_ENABLED:false}"
+      # The namespace the optional-services ApplicationSet + the OptionalService CRs live in.
+      namespace: "${APP_OPTIONAL_SERVICES_RECONCILE_NAMESPACE:devops}"
+      # The namespace the installed-services ConfigMap (greying mirror) lives in.
+      policy-namespace: "${APP_OPTIONAL_SERVICES_RECONCILE_POLICY_NAMESPACE:hugmesh-policy}"
+      # Reconcile cadence (fixedDelay, ms) + boot grace before the first tick (ms).
+      interval-ms: "${APP_OPTIONAL_SERVICES_RECONCILE_INTERVAL_MS:30000}"
+      initial-delay-ms: "${APP_OPTIONAL_SERVICES_RECONCILE_INITIAL_DELAY_MS:22000}"
+
+  # BearerForwardingFilter's native-login (bff_) -> custody-JWT exchange, for a native-login
+  # ADMIN's calls to federation-api. SHIPS DARK: enabled=false (default) => SessionExchangeConfig's
+  # beans do not exist => zero extra network calls, and a native-login caller's federation-api
+  # request carries NO Authorization header — byte-identical to pre-fix behaviour. This flag is
+  # SEPARATE FROM (and must be turned on IN ADDITION TO) app.bff.custody-key + app.bff.oidc.enabled
+  # (auth-core) — those gate whether POST /bff/internal/session/exchange can serve a real Bearer at
+  # all; THIS flag gates whether BearerForwardingFilter even ATTEMPTS to call it. Enabling this
+  # alone (without custody configured) is harmless but pointless: every attempt 503s
+  # ("custody disabled") and the filter still falls through to no header, after one extra
+  # self-loopback round trip. See SessionExchangeConfig's class javadoc for the full contract
+  # (including why admin-bff-api calls ITSELF over HTTP rather than short-circuiting in-process).
+  bff-exchange:
+    enabled: "${APP_BFF_EXCHANGE_ENABLED:false}"
+    # Self-call target override. Blank (default) auto-computes
+    # http(s)://hugmesh-admin-bff-api.hugmesh-backend.svc.cluster.local:<server.port> — the
+    # SAME Service DNS name mod-bff-api/the gateway already use to reach admin-bff-api (NOT literal
+    # localhost — this service's TLS cert is signed for the Service name, not localhost), tracking
+    # server.ssl.enabled automatically — see SessionExchangeConfig. Only set this to target a
+    # different host in an unusual topology.
+    self-base-url: "${APP_BFF_EXCHANGE_SELF_BASE_URL:}"
+    # Positive-swap cache: sha256(bff_ token) -> custody JWT, mirrors the gateway's
+    # BffJwtExchangeWebFilter cache exactly. The TTL IS the suspension-bypass window (a cache hit
+    # skips the exchange endpoint's own suspensionGate() re-check) — hard-clamped to a 60s ceiling
+    # regardless of this value; <=0 disables the cache entirely (zero suspension-bypass window, one
+    # exchange call per request).
+    cache-ttl-ms: "${APP_BFF_EXCHANGE_CACHE_TTL_MS:5000}"
+    cache-max-size: "${APP_BFF_EXCHANGE_CACHE_MAX_SIZE:10000}"
+    # Timeout for the self-loopback exchange call. A transient failure here degrades to no
+    # Authorization header (soft fail-open) — see SessionExchangeService's class javadoc for why
+    # that is the correct posture here (federation-api has its own independent fail-closed gate).
+    request-timeout-ms: "${APP_BFF_EXCHANGE_REQUEST_TIMEOUT_MS:3000}"
+
+# SpringDoc OpenAPI. The spec at /v3/api-docs is the source the platform
+# ng-openapi-gen typed clients, the admin api-docs / SwaggerUI federated module,
+# and the docs pipeline consume. Spec + UI are gated by SecurityConfig:
+# permitAll under the dev/test profile (so `gen:fetch` can curl the spec without
+# a token) and ROLE_ADMIN otherwise (prod) — so leaving them enabled here is
+# safe in every environment. Mirrors the hugmesh.games BFF springdoc block.
+springdoc:
+  # Force JSON as the default produced media type. Without this, springdoc emits
+  # `*/*` for endpoints with no explicit `produces`, which ng-openapi-gen maps to a
+  # `Blob` response type — breaking JSON parsing in the generated typed clients.
+  # Endpoints that explicitly produce octet-stream (binary downloads) keep their
+  # declared media type and are unaffected. Mirrors the hugmesh-user-bff-api block.
+  default-produces-media-type: application/json
+  api-docs:
+    enabled: true
+    path: /v3/api-docs
+    # Emit OpenAPI 3.0.1 (not springdoc-3.x's new 3.1.0 default). The Boot-4 upgrade
+    # bumped springdoc 2.x -> 3.x, which silently switched the dumped spec to 3.1.0 —
+    # but the Angular UIs generate their typed clients with ng-openapi-gen 0.51.0,
+    # which CANNOT parse 3.1.0 (its `type: [...]` arrays throw "type.startsWith is not
+    # a function"). Pinning back to 3.0 keeps the Boot-4 upgrade API-spec-neutral so
+    # the BFF<->UI ng-openapi-gen contract is unchanged. Revisit if the UIs upgrade
+    # ng-openapi-gen to a 3.1-capable release.
+    version: openapi_3_0
+  swagger-ui:
+    enabled: true
+    path: /swagger-ui.html
+  # Restrict the component scan to this BFF's own controllers so the spec stays
+  # the admin-BFF surface only (no stray springframework/actuator paths leak in).
+  packages-to-scan: systems.hugmesh.adminbff
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+server:
+  port: 8080
+  # ── API-to-API mTLS enforcement (server side) ──────────────────────────────
+  # When the in-cluster keystore initContainer is mounted (the gateway-chart
+  # build-keystore equivalent: PKCS12 keystore.p12 = this service's Vault-PKI
+  # identity + truststore.p12 = the cluster CA), the deployment flips these on so
+  # the TLS handshake REQUIRES a client cert that chains to the cluster CA. A
+  # caller that was NOT deployed+signed by our Vault/ESO PKI process holds no such
+  # cert, so its handshake is rejected — it cannot read or call this API at all.
+  #
+  # Defaults keep local/dev/CI working: ssl.enabled=false (plaintext) and
+  # client-auth=none, so the truststore is never opened and existing tests are
+  # unaffected. In-cluster, the deployment sets SSL_ENABLED=true,
+  # SSL_CLIENT_AUTH=need and points the key-store/trust-store at the mounted
+  # PKCS12 stores (default paths below match the gateway chart's /stores layout).
+  # The store passwords are generated in-pod and injected via env (never in git).
+  ssl:
+    enabled: "${SSL_ENABLED:false}"
+    client-auth: "${SSL_CLIENT_AUTH:none}"
+    key-store: "${SSL_KEY_STORE:/stores/keystore.p12}"
+    key-store-type: "${SSL_KEY_STORE_TYPE:PKCS12}"
+    key-store-password: "${SSL_KEY_STORE_PASSWORD:}"
+    trust-store: "${SSL_TRUST_STORE:/stores/truststore.p12}"
+    trust-store-type: "${SSL_TRUST_STORE_TYPE:PKCS12}"
+    trust-store-password: "${SSL_TRUST_STORE_PASSWORD:}"
+    # TLSv1.3 floor (forward-secret, AEAD-only) — matches the gateway chart.
+    enabled-protocols: "${SSL_ENABLED_PROTOCOLS:TLSv1.3}"
