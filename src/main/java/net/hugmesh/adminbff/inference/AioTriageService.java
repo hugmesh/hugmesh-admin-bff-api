@@ -1,0 +1,95 @@
+package net.hugmesh.adminbff.inference;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
+import net.hugmesh.adminbff.notification.FeatureNotificationService;
+
+import java.util.List;
+
+/**
+ * AIOps: turn a batch of mesh infra / security signals into an admin-facing Matrix
+ * {@code @system} alert via the edge-AI node, REUSING the existing notifications
+ * subsystem end-to-end:
+ *
+ * <pre>
+ *   signals ──▶ {@link EdgeAiInferenceClient#triageInfra} ──▶ {@link FeatureNotificationService}
+ *               (GPU edge-AI triage)          (INFRA_IMPACTING outbox row, per admin)
+ *                                                      │
+ *                                                      ▼  ExternalChannelReconciler (existing)
+ *                                              Matrix @system DM to each admin/superadmin
+ * </pre>
+ *
+ * <p>The signal COLLECTION side (a node/DaemonSet collector tailing Snort/Suricata + AIDE +
+ * k8s events) is a separate, node-level concern; this service is the triage→notify producer
+ * that such a collector (or a scheduled reconciler) drives by handing it the raw signals plus
+ * the admin recipient subjects for the tenant.
+ *
+ * <p>Ships DARK with the edge-AI client: when {@code inference.edge-ai.enabled=false} (default)
+ * the triage is a {@code disabled} sentinel and NO notification is emitted, so a mesh without a
+ * GPU/edge-AI node is unaffected. Idempotent: the {@code eventKey} is the outbox natural key, so
+ * a retried signal produces no duplicate alert.
+ */
+@Service
+public class AioTriageService {
+
+    private static final Logger log = LoggerFactory.getLogger(AioTriageService.class);
+
+    private final EdgeAiInferenceClient edgeAi;
+    private final FeatureNotificationService notifications;
+
+    public AioTriageService(EdgeAiInferenceClient edgeAi, FeatureNotificationService notifications) {
+        this.edgeAi = edgeAi;
+        this.notifications = notifications;
+    }
+
+    /**
+     * Triage {@code signals} on the edge-AI node and, IFF a real verdict is produced, emit one
+     * {@code infra-impacting} notification per admin recipient (the reconciler delivers them as
+     * Matrix {@code @system} DMs). Fail-open: a disabled/degraded edge-AI yields no alert rather
+     * than an error, so a stalled inference node never blocks the collector.
+     *
+     * @param domain        the validated tenant (never user-settable)
+     * @param adminSubjects the admin/superadmin Casdoor subjects to alert (recipient resolution
+     *                      is the caller's RBAC concern — this service never widens the audience)
+     * @param eventKey      a stable key for this signal batch (the outbox natural key → idempotent)
+     * @param signals       the raw infra/NIDS/integrity/k8s signal text
+     * @return the number of admins newly alerted (deduped retries count 0)
+     */
+    public Mono<Long> triageAndNotify(String domain, List<String> adminSubjects,
+                                      String eventKey, String signals) {
+        if (domain == null || domain.isBlank()) {
+            return Mono.error(new IllegalArgumentException("domain is required"));
+        }
+        if (adminSubjects == null || adminSubjects.isEmpty()) {
+            return Mono.error(new IllegalArgumentException("at least one admin recipient is required"));
+        }
+        return edgeAi.triageInfra(signals)
+                .flatMap(triage -> alertAdminsOnTriage(domain, adminSubjects, eventKey, triage));
+    }
+
+    /**
+     * Apply one edge-AI {@code triage} verdict: when the verdict is unavailable (disabled/degraded)
+     * emit no alert (fail-open, returns 0); otherwise fan out one {@code INFRA_IMPACTING}
+     * notification per admin recipient and count the newly-alerted admins. Extracted from the
+     * {@code flatMap} lambda to keep the reactive operator body short and named.
+     */
+    private Mono<Long> alertAdminsOnTriage(String domain, List<String> adminSubjects,
+                                           String eventKey, TriageResult triage) {
+        if (!triage.available()) {
+            log.info("[aio] edge-AI triage unavailable ({}) — no admin alert emitted for key={}",
+                    triage.summary(), eventKey);
+            return Mono.just(0L);
+        }
+        log.info("[aio] triage severity={} key={} → alerting {} admin(s)",
+                triage.severity(), eventKey, adminSubjects.size());
+        return Flux.fromIterable(adminSubjects)
+                .flatMap(admin -> notifications.emit(
+                        FeatureNotificationService.Kind.INFRA_IMPACTING,
+                        domain, admin, eventKey + ":" + admin, triage.asNote()))
+                .filter(Boolean::booleanValue)
+                .count();
+    }
+}

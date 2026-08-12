@@ -13,7 +13,7 @@ All state markers follow the top-level README's convention: **✅ shipped** (mer
 
 ---
 
-## Passwordless local login (`systems.hugmesh.adminbff.locallogin`) — ✅ shipped, dark by default
+## Passwordless local login (`net.hugmesh.adminbff.locallogin`) — ✅ shipped, dark by default
 
 `POST /bff/login/local` (in `AuthController`, wired through this package) is a
 **sibling** of the legacy `POST /bff/login` for a Casdoor-native deployment that wants
@@ -33,7 +33,7 @@ Casdoor-hammering vector).
 - Tests: `AuthControllerLocalLoginWebFluxTest`, `AuthControllerLocalLoginDisabledWebFluxTest`,
   `AuthControllerLocalLoginRateLimitWebFluxTest`, `LocalLoginRateLimiterTest`.
 
-## Superadmin go-live wizard (`systems.hugmesh.adminbff.golive`) — ✅ shipped, dark by default
+## Superadmin go-live wizard (`net.hugmesh.adminbff.golive`) — ✅ shipped, dark by default
 
 `GoLiveController` (`/bff/admin/go-live`, `hasRole('SUPERADMIN')`) lets a superadmin
 **record intent** to take a brand's domain public (DNS/registrar provider + desired
@@ -60,7 +60,7 @@ target) without this BFF ever touching DNS itself:
 - Tests: `GoLiveControllerTest`, `GoLiveInternalControllerTest`, `GoLiveServiceTest`,
   `GoLiveExportServiceTest`, `GoLiveIntentRepositoryTest`.
 
-## Account-ban appeals (`systems.hugmesh.adminbff.appeal`) — ✅ shipped
+## Account-ban appeals (`net.hugmesh.adminbff.appeal`) — ✅ shipped
 
 The top-level README only documents the **public** `AppealContactController`
 (`GET /bff/public/appeal-contact`). The actual appeal submit/decide flow is a separate,
@@ -80,7 +80,7 @@ fuller surface:
 - Backed by `AccountAppealService` / `AccountAppealRepository` / the `account_appeal`
   table (`AccountAppealRow`).
 
-## Mastodon-UI appearance defaults (`systems.hugmesh.adminbff.appearance`) — ✅ shipped
+## Mastodon-UI appearance defaults (`net.hugmesh.adminbff.appearance`) — ✅ shipped
 
 Lets an admin configure a **platform-wide, per-brand default** for
 hugmesh-mastodon-ui's `PreferencesService` appearance settings, inherited by any
@@ -97,7 +97,7 @@ user who hasn't customised their own look:
 - Domain-scoped both ways via `PrincipalDomain` — an admin can only set, and a user can
   only read, their own brand's row; never another brand's.
 
-## Character/sticker moderation activation reconciler (`systems.hugmesh.adminbff.charactermoderation`) — ✅ shipped, dark by default
+## Character/sticker moderation activation reconciler (`net.hugmesh.adminbff.charactermoderation`) — ✅ shipped, dark by default
 
 The final leg that closes the character-part / sticker moderation loop this platform's
 sticker/character-ban design introduced: `FindingActivationReconciler` is a
@@ -124,7 +124,7 @@ flowchart LR
     RECON -->|advance watermark past<br/>contiguous successes only| CURSOR[("FindingCursorRepository<br/>per-surface sinceId")]
 ```
 
-## Optional-services reconciler (`systems.hugmesh.adminbff.optionalservices`) — ✅ shipped, dark by default
+## Optional-services reconciler (`net.hugmesh.adminbff.optionalservices`) — ✅ shipped, dark by default
 
 No REST controller — this is a pure background reconciler (`OptionalServiceReconciler`,
 `@Scheduled`, `LeaderElection`-gated single-writer, gated by
@@ -138,7 +138,7 @@ Both writers are `Noop*` by default (inert) with a `Fabric8*` real implementatio
 behind the same flag. Tests: `OptionalServiceReconcilerTest`,
 `Fabric8OptionalServiceApplicationSetPatcherTest`.
 
-## Federation bearer-forwarding + native-login custody exchange (`systems.hugmesh.adminbff.federation`) — ✅ shipped, dark by default
+## Federation bearer-forwarding + native-login custody exchange (`net.hugmesh.adminbff.federation`) — ✅ shipped, dark by default
 
 Two related pieces that let a **native-login** (`bff_` session) moderator's requests to
 federation-api (and other Casdoor-gated downstreams) be authorised as the real
@@ -161,13 +161,13 @@ principal, not a service identity:
   `FederationOverrideClearClient` / `SuspensionExpiryFederationClearWireTest` cover the
   federation-side clear-on-restore wiring for domain-lock/suspension expiry.
 
-## Node radio attachments (`systems.hugmesh.adminbff.radio`) — ✅ shipped, real live-usable API — not yet the meshbridge's live device source
+## Node radio attachments (`net.hugmesh.adminbff.radio`) — ✅ shipped, real live-usable API — not yet the meshbridge's live device source
 
 `RadioDeviceController` (`/bff/admin/device-radios`, `hasAnyRole('ADMIN','SUPERADMIN')`)
 lets an operator attach/detach a **Meshtastic LoRa radio** to a specific mesh node for
 the meshbridge optional service (the mesh↔Matrix bridge — see the top-level README's
 Endpoints section for the full `serial`/`tcp`/`mqtt` transport contract). It clones the
-`systems.hugmesh.adminbff.storage.NodeStorageService`/`StoragePoolController` idioms
+`net.hugmesh.adminbff.storage.NodeStorageService`/`StoragePoolController` idioms
 exactly: resolve-the-node-first, an ownership ALLOW/DENY matrix (own-domain ADMIN-owned
 nodes only for an ADMIN; SUPERADMIN unrestricted), idempotent attach, CAS detach (never
 a hard delete), and a SUPERADMIN/internal-mTLS-only signed per-node
@@ -193,7 +193,7 @@ for the detached Ed25519 signature + monotonic generation).
 > pod will never see them until that reconcile agent is built — a real, currently-open,
 > cross-repo integration gap, not a documentation lag.
 
-## Edge-AI infra triage (`systems.hugmesh.adminbff.inference`) — ✅ shipped, dark by default, no in-repo caller yet
+## Edge-AI infra triage (`net.hugmesh.adminbff.inference`) — ✅ shipped, dark by default, no in-repo caller yet
 
 `AioTriageService` turns a batch of mesh infra/security signals (NIDS, file-integrity,
 k8s events) into an admin-facing Matrix `@system` alert, reusing the existing
@@ -215,7 +215,7 @@ signal never double-alerts.
 > `EdgeAiInferenceClientTest`), but a genuine "half of a feature" gap worth flagging
 > for whoever builds the collector side.
 
-## Registration a11y display-name forwarder (`systems.hugmesh.adminbff.profile`) — ✅ shipped, dark by default
+## Registration a11y display-name forwarder (`net.hugmesh.adminbff.profile`) — ✅ shipped, dark by default
 
 `ProfileForwarder` (wired into `AuthController`'s registration path) forwards a
 freshly-registered principal's `displayName` (UTF-8) and `screenReaderName` (ASCII

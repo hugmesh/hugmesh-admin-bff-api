@@ -39,7 +39,7 @@ spec:
         fsGroup: 65532
       containers:
         - name: runner
-          image: registry.hugmesh.systems/hugmesh/test-runner:latest  # Playwright + seed-accounts.sh
+          image: registry.hugmesh.net/hugmesh/test-runner:latest  # Playwright + seed-accounts.sh
           command: ["/bin/sh", "/runner/run-suite.sh"]
           env:
             - { name: RUN_ID,         value: "${RUN_ID}" }
