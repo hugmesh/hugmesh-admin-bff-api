@@ -127,7 +127,7 @@ for the narrower ones):
   exist yet. See `docs/SUBSYSTEMS.md`.
 - A narrow role-string length/count cap is missing before the CSV join in
   `InternalAccountController#rolesFromIdToken` — flagged inline as a `TODO` (see
-  `src/main/java/systems/hugmesh/adminbff/internalapi/InternalAccountController.java`).
+  `src/main/java/net/hugmesh/adminbff/internalapi/InternalAccountController.java`).
 
 ---
 
@@ -142,11 +142,11 @@ moved on._
 **Ecosystem baseline.** Spring **Boot 4.0.7** / Spring Cloud **2025.1.2** on
 **Java 25 LTS**. Shared Maven artifacts:
 
-- `systems.hugmesh:hugmesh-parent:2.8.0` — the metapom (child of
+- `net.hugmesh:hugmesh-parent:2.8.0` — the metapom (child of
   `spring-boot-starter-parent:4.0.7`; manages testcontainers 2.0.5);
-- `systems.hugmesh:hugmesh-commons:2.1.0` (managed by the parent BOM) — shared
-  security/tenancy/web (`systems.hugmesh.commons.*`);
-- `systems.hugmesh:hugmesh-auth-core:2.4.0` (currently-pinned version — see
+- `net.hugmesh:hugmesh-commons:2.1.0` (managed by the parent BOM) — shared
+  security/tenancy/web (`net.hugmesh.commons.*`);
+- `net.hugmesh:hugmesh-auth-core:2.4.0` (currently-pinned version — see
   `pom.xml`) — the shared account / session / MFA / Casdoor-admin infrastructure
   (the account/session/MFA/Casdoor-admin classes that used to live in this repo were
   extracted into it). It depends on `hugmesh-commons` and is
@@ -158,7 +158,7 @@ moved on._
   drops the `UUID.randomUUID()` mints from the MFA enrollment / WebAuthn-challenge stores
   in favour of the DB-generated `(gen_random_uuid())::text` PKs (band-210 here, #134);
   **2.3.1**–**2.3.4** are identity-fold correctness fixes from the 2026-07-11/15 native-login
-  authz review; **2.4.0** is a coordinate-only rename (legacy groupId → `systems.hugmesh`
+  authz review; **2.4.0** is a coordinate-only rename (legacy groupId → `net.hugmesh`
   groupId + package move, no behavior change, part of the HugMesh rebrand, #236) — see
   the version-by-version changelog under
   [Shared libraries](#shared-libraries-hugmesh-parent--hugmesh-commons--hugmesh-auth-core)
@@ -274,7 +274,7 @@ flowchart TD
 | **Persistence** | config Postgres over **R2DBC** (runtime, non-blocking); **Liquibase** owns schema (JDBC, migrations only) |
 | **Other stores** | **ClickHouse** (usage analytics, best-effort), **Kafka** (usage-event bus, optional), **Cassandra** (best-effort route-access mirror the gateways poll) |
 | **Image / CI** | multi-stage Dockerfile (temurin 25), `:8080`; built + pushed to the in-cluster GitLab registry by `.gitlab-ci.yml`, which also runs the platform OWASP pen-test stages (SCA + DAST + nuclei) — see [CI & pen-test stages](#ci--pen-test-stages). **CI is GitLab** (no GitHub Actions). Images carry **no** KEYS material |
-| **App id** | `systems.hugmesh.adminbff` (`AdminBffApplication`) |
+| **App id** | `net.hugmesh.adminbff` (`AdminBffApplication`) |
 
 It is the production Spring port of the verified reference contract in
 `catalyst-scripts/tests/stack/mock-bff.mjs`; JSON shapes mirror that mock so the
@@ -383,7 +383,7 @@ fresh Casdoor-MFA stamp):
   `resources/scaffold/README.md`). `TokenRenderer` substitutes the `{{TOKEN}}` identity
   tokens (values follow the generator's `render-repo-tree.sh` derivations) and **hard-fails
   on any unrendered `{{UPPER_SNAKE}}`** so a broken starter never ships; the spring-bff
-  Java sources are relocated into the real `systems.hugmesh.<slug>` package path.
+  Java sources are relocated into the real `net.hugmesh.<slug>` package path.
 - **Federate ships dark** behind `app.appstore.federation.enabled` (default false): the
   `FederationModuleClient` bean-pair (noop / real, gated exactly like `ArgoCdConfig`)
   means a federate call is *logged, not written* until enabled, and `FederateOutcome`
@@ -425,7 +425,7 @@ The canonical security/tenancy/web building blocks above now come from the org's
 Maven artifacts (`hugmesh-parent` on `2.8.0`, `hugmesh-commons` on `2.1.0`,
 `hugmesh-auth-core` on `2.4.0`) rather than per-repo copies:
 
-1. **Parent POM →** `systems.hugmesh:hugmesh-parent:2.8.0` (itself a child of
+1. **Parent POM →** `net.hugmesh:hugmesh-parent:2.8.0` (itself a child of
    `spring-boot-starter-parent:4.0.7`, so the whole Spring Boot dependency/plugin
    management is inherited transitively). The parent consolidates the reactive-BFF
    `<dependencies>` (webflux/actuator/security/oauth2-resource-server/validation,
@@ -436,7 +436,7 @@ Maven artifacts (`hugmesh-parent` on `2.8.0`, `hugmesh-commons` on `2.1.0`,
    `spring-kafka`(+`-test`), the Cassandra `java-driver-core`, `sshj`, BouncyCastle,
    `webauthn4j-core`, and the (now version-managed) resilience4j artifacts.
 
-2. **Shared security/tenancy/web →** `systems.hugmesh:hugmesh-commons:2.1.0`
+2. **Shared security/tenancy/web →** `net.hugmesh:hugmesh-commons:2.1.0`
    (version-managed by the parent BOM, not pinned directly in this POM).
    The local copies of `security.{Roles,DomainRegistry,DomainScope}`,
    `config.{CasdoorAuthorities,TenancyResourceServerConfig}` and `web.ApiException` were
@@ -455,7 +455,7 @@ Maven artifacts (`hugmesh-parent` on `2.8.0`, `hugmesh-commons` on `2.1.0`,
    - `commons.config.TenancyResourceServerConfig`.
 
 3. **Shared account / session / MFA / Casdoor-admin →**
-   `systems.hugmesh:hugmesh-auth-core:2.4.0` (currently pinned; **adopted** this
+   `net.hugmesh:hugmesh-auth-core:2.4.0` (currently pinned; **adopted** this
    cycle at #111, since bumped through several identity-fold correctness fixes and a
    2.4.0 coordinate-only rebrand rename — see the version-by-version list below). The
    stateful auth core that used to live in this BFF — the account / allowlist /
@@ -475,7 +475,7 @@ Maven artifacts (`hugmesh-parent` on `2.8.0`, `hugmesh-commons` on `2.1.0`,
    tables' PKs come from the DB-side `(gen_random_uuid())::text` DEFAULT (band-210).
    **2.3.1**–**2.3.4** are the 2026-07-11/15 native-login identity-fold correctness fixes
    (see [Status](#status) above); **2.4.0** is a coordinate-only rename (legacy groupId
-   → `systems.hugmesh` groupId + package move, no behavior change, part of the HugMesh
+   → `net.hugmesh` groupId + package move, no behavior change, part of the HugMesh
    rebrand, #236). This library is pinned explicitly here (it is BFF-only — kept off
    the gateway classpath — so it is not in the parent BOM).
 
@@ -488,12 +488,12 @@ Maven artifacts (`hugmesh-parent` on `2.8.0`, `hugmesh-commons` on `2.1.0`,
    **Two consumer-wiring steps** (the canonical recipe for the fan-out):
    - `config.CommonsSecurityConfig` `@Import`s the commons `DomainRegistry` +
      `TenancyResourceServerConfig` beans, because the `@SpringBootApplication`
-     component-scan over `systems.hugmesh.adminbff` does **not** cover the
-     `systems.hugmesh.commons.*` packages. (`@Import` preserves
+     component-scan over `net.hugmesh.adminbff` does **not** cover the
+     `net.hugmesh.commons.*` packages. (`@Import` preserves
      `TenancyResourceServerConfig`'s `@ConditionalOnExpression` gate.)
    - the security-slice tests reach the package-private commons
      `TenancyResourceServerConfig.tenantAuthManagerResolver()` `@Bean` through a
-     same-package **test** accessor `systems.hugmesh.commons.config.TenancyResolvers`.
+     same-package **test** accessor `net.hugmesh.commons.config.TenancyResolvers`.
 
 #### Resolving the private shared artifacts
 
@@ -916,7 +916,7 @@ calls a `NoopBackingServiceEffector` (logs only, no live effect) — see
 These control-plane surfaces exist on `main` (predate this README's stated "as of" date) but were
 missing from the sections above; documenting them here to close that gap:
 
-- **Desktop app governance** (`systems.hugmesh.adminbff.desktop`) — a curated-Discover +
+- **Desktop app governance** (`net.hugmesh.adminbff.desktop`) — a curated-Discover +
   SSO-sudo console: `DesktopCatalogAdminController` (`/bff/admin/desktop/catalog`,
   `hasAnyRole('ADMIN','SUPERADMIN')`) curates the installable app catalogue;
   `DesktopInstallRequestAdminController` (`/bff/admin/desktop/install-requests`) approves/denies
@@ -933,7 +933,7 @@ missing from the sections above; documenting them here to close that gap:
   (`app.device-terminal.enabled`, default false → `StubDeviceSshTransport`; and
   `app.device-terminal.dial.enabled`, default false → no real device is ever dialed even with the
   transport flag on, per `src/main/resources/application.yml:646-689`).
-- **Cloud-backup v2 / Velero** (`systems.hugmesh.adminbff.cloudbackup`) — a second,
+- **Cloud-backup v2 / Velero** (`net.hugmesh.adminbff.cloudbackup`) — a second,
   Velero-based backup plane distinct from the k8s-Job-templating `backup` package described under
   [`BackupController`](#admin-flow-hasroleadmin-base-bffadmin) above: `BackupAdminController`
   (`/bff/admin/cloud-backups`), `BackupSuperadminController` /
@@ -943,18 +943,18 @@ missing from the sections above; documenting them here to close that gap:
   `NoopBackupEffector`; a created `backup_set` stays `pending` until flipped on) — this is the
   same feature the [Roadmap](#roadmap) previously described as pure 🔭 future work; the data
   plane + effector seam are actually already on `main`, just dark by default.
-- **Image-build pipeline** (`systems.hugmesh.adminbff.imagegen`) — `ImageBuildController`
+- **Image-build pipeline** (`net.hugmesh.adminbff.imagegen`) — `ImageBuildController`
   (`/bff/admin/image-builds`, `hasAnyRole('ADMIN','SUPERADMIN')`): trigger/list/SSE-progress/
   download a per-user OS image build + optional non-secret SSH-keys bundle, own-domain-walled
   + step-up gated; `ImageBuildIngestController` (`/bff/internal/image-builds`) is the in-cluster
   builder's event-ingest callback. Gated by `IMAGEGEN_LAUNCH_ENABLED` (default false).
-- **SSH key issuance** (`systems.hugmesh.adminbff.sshissue`) — `AdminSshKeyIssuanceController`
+- **SSH key issuance** (`net.hugmesh.adminbff.sshissue`) — `AdminSshKeyIssuanceController`
   (`/bff/admin/ssh-issue`, `hasRole('SUPERADMIN')` for issue/download/revoke): mints a transient,
   single-use, 5-minute-TTL Ed25519 credential against a licensed device's
   `device_ssh_license` fingerprint set; never persists the private key. **Ships dark**
   (`app.ssh-issue.enabled` / `APP_SSH_ISSUE_ENABLED`, default false — the verbs 503 while the
   role/step-up/own-domain checks still run for real).
-- **SSH terminal dial** (`systems.hugmesh.adminbff.sshterminal`) — `DesktopDialAdminController`
+- **SSH terminal dial** (`net.hugmesh.adminbff.sshterminal`) — `DesktopDialAdminController`
   (`/bff/superadmin/desktop/dials`, `hasRole('SUPERADMIN')`) manages the per-device dial-key
   grant that the device-terminal transport above requires.
 - **`PlatformCapabilitiesController`** — `GET /bff/admin/platform-capabilities`
@@ -1088,7 +1088,7 @@ Driven entirely by environment variables (defaults in
 ## API spec & docs
 
 SpringDoc serves the OpenAPI spec at `/v3/api-docs` and Swagger UI at
-`/swagger-ui.html` (scoped to `systems.hugmesh.adminbff`). The spec is the source
+`/swagger-ui.html` (scoped to `net.hugmesh.adminbff`). The spec is the source
 the platform `ng-openapi-gen` typed clients and the docs pipeline consume; it is
 `permitAll` under `dev`/`test` and `hasAnyRole('ADMIN','SUPERADMIN')` in prod.
 

@@ -12,7 +12,7 @@ on:
 
 # Mirrors this repo's .gitlab-ci.yml `build:image` job: a multi-stage Docker
 # build (Maven package -> JRE runtime) whose build stage resolves the PRIVATE
-# systems.hugmesh:hugmesh-commons dependency from a Maven registry via the
+# net.hugmesh:hugmesh-commons dependency from a Maven registry via the
 # committed settings.xml. In GitLab that registry is the in-cluster GitLab
 # instance and the credential is CI_JOB_TOKEN; here those become repo/org
 # secrets and variables so the same Dockerfile keeps working unmodified.

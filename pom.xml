@@ -90,14 +90,14 @@
            hasAnyRole()/.authenticated() gates (e.g. /bff/admin/usage,
            /bff/admin/namespace-access) — previously reachable only by a JWT, never a
            native-login cookie — now see an authenticated, role-bearing principal. Auto-
-           registers via the existing scanBasePackages="systems.hugmesh.authcore";
+           registers via the existing scanBasePackages="net.hugmesh.authcore";
            no additional wiring needed.
            2.3.4 fixes two identity-fold bugs: CasdoorAdminClient.usernameOf now strips
            the "@..." tail for EVERY provider (not just "google" — casdoor/matrix/discord
            etc. were previously left un-stripped), and AccountStore.idFor now trims +
            folds the handle with Locale.ROOT (was a bare toLowerCase(), locale-dependent).
            Bumped in lockstep with hugmesh-auth-core PR #33 (merged 2026-07-15).
-           2.4.0 is a coordinate-only rename (legacy groupId -> systems.hugmesh groupId +
+           2.4.0 is a coordinate-only rename (legacy groupId -> net.hugmesh groupId +
            package move), no behavior change - part of the HugMesh rebrand.
            2.4.1 syncs ReservedNames (the shared copy this BFF's username/route-prefix
            guards consume) to canonical reserved-prefixes.yaml revision 9 (82 labels):

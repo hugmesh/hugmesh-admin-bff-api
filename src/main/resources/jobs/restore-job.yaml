@@ -30,7 +30,7 @@ spec:
         fsGroup: 65532
       containers:
         - name: worker
-          image: registry.hugmesh.systems/hugmesh/backup-worker:latest
+          image: registry.hugmesh.net/hugmesh/backup-worker:latest
           command: ["/bin/sh", "/scripts/backup-worker.sh"]
           env:
             - { name: JOB_ID,       value: "${JOB_ID}" }

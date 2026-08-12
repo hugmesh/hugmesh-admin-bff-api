@@ -46,7 +46,7 @@ spec:
         fsGroup: 65532
       containers:
         - name: builder
-          image: registry.hugmesh.systems/hugmesh/image-gen:latest
+          image: registry.hugmesh.net/hugmesh/image-gen:latest
           command: ["/bin/sh", "/builder/build-image.sh"]
           env:
             - { name: BUILD_ID,       value: "${BUILD_ID}" }
