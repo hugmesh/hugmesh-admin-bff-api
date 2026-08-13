@@ -119,8 +119,17 @@ public class PlatformCapabilitiesController {
                 .cache();
     }
 
+    /** Hard ceiling on the blocking k8s probe so a wedged read can never outlive the cache TTL. */
+    static final Duration PROBE_TIMEOUT = Duration.ofSeconds(10);
+
     private Mono<PlatformCapabilityProbe.Result> probeRuntime() {
-        return Mono.fromCallable(probe::probe).subscribeOn(Schedulers.boundedElastic());
+        return Mono.fromCallable(probe::probe)
+                .subscribeOn(Schedulers.boundedElastic())
+                .timeout(PROBE_TIMEOUT)
+                .onErrorReturn(new PlatformCapabilityProbe.Result(false, false, false,
+                        List.of("Platform-capability probe did not answer within "
+                                + PROBE_TIMEOUT.toSeconds() + "s; ArgoCD / Velero / build-node "
+                                + "presence could not be detected and are reported absent.")));
     }
 
     /** images-table presence (count>0), read-only + fail-safe: a DB error -> absent + warning. */
