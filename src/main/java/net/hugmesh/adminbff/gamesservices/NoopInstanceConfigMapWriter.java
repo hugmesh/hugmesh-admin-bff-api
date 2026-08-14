@@ -2,6 +2,7 @@ package net.hugmesh.adminbff.gamesservices;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import reactor.core.publisher.Mono;
 
 import java.util.List;
 
@@ -17,10 +18,10 @@ public class NoopInstanceConfigMapWriter implements InstanceConfigMapWriter {
     private static final Logger log = LoggerFactory.getLogger(NoopInstanceConfigMapWriter.class);
 
     @Override
-    public boolean writeDomainConfigMap(String domain, List<GameInstance> instances) {
+    public Mono<Boolean> writeDomainConfigMap(String domain, List<GameInstance> instances) {
         log.debug("[games-reconciler] (noop) would render {} active instance(s) into "
                 + "domain '{}' ConfigMap", instances == null ? 0 : instances.size(), domain);
-        return true;
+        return Mono.just(true);
     }
 
     @Override

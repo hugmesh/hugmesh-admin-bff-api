@@ -39,7 +39,7 @@ class Fabric8InstanceConfigMapWriterTest {
         Fabric8InstanceConfigMapWriter writer = new Fabric8InstanceConfigMapWriter(
                 () -> { throw new KubernetesClientException("no cluster"); }, "hugmesh-games");
 
-        assertThat(writer.writeDomainConfigMap("brand-a", List.of(INSTANCE))).isFalse();
+        assertThat(writer.writeDomainConfigMap("brand-a", List.of(INSTANCE)).block()).isFalse();
     }
 
     @Test
@@ -57,7 +57,7 @@ class Fabric8InstanceConfigMapWriterTest {
         Fabric8InstanceConfigMapWriter writer =
                 new Fabric8InstanceConfigMapWriter(() -> client, "hugmesh-games");
 
-        assertThat(writer.writeDomainConfigMap("brand-a", List.of(INSTANCE))).isTrue();
+        assertThat(writer.writeDomainConfigMap("brand-a", List.of(INSTANCE)).block()).isTrue();
         verify(resource, times(1)).serverSideApply();
         verify(client, times(1)).close();
     }
@@ -80,7 +80,7 @@ class Fabric8InstanceConfigMapWriterTest {
         // The always-closes guarantee is the whole point of the Mono.usingWhen migration:
         // a mid-apply failure must close the client exactly like a mid-block exception would
         // have triggered try-with-resources' implicit close.
-        assertThat(writer.writeDomainConfigMap("brand-a", List.of(INSTANCE))).isFalse();
+        assertThat(writer.writeDomainConfigMap("brand-a", List.of(INSTANCE)).block()).isFalse();
         verify(client, times(1)).close();
     }
 

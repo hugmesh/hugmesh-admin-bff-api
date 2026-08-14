@@ -61,20 +61,22 @@ public class WorkloadExecWebSocketHandler implements WebSocketHandler {
         List<String> command = query.containsKey("command")
                 ? List.of(query.get("command").split(","))
                 : List.of("/bin/sh");
-        String actor = session.getHandshakeInfo().getPrincipal()
-                .map(java.security.Principal::getName).block();
-        if (actor == null) actor = "superadmin";
-        String sessionId = UUID.randomUUID().toString();
-        WorkloadExecService.Transcript transcript = exec.newTranscript(sessionId, actor);
+        return session.getHandshakeInfo().getPrincipal()
+                .map(java.security.Principal::getName)
+                .defaultIfEmpty("superadmin")
+                .flatMap(actor -> {
+                    String sessionId = UUID.randomUUID().toString();
+                    WorkloadExecService.Transcript transcript = exec.newTranscript(sessionId, actor);
 
-        return exec.openTty(actor, namespace, pod, container, command)
-                // Wire the exec session to WS outbound + inbound and run both sides until close.
-                .flatMap(execSession -> runExecSession(execSession, session, transcript))
-                // detection-gap quarantine: force-reschedule the pod after the session
-                .then(exec.rescheduleAfter(namespace, pod))
-                .onErrorResume(e -> {
-                    log.warn("[workload-exec-ws] session error ns={} pod={}: {}", namespace, pod, e.toString());
-                    return session.close();
+                    return exec.openTty(actor, namespace, pod, container, command)
+                            // Wire the exec session to WS outbound + inbound and run both sides until close.
+                            .flatMap(execSession -> runExecSession(execSession, session, transcript))
+                            // detection-gap quarantine: force-reschedule the pod after the session
+                            .then(exec.rescheduleAfter(namespace, pod))
+                            .onErrorResume(e -> {
+                                log.warn("[workload-exec-ws] session error ns={} pod={}: {}", namespace, pod, e.toString());
+                                return session.close();
+                            });
                 });
     }
 

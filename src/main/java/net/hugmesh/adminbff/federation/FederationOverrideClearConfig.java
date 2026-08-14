@@ -36,7 +36,7 @@ import java.util.function.Supplier;
  * domain-scoped on the ISSUER, so this caller presents a Casdoor SUPERADMIN service
  * JWT minted via the OAuth2 {@code client_credentials} grant against hugmesh.net
  * Casdoor — the SAME mechanism + the SAME
- * {@code app.casdoor.systems.{base-url,client-id,client-secret}} credentials
+ * {@code app.casdoor.platform.{base-url,client-id,client-secret}} credentials
  * {@code UserBffNotificationConfig} uses to mint its ROLE_SERVICE token. The token is
  * cached and re-minted shortly before expiry. When the credentials are absent (a
  * gate-off dev/test run) the supplier is never invoked (the client short-circuits on
@@ -56,9 +56,9 @@ public class FederationOverrideClearConfig {
             @Value("${federation-api.override-clear.enabled:false}") boolean enabled,
             @Value("${federation-api.base-url:http://hugmesh-federation-api.hugmesh-backend.svc.cluster.local:8080}")
             String baseUrl,
-            @Value("${app.casdoor.systems.base-url:}") String casdoorBaseUrl,
-            @Value("${app.casdoor.systems.client-id:}") String clientId,
-            @Value("${app.casdoor.systems.client-secret:}") String clientSecret) {
+            @Value("${app.casdoor.platform.base-url:}") String casdoorBaseUrl,
+            @Value("${app.casdoor.platform.client-id:}") String clientId,
+            @Value("${app.casdoor.platform.client-secret:}") String clientSecret) {
 
         WebClient federation = builder.clone().baseUrl(baseUrl).build();
         WebClient casdoor = builder.clone().baseUrl(casdoorBaseUrl).build();

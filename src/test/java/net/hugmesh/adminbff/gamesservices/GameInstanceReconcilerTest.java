@@ -10,6 +10,7 @@ import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.ActiveProfiles;
 import net.hugmesh.adminbff.lease.LeaderElection;
 import net.hugmesh.adminbff.support.TestDatabaseConfig;
+import reactor.core.publisher.Mono;
 
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -78,10 +79,10 @@ class GameInstanceReconcilerTest {
         final List<String> renderedDomains = new ArrayList<>();
         int totalInstancesRendered = 0;
         boolean failNext = false;
-        @Override public boolean writeDomainConfigMap(String domain, List<GameInstance> instances) {
+        @Override public Mono<Boolean> writeDomainConfigMap(String domain, List<GameInstance> instances) {
             renderedDomains.add(domain);
             totalInstancesRendered += instances.size();
-            return !failNext;
+            return Mono.just(!failNext);
         }
         @Override public boolean isReal() { return false; }
     }

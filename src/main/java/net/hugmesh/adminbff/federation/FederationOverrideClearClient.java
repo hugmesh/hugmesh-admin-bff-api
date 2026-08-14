@@ -36,7 +36,7 @@ import java.util.function.Supplier;
  * forwardable caller JWT) and is the single cross-brand clock, so it presents a Casdoor
  * SERVICE-account JWT minted via the OAuth2 {@code client_credentials} grant against
  * hugmesh.net Casdoor — the SAME mechanism + the SAME
- * {@code app.casdoor.systems.{base-url,client-id,client-secret}} credentials the
+ * {@code app.casdoor.platform.{base-url,client-id,client-secret}} credentials the
  * {@code UserBffNotificationConfig} / hugmesh-actions service clients use. That
  * service account carries the cross-domain SUPERADMIN authority (the infra control
  * plane), so the domain-scoped endpoint ACCEPTS the call for the affected user's domain

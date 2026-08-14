@@ -14,7 +14,7 @@ import java.util.Optional;
  * ({@code notification.system-account.channel.<channel>.token}) whose VALUE is supplied at
  * runtime by an ExternalSecrets-materialised Kubernetes Secret (mounted as env / a
  * property source), the SAME way {@code casdoor.admin.client-secret} and
- * {@code app.casdoor.systems.client-secret} are sourced. The defaults are EMPTY so a
+ * {@code app.casdoor.platform.client-secret} are sourced. The defaults are EMPTY so a
  * dev/test/CI run with no Vault boots clean and every channel simply reports its token
  * ABSENT (the adapter then degrades / skips — see {@code available(domain)} in PR5/PR7).
  *

@@ -1,5 +1,7 @@
 package net.hugmesh.adminbff.gamesservices;
 
+import reactor.core.publisher.Mono;
+
 import java.util.List;
 
 /**
@@ -28,7 +30,7 @@ public interface InstanceConfigMapWriter {
      * @param domain    the brand/tenant whose ConfigMap is being written
      * @param instances the domain's current ACTIVE instances (may be empty -> empty ConfigMap)
      */
-    boolean writeDomainConfigMap(String domain, List<GameInstance> instances);
+    Mono<Boolean> writeDomainConfigMap(String domain, List<GameInstance> instances);
 
     /** True when this writer actually talks to a cluster (the runtime seam signal). */
     boolean isReal();

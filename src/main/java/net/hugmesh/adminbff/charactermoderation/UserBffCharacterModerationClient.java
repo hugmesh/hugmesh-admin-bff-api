@@ -28,7 +28,7 @@ import java.util.function.Supplier;
  * The same Casdoor {@code client_credentials} SERVICE bearer the
  * {@code UserBffNotificationClient} presents to the sibling
  * {@code /bff/user/internal/notifications} endpoint — minted from the
- * {@code app.casdoor.systems.{base-url,client-id,client-secret}} credentials, cached +
+ * {@code app.casdoor.platform.{base-url,client-id,client-secret}} credentials, cached +
  * re-minted by the token {@link Supplier} (see {@link FindingActivationReconcilerConfig}),
  * forwarded as {@code Authorization: Bearer <token>} on every call.
  *

@@ -56,7 +56,7 @@ public class Fabric8InstanceConfigMapWriter implements InstanceConfigMapWriter {
     }
 
     @Override
-    public boolean writeDomainConfigMap(String domain, List<GameInstance> instances) {
+    public Mono<Boolean> writeDomainConfigMap(String domain, List<GameInstance> instances) {
         String cmName = "games-instances-" + sanitize(domain);
         Map<String, String> data = new LinkedHashMap<>();
         if (instances != null) {
@@ -105,8 +105,7 @@ public class Fabric8InstanceConfigMapWriter implements InstanceConfigMapWriter {
                     log.warn("[games-reconciler] ConfigMap apply for domain '{}' errored (retry next tick): {}",
                             domain, e.toString());
                     return Mono.just(Boolean.FALSE);
-                })
-                .block();
+                });
     }
 
     @Override

@@ -25,7 +25,7 @@ import java.util.function.Supplier;
  * SYSTEM / SCHEDULED context (no human request, no forwardable caller JWT), so it presents
  * a Casdoor SERVICE-account JWT minted via the OAuth2 {@code client_credentials} grant
  * against hugmesh.net Casdoor — the SAME mechanism + the SAME
- * {@code app.casdoor.systems.{base-url,client-id,client-secret}} credentials the
+ * {@code app.casdoor.platform.{base-url,client-id,client-secret}} credentials the
  * {@code UserBffNotificationConfig} / {@code FederationOverrideClearConfig} service clients
  * use. The token {@link Supplier} caches + re-mints (see
  * {@link FindingActivationReconcilerConfig}); this client just asks for a current bearer

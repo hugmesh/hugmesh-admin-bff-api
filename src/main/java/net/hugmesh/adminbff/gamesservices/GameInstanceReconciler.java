@@ -133,15 +133,15 @@ public class GameInstanceReconciler {
         return repo.activeByDomain(domain)
                 .concatMap(this::ensureExposure)
                 .then(repo.activeByDomain(domain).collectList())
-                .flatMap(instances -> {
-                    boolean ok = writer.writeDomainConfigMap(domain, instances);
-                    String prop = ok ? GameInstance.PROP_APPLIED : GameInstance.PROP_FAILED;
-                    // Forward-reconcile every rendered row's propagation_state (idempotent;
-                    // a 'failed' row is retried next tick when the write recovers).
-                    return Flux.fromIterable(instances)
-                            .concatMap(i -> repo.updatePropagationState(i.id(), prop))
-                            .then();
-                });
+                .flatMap(instances -> writer.writeDomainConfigMap(domain, instances)
+                        .flatMap(ok -> {
+                            String prop = ok ? GameInstance.PROP_APPLIED : GameInstance.PROP_FAILED;
+                            // Forward-reconcile every rendered row's propagation_state (idempotent;
+                            // a 'failed' row is retried next tick when the write recovers).
+                            return Flux.fromIterable(instances)
+                                    .concatMap(i -> repo.updatePropagationState(i.id(), prop))
+                                    .then();
+                        }));
     }
 
     /**

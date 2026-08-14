@@ -33,7 +33,7 @@ import java.util.function.Supplier;
  * The in-app notification endpoint is ROLE_SERVICE-gated on the user-bff side, so this
  * caller presents a Casdoor SERVICE JWT minted via the OAuth2 {@code client_credentials}
  * grant against hugmesh.net Casdoor — the SAME mechanism + the SAME
- * {@code app.casdoor.systems.{base-url,client-id,client-secret}} credentials
+ * {@code app.casdoor.platform.{base-url,client-id,client-secret}} credentials
  * hugmesh-actions' {@code FederationUsernameClientConfig} uses to mint its
  * ROLE_SERVICE token (and the same the federation username gate consumes). The token is
  * cached and re-minted shortly before expiry. When the credentials are absent (a
@@ -54,9 +54,9 @@ public class UserBffNotificationConfig {
             @Value("${notification.user-bff.enabled:false}") boolean enabled,
             @Value("${notification.user-bff.base-url:http://hugmesh-user-bff-api.hugmesh-backend.svc.cluster.local:8080}")
             String baseUrl,
-            @Value("${app.casdoor.systems.base-url:}") String casdoorBaseUrl,
-            @Value("${app.casdoor.systems.client-id:}") String clientId,
-            @Value("${app.casdoor.systems.client-secret:}") String clientSecret) {
+            @Value("${app.casdoor.platform.base-url:}") String casdoorBaseUrl,
+            @Value("${app.casdoor.platform.client-id:}") String clientId,
+            @Value("${app.casdoor.platform.client-secret:}") String clientSecret) {
 
         WebClient userBff = builder.clone().baseUrl(baseUrl).build();
         WebClient casdoor = builder.clone().baseUrl(casdoorBaseUrl).build();

@@ -40,7 +40,7 @@ import java.util.function.Supplier;
  * <h3>Service bearer — reused VERBATIM from the platform pattern</h3>
  * Both endpoints are ROLE_SERVICE-gated; both clients present a Casdoor SERVICE JWT minted
  * via the OAuth2 {@code client_credentials} grant against hugmesh.net Casdoor — the
- * SAME mechanism + the SAME {@code app.casdoor.systems.{base-url,client-id,client-secret}}
+ * SAME mechanism + the SAME {@code app.casdoor.platform.{base-url,client-id,client-secret}}
  * credentials the sibling service clients use. ONE caching supplier is shared by both
  * clients (one token, two call sites). When the credentials are absent (a gate-off
  * dev/test run) the supplier is never invoked (the clients short-circuit on the disabled
@@ -60,9 +60,9 @@ public class FindingActivationReconcilerConfig {
             @Value("${character-moderation.reconciler.enabled:false}") boolean enabled,
             @Value("${federation-api.base-url:http://hugmesh-federation-api.hugmesh-backend.svc.cluster.local:8080}")
             String federationBaseUrl,
-            @Value("${app.casdoor.systems.base-url:}") String casdoorBaseUrl,
-            @Value("${app.casdoor.systems.client-id:}") String clientId,
-            @Value("${app.casdoor.systems.client-secret:}") String clientSecret) {
+            @Value("${app.casdoor.platform.base-url:}") String casdoorBaseUrl,
+            @Value("${app.casdoor.platform.client-id:}") String clientId,
+            @Value("${app.casdoor.platform.client-secret:}") String clientSecret) {
 
         WebClient federation = builder.clone().baseUrl(federationBaseUrl).build();
         WebClient casdoor = builder.clone().baseUrl(casdoorBaseUrl).build();
@@ -77,9 +77,9 @@ public class FindingActivationReconcilerConfig {
             @Value("${character-moderation.reconciler.enabled:false}") boolean enabled,
             @Value("${notification.user-bff.base-url:http://hugmesh-user-bff-api.hugmesh-backend.svc.cluster.local:8080}")
             String userBffBaseUrl,
-            @Value("${app.casdoor.systems.base-url:}") String casdoorBaseUrl,
-            @Value("${app.casdoor.systems.client-id:}") String clientId,
-            @Value("${app.casdoor.systems.client-secret:}") String clientSecret) {
+            @Value("${app.casdoor.platform.base-url:}") String casdoorBaseUrl,
+            @Value("${app.casdoor.platform.client-id:}") String clientId,
+            @Value("${app.casdoor.platform.client-secret:}") String clientSecret) {
 
         WebClient userBff = builder.clone().baseUrl(userBffBaseUrl).build();
         WebClient casdoor = builder.clone().baseUrl(casdoorBaseUrl).build();
