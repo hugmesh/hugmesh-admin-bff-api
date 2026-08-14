@@ -25,7 +25,7 @@ import java.util.concurrent.atomic.AtomicReference;
  * (the loop never dies).
  *
  * <h3>CR → set mapping (the reliable identifier)</h3>
- * {@link VeleroCr#setId()} returns the effector-stamped id — the {@code hugmesh.systems/
+ * {@link VeleroCr#setId()} returns the effector-stamped id — the {@code hugmesh.net/
  * backup-set-id} annotation (the RAW set id) when present, else the same-named label
  * ({@code slug(id)}, which is lossless for the UUID id schema). That single key resolves the row via
  * {@code BackupSetRepository.findById}. A CR with NEITHER (unmappable), or whose id matches no row,

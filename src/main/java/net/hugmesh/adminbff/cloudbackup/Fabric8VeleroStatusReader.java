@@ -32,7 +32,7 @@ import java.util.Map;
  * ({@code Completed} / {@code PartiallyFailed} / {@code Failed} / ...). That is the authoritative,
  * always-present field Velero itself writes, independent of whether the generator's optional
  * status-mirror CronJob (#120) has run, so it is the more robust source. The generator CronJob
- * additionally stamps {@code hugmesh.systems/catalog-status} mirroring the terminal phase; this
+ * additionally stamps {@code hugmesh.net/catalog-status} mirroring the terminal phase; this
  * reader uses that annotation ONLY as a fallback when {@code .status.phase} is somehow absent, so
  * the sweep works WITH or WITHOUT that CronJob deployed.
  */
@@ -52,7 +52,7 @@ public class Fabric8VeleroStatusReader implements VeleroStatusReader {
     static final String MANAGED_BY_VALUE = "hugmesh-admin-bff";
 
     /** The generator's status-mirror annotation (#120) — a FALLBACK phase source only. */
-    static final String CATALOG_STATUS_ANNOTATION = "hugmesh.systems/catalog-status";
+    static final String CATALOG_STATUS_ANNOTATION = "hugmesh.net/catalog-status";
 
     private static final ResourceDefinitionContext BACKUP_RDC = new ResourceDefinitionContext.Builder()
             .withGroup("velero.io").withVersion("v1").withKind("Backup")

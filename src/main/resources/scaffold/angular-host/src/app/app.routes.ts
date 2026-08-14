@@ -3,7 +3,7 @@ import { loadRemoteModule } from '@angular-architects/native-federation';
 
 /**
  * Host shell routes — the REMOTE_ROUTES table pattern from the
- * hugmesh.systems exemplar. Every feature path is a native-federation REMOTE
+ * hugmesh.net exemplar. Every feature path is a native-federation REMOTE
  * (its own repo + nginx), loaded at runtime from the manifest initFederation
  * resolved in main.ts (dynamic /api/federation/manifest unioned over the static
  * floor in src/assets/federation.manifest.json).

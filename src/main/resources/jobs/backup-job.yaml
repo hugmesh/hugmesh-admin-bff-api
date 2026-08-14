@@ -14,7 +14,7 @@ metadata:
   labels:
     app.kubernetes.io/part-of: hugmesh
     app.kubernetes.io/component: backup-worker
-    hugmesh.systems/backup-id: "${JOB_ID}"
+    hugmesh.net/backup-id: "${JOB_ID}"
 spec:
   ttlSecondsAfterFinished: 3600   # auto-reap the Job (and its owned ephemeral Secret) 1h after finish
   backoffLimit: 1

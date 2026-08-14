@@ -6,7 +6,7 @@
 //
 // The SKELETON ships one environment (this file) whose floor is the DEV
 // localhost manifest. When this shell grows a production deployment, adopt the
-// hugmesh.systems exemplar's split: a federation.manifest.prod.json with the
+// hugmesh.net exemplar's split: a federation.manifest.prod.json with the
 // fe-gateway public paths (/hello/remoteEntry.json, ...) selected via an
 // environment.prod.ts + `fileReplacements` (static assets are copied wholesale
 // by the `assets` glob and are NOT touched by fileReplacements, so the manifest

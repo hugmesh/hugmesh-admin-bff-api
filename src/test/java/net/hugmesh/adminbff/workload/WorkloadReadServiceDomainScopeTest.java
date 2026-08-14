@@ -34,7 +34,7 @@ import static org.mockito.Mockito.when;
  * cut at source, no brand-Y telemetry/logs leak); a scoped admin targeting their OWN namespace —
  * and a SUPERADMIN targeting any namespace — still sees the data. The namespace's owner-chain
  * domain is resolved through {@link WorkloadClient#namespaceDomain} (the
- * {@code hugmesh.systems/domain} label), never a forgeable pod-applied label.
+ * {@code hugmesh.net/domain} label), never a forgeable pod-applied label.
  */
 class WorkloadReadServiceDomainScopeTest {
 

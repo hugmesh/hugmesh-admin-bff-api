@@ -197,7 +197,7 @@ public class Fabric8WorkloadClient implements WorkloadClient {
                 .onErrorMap(t -> !(t instanceof WorkloadClientException), t -> fail("namespaceDomain " + namespace, t));
     }
 
-    /** Blocking: read the namespace's {@code hugmesh.systems/domain} owner-chain label;
+    /** Blocking: read the namespace's {@code hugmesh.net/domain} owner-chain label;
      *  Optional.empty when the namespace has no such label (or does not exist). */
     private Optional<String> fetchNamespaceDomain(String namespace) {
         var ns = client.namespaces().withName(namespace).get();

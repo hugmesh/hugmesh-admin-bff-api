@@ -20,7 +20,7 @@ import java.util.List;
  * service applies the STEP-7 owner-chain attribution for the ADMIN surface — an admin may
  * only see workloads whose owner-chain domain == their scope domain.
  *
- * <p>Attribution is the {@code hugmesh.systems/domain} (or the per-brand) label the
+ * <p>Attribution is the {@code hugmesh.net/domain} (or the per-brand) label the
  * generator stamps via ArgoCD's owner chain (NEVER a forgeable pod-applied label — but on a
  * separate-brand-cluster topology the namespace allowlist + the single-brand BFF SA is the
  * authoritative wall, and this label filter is the in-cluster defence-in-depth). On the
@@ -32,7 +32,7 @@ public class WorkloadReadService {
 
     /** The owner-chain attribution label (the generator stamps this via the ArgoCD
      *  Application owner chain, not a pod-applied label). */
-    public static final String DOMAIN_LABEL = "hugmesh.systems/domain";
+    public static final String DOMAIN_LABEL = "hugmesh.net/domain";
 
     private final WorkloadClient client;
 

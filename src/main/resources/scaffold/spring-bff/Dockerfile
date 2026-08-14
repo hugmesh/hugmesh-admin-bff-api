@@ -3,7 +3,7 @@
 # Multi-stage build for the {{BRAND_TITLE}} {{APP_SLUG}}-bff skeleton.
 #
 # PRIVATE DEPENDENCY (hugmesh-parent): this service inherits the org metapom
-# systems.hugmesh:hugmesh-parent, which is NOT on Maven Central — it lives
+# net.hugmesh:hugmesh-parent, which is NOT on Maven Central — it lives
 # in the org's GitLab Maven Package Registry. The build stage resolves it via the
 # committed `settings.xml` (the `gitlab-maven` repo) using the GitLab
 # CI_JOB_TOKEN, mounted as a BuildKit SECRET (never an ARG, never an ENV, never a

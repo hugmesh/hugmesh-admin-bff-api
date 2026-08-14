@@ -58,9 +58,9 @@ class AnnouncementSanitizerTest {
     void keepsSafeRichText() {
         String out = sanitizer.sanitize(
                 "<h2>Title</h2><p><strong>bold</strong> and <em>italic</em></p>"
-                + "<ul><li>one</li></ul><a href=\"https://hugmesh.systems\">link</a>");
+                + "<ul><li>one</li></ul><a href=\"https://hugmesh.net\">link</a>");
         assertThat(out).contains("<h2>", "<strong>", "<em>", "<ul>", "<li>");
-        assertThat(out).contains("href=\"https://hugmesh.systems\"");
+        assertThat(out).contains("href=\"https://hugmesh.net\"");
     }
 
     @Test

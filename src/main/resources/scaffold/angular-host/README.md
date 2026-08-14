@@ -2,7 +2,7 @@
 
 A minimal but **REAL** Angular 22 native-federation **HOST** in the platform
 shape, rendered by the mesh repo-templating **angular-host** archetype when the
-Tier-2 base (the `hugmesh.systems` host shell, reachable only via
+Tier-2 base (the `hugmesh.net` host shell, reachable only via
 `HOST_SHELL_BASE_DIR` — see the archetype README) is not pullable:
 
 ```

@@ -13,7 +13,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * The PURE Velero-CR builder behaviour — the heart of the brand-isolation guarantee, proven
  * WITHOUT a cluster. These assert the exact {@code velero.io/v1} {@code Backup}/{@code Restore}
  * CR shape the {@link VeleroBackupEffector} applies: a DOMAIN backup is doubly walled to its
- * brand (namespaces + {@code hugmesh.systems/domain} matchLabel) and can NEVER select another
+ * brand (namespaces + {@code hugmesh.net/domain} matchLabel) and can NEVER select another
  * brand; a TOTAL backup is cross-domain (no namespace/no domain selector); the destination is
  * wired by BackupStorageLocation name; and a Restore CR references the backup + re-applies the
  * brand wall.
@@ -57,7 +57,7 @@ class VeleroResourceFactoryTest {
         assertThat((List<String>) spec.get("includedNamespaces"))
                 .containsExactly("brandx-be", "brandx-fe");
         // labelSelector: the hard brand wall
-        assertThat(matchLabels(spec)).containsEntry("hugmesh.systems/domain", "brandx");
+        assertThat(matchLabels(spec)).containsEntry("hugmesh.net/domain", "brandx");
     }
 
     @Test
@@ -76,16 +76,16 @@ class VeleroResourceFactoryTest {
         assertThat(yNs).noneMatch(ns -> ns.startsWith("brandx-"));
 
         // ... and the matchLabel is brand-specific (X never carries brandy, Y never brandx).
-        assertThat(matchLabels(spec(brandX))).containsEntry("hugmesh.systems/domain", "brandx");
+        assertThat(matchLabels(spec(brandX))).containsEntry("hugmesh.net/domain", "brandx");
         assertThat(matchLabels(spec(brandX)).values()).doesNotContain("brandy");
-        assertThat(matchLabels(spec(brandY))).containsEntry("hugmesh.systems/domain", "brandy");
+        assertThat(matchLabels(spec(brandY))).containsEntry("hugmesh.net/domain", "brandy");
         assertThat(matchLabels(spec(brandY)).values()).doesNotContain("brandx");
 
         // the CR is itself labelled with its brand (attribution)
         assertThat(brandX.getMetadata().getLabels())
-                .containsEntry("hugmesh.systems/domain", "brandx");
+                .containsEntry("hugmesh.net/domain", "brandx");
         assertThat(brandY.getMetadata().getLabels())
-                .containsEntry("hugmesh.systems/domain", "brandy");
+                .containsEntry("hugmesh.net/domain", "brandy");
     }
 
     @Test
@@ -96,7 +96,7 @@ class VeleroResourceFactoryTest {
         assertThat((List<String>) spec(cr).get("includedNamespaces"))
                 .containsExactly("brand-co-be", "brand-co-fe");
         // the label keeps the original domain value (the attribution key the generator stamps).
-        assertThat(matchLabels(spec(cr))).containsEntry("hugmesh.systems/domain", "Brand.Co");
+        assertThat(matchLabels(spec(cr))).containsEntry("hugmesh.net/domain", "Brand.Co");
     }
 
     // ── TOTAL scope: cross-domain capture (no wall) ──────────────────────────────────────
@@ -111,7 +111,7 @@ class VeleroResourceFactoryTest {
         assertThat(spec).doesNotContainKey("includedNamespaces");
         assertThat(spec).doesNotContainKey("labelSelector");
         // and the CR is NOT brand-labelled (it is cross-domain).
-        assertThat(cr.getMetadata().getLabels()).doesNotContainKey("hugmesh.systems/domain");
+        assertThat(cr.getMetadata().getLabels()).doesNotContainKey("hugmesh.net/domain");
         // destination still wired.
         assertThat(spec.get("storageLocation")).isEqualTo("s3://total");
     }
@@ -178,7 +178,7 @@ class VeleroResourceFactoryTest {
         assertThat(spec.get("backupName")).isEqualTo(factory.backupName(s));
         // brand wall re-applied (a DOMAIN restore can only target this brand).
         assertThat((List<String>) spec.get("includedNamespaces")).containsExactly("brandx-be", "brandx-fe");
-        assertThat(matchLabels(spec)).containsEntry("hugmesh.systems/domain", "brandx");
+        assertThat(matchLabels(spec)).containsEntry("hugmesh.net/domain", "brandx");
         // PV restore on for a volume-backed set; conflict policy = update (desired-state).
         assertThat(spec.get("restorePVs")).isEqualTo(true);
         assertThat(spec.get("existingResourcePolicy")).isEqualTo("update");

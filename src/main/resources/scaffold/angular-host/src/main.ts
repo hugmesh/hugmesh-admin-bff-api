@@ -5,7 +5,7 @@ import { resolveFederationSource } from './app/federation/federation-bootstrap';
 // BEFORE bootstrapping Angular, then hand off to ./bootstrap. initFederation maps
 // remote name -> remoteEntry URL; loadRemoteModule in app.routes.ts relies on it.
 //
-// DYNAMIC-FIRST, STATIC-FLOOR (the hugmesh.systems host-shell pattern).
+// DYNAMIC-FIRST, STATIC-FLOOR (the hugmesh.net host-shell pattern).
 // resolveFederationSource() first fetches the DB-driven manifest (federation-api
 // GET /api/federation/manifest) so new/disabled/kill-switched remotes land
 // WITHOUT a host redeploy. On dynamic SUCCESS it returns the UNION of the bundled

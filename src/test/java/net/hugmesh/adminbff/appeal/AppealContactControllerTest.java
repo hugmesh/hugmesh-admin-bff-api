@@ -26,7 +26,7 @@ import static org.springframework.security.test.web.reactive.server.SecurityMock
  *   <li>Authenticated callers with {@code ROLE_USER} also receive 200 (P1-2 — the endpoint
  *       is public, not restricted, so having a valid token must not break anything).</li>
  *   <li>When {@code app.appeal.contact-email} is NOT configured the controller falls back to
- *       the hard-coded default {@code appeals@hugmesh.systems} (P1-3).</li>
+ *       the hard-coded default {@code appeals@hugmesh.net} (P1-3).</li>
  * </ul>
  *
  * <p>No service/repository layer is involved — the controller is a thin config reader — so
@@ -125,7 +125,7 @@ class AppealContactControllerTest {
     /**
      * When {@code app.appeal.contact-email} is absent from the deployment config the
      * controller must fall back to the Spring-EL default
-     * {@code appeals@hugmesh.systems} declared in the {@code @Value} annotation.
+     * {@code appeals@hugmesh.net} declared in the {@code @Value} annotation.
      * This slice deliberately does NOT set the property so the default activates.
      */
     @WebFluxTest(controllers = AppealContactController.class)
@@ -144,7 +144,7 @@ class AppealContactControllerTest {
                     .exchange()
                     .expectStatus().isOk()
                     .expectBody()
-                    .jsonPath("$.email").isEqualTo("appeals@hugmesh.systems");
+                    .jsonPath("$.email").isEqualTo("appeals@hugmesh.net");
         }
     }
 }

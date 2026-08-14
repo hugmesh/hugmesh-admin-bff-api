@@ -84,7 +84,7 @@ public class KanikoBuildLauncher {
     public KanikoBuildLauncher(
             KubernetesClient k8s,
             @Value("${app.appstore.builder.namespace:hugmesh-service-catalog-builds}") String buildNamespace,
-            @Value("${app.appstore.builder.registry:registry.hugmesh.systems}") String registryBase,
+            @Value("${app.appstore.builder.registry:registry.hugmesh.net}") String registryBase,
             @Value("${app.appstore.repo-host-allowlist:}") String repoHostAllowlistCsv) {
         this.k8s = k8s;
         this.buildNamespace = buildNamespace;

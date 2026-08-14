@@ -25,7 +25,7 @@ import java.util.Map;
  *
  * <p>It deliberately exposes ONLY the email string — no admin/mod identity, nothing
  * usable for targeted phishing or reconnaissance. The address is a single config
- * value ({@code app.appeal.contact-email}, default {@code appeals@hugmesh.systems});
+ * value ({@code app.appeal.contact-email}, default {@code appeals@hugmesh.net});
  * a deployment overrides it per brand.
  */
 @RestController
@@ -34,7 +34,7 @@ public class AppealContactController {
     private final String contactEmail;
 
     public AppealContactController(
-            @Value("${app.appeal.contact-email:appeals@hugmesh.systems}") String contactEmail) {
+            @Value("${app.appeal.contact-email:appeals@hugmesh.net}") String contactEmail) {
         this.contactEmail = contactEmail;
     }
 

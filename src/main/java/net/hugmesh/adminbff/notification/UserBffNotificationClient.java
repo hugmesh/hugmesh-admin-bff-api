@@ -25,7 +25,7 @@ import java.util.function.Supplier;
  * hugmesh-federation-api uses for {@code /api/federation/username/**}
  * ({@code hasAnyRole("SERVICE","ADMIN","SUPERADMIN")}). This client therefore presents a
  * Casdoor SERVICE-account JWT minted via the OAuth2 {@code client_credentials} grant
- * against hugmesh.systems Casdoor (no human login produces {@code ROLE_SERVICE}),
+ * against hugmesh.net Casdoor (no human login produces {@code ROLE_SERVICE}),
  * forwarded as {@code Authorization: Bearer <token>} on every call — exactly as
  * hugmesh-actions' {@code FederationUsernameClient.setBearerAuth} does. The token
  * {@link Supplier} caches + re-mints (see {@link UserBffNotificationConfig}); this

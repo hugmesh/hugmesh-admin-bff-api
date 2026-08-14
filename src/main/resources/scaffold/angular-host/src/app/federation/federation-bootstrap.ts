@@ -2,7 +2,7 @@ import { environment } from '../../environments/environment';
 
 /**
  * DYNAMIC-FIRST + STATIC-FALLBACK manifest resolution for the native-federation
- * HOST bootstrap (main.ts). This is the hugmesh.systems host-shell pattern,
+ * HOST bootstrap (main.ts). This is the hugmesh.net host-shell pattern,
  * carried whole because every clause is load-bearing:
  *
  * WHY THIS RUNS PRE-DI (raw fetch, not HttpClient). `initFederation(...)` MUST

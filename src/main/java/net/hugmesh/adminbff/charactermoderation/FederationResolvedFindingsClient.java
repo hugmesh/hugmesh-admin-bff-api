@@ -24,7 +24,7 @@ import java.util.function.Supplier;
  * The endpoint is {@code hasAnyRole('SERVICE','ADMIN','SUPERADMIN')}. This poll runs in a
  * SYSTEM / SCHEDULED context (no human request, no forwardable caller JWT), so it presents
  * a Casdoor SERVICE-account JWT minted via the OAuth2 {@code client_credentials} grant
- * against hugmesh.systems Casdoor — the SAME mechanism + the SAME
+ * against hugmesh.net Casdoor — the SAME mechanism + the SAME
  * {@code app.casdoor.systems.{base-url,client-id,client-secret}} credentials the
  * {@code UserBffNotificationConfig} / {@code FederationOverrideClearConfig} service clients
  * use. The token {@link Supplier} caches + re-mints (see

@@ -43,7 +43,7 @@ class AccountCasdoorSubServiceTest extends AdminBffPostgresTestSupport {
                 net.hugmesh.adminbff.testutil.R2dbcRepos.of(db, AccountRowRepository.class),
                 net.hugmesh.adminbff.testutil.R2dbcRepos.of(db, BffSessionRepository.class),
                 net.hugmesh.adminbff.testutil.R2dbcRepos.of(db, NamespaceGrantRepository.class),
-                "admin@hugmesh.systems");
+                "admin@hugmesh.net");
     }
 
     private AccountCasdoorSubService newCasdoorSubs() {

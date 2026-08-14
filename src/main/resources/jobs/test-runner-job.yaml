@@ -19,8 +19,8 @@ metadata:
   labels:
     app.kubernetes.io/part-of: hugmesh
     app.kubernetes.io/component: test-runner
-    hugmesh.systems/test-run-id: "${RUN_ID}"
-    hugmesh.systems/test-tier: "${TIER}"
+    hugmesh.net/test-run-id: "${RUN_ID}"
+    hugmesh.net/test-tier: "${TIER}"
 spec:
   ttlSecondsAfterFinished: 86400   # keep the finished Job 24h for log inspection, then reap
   backoffLimit: 0                  # a failed run is a result, not something to retry blindly
@@ -29,7 +29,7 @@ spec:
     metadata:
       labels:
         app.kubernetes.io/component: test-runner
-        hugmesh.systems/test-run-id: "${RUN_ID}"
+        hugmesh.net/test-run-id: "${RUN_ID}"
     spec:
       serviceAccountName: test-runner
       restartPolicy: Never

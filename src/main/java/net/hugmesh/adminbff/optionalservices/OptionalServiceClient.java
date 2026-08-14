@@ -4,7 +4,7 @@ import java.util.List;
 
 /**
  * The read/status seam for the {@code OptionalService}
- * ({@code platform.hugmesh.systems/v1alpha1}) custom resources — the desired-state
+ * ({@code platform.hugmesh.net/v1alpha1}) custom resources — the desired-state
  * objects the reconciler consumes. admin-bff READS the CR spec + WRITES the CR status;
  * it never writes the CR spec (that is the admin/superadmin or the follow-on BFF
  * endpoint). Models the {@code cloudbackup.VeleroStatusReader} generic-resource

@@ -12,7 +12,7 @@
        GitLab Maven publishing). The version below tracks what admin-bff-api
        (the archetype exemplar) pins on main. -->
   <parent>
-    <groupId>systems.hugmesh</groupId>
+    <groupId>net.hugmesh</groupId>
     <artifactId>hugmesh-parent</artifactId>
     <version>2.8.0</version>
     <relativePath/>
@@ -20,7 +20,7 @@
 
   <!-- Per-repo CODE identity from the repos[].identity row (APP_SLUG). The
        skeleton REQUIRES app_slug to match [a-z0-9]+ (lowercase alphanumeric, NO
-       hyphens): it is also the Java package segment systems.hugmesh.<slug>,
+       hyphens): it is also the Java package segment net.hugmesh.<slug>,
        and package names cannot contain '-'. See README.md, "APP_SLUG constraint". -->
   <artifactId>{{APP_SLUG}}-bff</artifactId>
   <version>0.1.0</version>

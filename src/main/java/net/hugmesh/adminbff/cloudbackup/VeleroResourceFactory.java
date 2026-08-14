@@ -23,7 +23,7 @@ import java.util.Map;
  *       <li>{@code spec.includedNamespaces} = the brand's namespaces, derived from the
  *           domain slug ({@code <slug>-be} / {@code <slug>-fe} — the {@link PerServiceIdentity}
  *           {@code <domain>-be} convention), so Velero only walks THIS brand's namespaces;</li>
- *       <li>{@code spec.labelSelector.matchLabels} = {@code {hugmesh.systems/domain: <domain>}}
+ *       <li>{@code spec.labelSelector.matchLabels} = {@code {hugmesh.net/domain: <domain>}}
  *           (the owner-chain attribution label the generator stamps, the same
  *           {@code WorkloadReadService.DOMAIN_LABEL} the workload console attributes by) — the
  *           HARD guarantee: even if a namespace were shared, a brand-X backup can only ever
@@ -60,12 +60,12 @@ public final class VeleroResourceFactory {
 
     /** The owner-chain brand attribution label (mirrors
      *  {@code WorkloadReadService.DOMAIN_LABEL}) — the brand-isolation matchLabel. */
-    public static final String DOMAIN_LABEL = "hugmesh.systems/domain";
+    public static final String DOMAIN_LABEL = "hugmesh.net/domain";
 
     /** A label stamped on every CR this factory builds so the catalog row and the CR can be
      *  correlated (and so a sweep can find the CRs a set produced). NOT a selector. */
-    public static final String SET_ID_LABEL = "hugmesh.systems/backup-set-id";
-    public static final String SET_KEY_LABEL = "hugmesh.systems/backup-set-key";
+    public static final String SET_ID_LABEL = "hugmesh.net/backup-set-id";
+    public static final String SET_KEY_LABEL = "hugmesh.net/backup-set-key";
 
     /** The namespace Velero (and therefore its Backup/Restore CRs) lives in. */
     private final String veleroNamespace;
@@ -173,7 +173,7 @@ public final class VeleroResourceFactory {
     private GenericKubernetesResource cr(String kind, String name, BackupSet set,
                                          Map<String, Object> spec) {
         Map<String, String> labels = new LinkedHashMap<>();
-        labels.put("app.kubernetes.io/part-of", "hugmesh.systems");
+        labels.put("app.kubernetes.io/part-of", "hugmesh.net");
         labels.put("app.kubernetes.io/managed-by", "hugmesh-admin-bff");
         if (set.id() != null) {
             labels.put(SET_ID_LABEL, PerServiceIdentity.slug(set.id()));

@@ -61,11 +61,11 @@ class PhoneFleetSuperadminControllerTest {
         return new PhoneDevice("pd-1", deviceId, "phone", "1C291FDF3005A", "oriole",
                 "Pixel 6", "GrapheneOS", "2026071400", "hugmesh.internal",
                 "https://headscale.hugmesh.internal", "100.64.0.7",
-                "phone-1c291fdf3005a", "user", "acme.hugmesh.systems", true, 10L,
+                "phone-1c291fdf3005a", "user", "acme.hugmesh.net", true, 10L,
                 "vault-seed", true, "com.hmdm.launcher",
                 "https://headwind.hugmesh.internal", "adb-device-owner",
                 Instant.parse("2026-07-14T11:58:00Z"),
-                "https://attestation.hugmesh.systems",
+                "https://attestation.hugmesh.net",
                 "net.hugmesh.auditor", "operator-paired",
                 Instant.parse("2026-07-14T12:00:00Z"), Instant.parse("2026-07-14T12:05:00Z"),
                 Instant.now(), Instant.now(), 1L,
@@ -75,7 +75,7 @@ class PhoneFleetSuperadminControllerTest {
                 Instant.parse("2026-07-15T00:00:00Z"),
                 // changeset-305 fleet-ownership columns — surface on the superadmin read too
                 // (a dropped mapping would null them).
-                "owner-sub", "acme.hugmesh.systems",
+                "owner-sub", "acme.hugmesh.net",
                 // changeset-307 device-reported provider — surfaces on the superadmin read.
                 "headwind", null);
     }
@@ -119,7 +119,7 @@ class PhoneFleetSuperadminControllerTest {
                 .jsonPath("$.phones[0].lockActor").isEqualTo("sa-actor")
                 // The changeset-305 fleet-ownership columns surface on the superadmin read.
                 .jsonPath("$.phones[0].physicalOwner").isEqualTo("owner-sub")
-                .jsonPath("$.phones[0].ownerDomain").isEqualTo("acme.hugmesh.systems");
+                .jsonPath("$.phones[0].ownerDomain").isEqualTo("acme.hugmesh.net");
     }
 
     @Test

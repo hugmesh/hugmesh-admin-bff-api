@@ -68,8 +68,8 @@ public class Fabric8NodeStorageConfigMapWriter implements NodeStorageConfigMapWr
                     .withNewMetadata()
                     .withName(CONFIGMAP_NAME)
                     .withNamespace(namespace)
-                    .addToLabels("app.kubernetes.io/part-of", "hugmesh.systems")
-                    .addToLabels("hugmesh.systems/node-storage-assignments", "true")
+                    .addToLabels("app.kubernetes.io/part-of", "hugmesh.net")
+                    .addToLabels("hugmesh.net/node-storage-assignments", "true")
                     .endMetadata()
                     .withData(data)
                     .build();

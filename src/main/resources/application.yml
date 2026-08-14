@@ -38,12 +38,12 @@ spring:
     oauth2:
       resourceserver:
         jwt:
-          issuer-uri: "${CASDOOR_ISSUER_URI:https://id.hugmesh.systems}"
+          issuer-uri: "${CASDOOR_ISSUER_URI:https://id.hugmesh.net}"
           # Explicit JWKS so the resource server does NOT do OIDC discovery against issuer-uri
           # (unreachable in-container when issuer-uri is the browser-facing localhost:8000, which
           # 500s every authenticated call). Mirrors hugmesh-actions + the gateway; compose sets
           # CASDOOR_JWKS_URI=http://casdoor:8000/.well-known/jwks. iss is still validated via issuer-uri.
-          jwk-set-uri: "${CASDOOR_JWKS_URI:${CASDOOR_ISSUER_URI:https://id.hugmesh.systems}/.well-known/jwks}"
+          jwk-set-uri: "${CASDOOR_JWKS_URI:${CASDOOR_ISSUER_URI:https://id.hugmesh.net}/.well-known/jwks}"
 
   # Runtime data access is REACTIVE (R2DBC) over the config datastore: the durable
   # account / allowlist / session / namespace-grant tables + iso_artifacts +
@@ -393,11 +393,11 @@ app:
       # The otpauth:// issuer (brand) shown in the authenticator app + the WebAuthn RP name.
       issuer: "${APP_MFA_TOTP_ISSUER:HugMesh}"
     webauthn:
-      # The WebAuthn Relying Party ID (the registrable domain, e.g. hugmesh.systems). The
+      # The WebAuthn Relying Party ID (the registrable domain, e.g. hugmesh.net). The
       # registration/assertion ceremonies enforce this RP ID + the origin allowlist below.
       rp-id: "${APP_MFA_WEBAUTHN_RP_ID:localhost}"
       # CSV origin allowlist for the WebAuthn ceremonies (e.g.
-      # https://admin.hugmesh.systems). A response from any other origin is rejected.
+      # https://admin.hugmesh.net). A response from any other origin is rejected.
       origins: "${APP_MFA_WEBAUTHN_ORIGINS:https://localhost}"
   # A2 opaque-session COOKIE bridge (D6+D8). The cookie-OR-bearer dual-READ
   # (SessionCookieWebFilter) is ALWAYS-ON + UNFLAGGED + backward-compatible. This flag
@@ -432,7 +432,7 @@ app:
     issuers: "${APP_TENANCY_ISSUERS:}"
   # Gmail addresses that are admins by default (also seeds the durable allowlist).
   # The google account for one of these gets roles ["user","admin"].
-  admin-emails: "${ADMIN_EMAILS:admin@hugmesh.systems}"
+  admin-emails: "${ADMIN_EMAILS:admin@hugmesh.net}"
   # Access-role ban / timed-suspension reconcile + expiry loop (the single-writer
   # effector of the access_suspension desired state).
   access-suspension:
@@ -765,7 +765,7 @@ app:
     # AddServiceEffector rejects DOCKERFILE/ZIP with a 400 "requires the in-cluster
     # builder". Flipping this true is NECESSARY but not SUFFICIENT for a real build —
     # the cluster also needs an actual x86/amd64 Node labelled
-    # `hugmesh.systems/build-node=true` (Fabric8PlatformCapabilityProbe.BUILD_NODE_LABEL)
+    # `hugmesh.net/build-node=true` (Fabric8PlatformCapabilityProbe.BUILD_NODE_LABEL)
     # for a Kaniko Job to schedule. GET /bff/superadmin/service-store/builder reports
     # BOTH the config flag and the live build-node presence so the UI reflects the
     # true capability instead of a hardcoded static gate.
@@ -774,7 +774,7 @@ app:
       # The namespace Kaniko build Jobs are created in. Only used when the builder is enabled.
       namespace: "${APPSTORE_BUILDER_NAMESPACE:hugmesh-service-catalog-builds}"
       # The registry base the built image is pushed to (<registry>/<brand>/<serviceKey>:<sha>).
-      registry: "${APPSTORE_BUILDER_REGISTRY:registry.hugmesh.systems}"
+      registry: "${APPSTORE_BUILDER_REGISTRY:registry.hugmesh.net}"
     # Optional CSV host allowlist (LAYER-2 SSRF backstop) applied to both the LIVE
     # (SELECT/GIT → ArgoCD) and BUILD (DOCKERFILE/ZIP → Kaniko) repoUrl paths. Empty
     # (the default) means any well-formed https/git/ssh host with a non-empty host
@@ -835,7 +835,7 @@ app:
       velero-namespace: "${BACKUPS_VELERO_NAMESPACE:velero}"
       # The per-brand namespace suffixes a DOMAIN backup includes (<domainSlug>-<suffix>) — the
       # <domain>-be PerServiceIdentity convention. A DOMAIN backup is ALSO walled by the
-      # hugmesh.systems/domain labelSelector (brand isolation), so these are the namespace
+      # hugmesh.net/domain labelSelector (brand isolation), so these are the namespace
       # leg of the double wall.
       brand-namespace-suffixes: "${BACKUPS_BRAND_NAMESPACE_SUFFIXES:be,fe}"
       # Velero backup TTL (the CR spec.ttl). Empty omits it (Velero install default).
@@ -854,7 +854,7 @@ app:
   # OPTIONAL-SERVICES live add/remove reconciler — the Lease-gated single writer of the
   # optional-services ApplicationSet element list (apps/13a) + the installed-services
   # ConfigMap greying booleans, reconciled from the OptionalService CRs
-  # (platform.hugmesh.systems/v1alpha1). See docs/OPTIONAL-SERVICES.md §7.1.
+  # (platform.hugmesh.net/v1alpha1). See docs/OPTIONAL-SERVICES.md §7.1.
   #
   # SHIPS DARK: enabled=false (the DEFAULT — every dev/test/CI run and every deployment
   # until deliberately switched on). With the flag off the three Noop seams

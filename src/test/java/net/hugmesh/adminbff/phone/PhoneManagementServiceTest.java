@@ -58,7 +58,7 @@ class PhoneManagementServiceTest {
     private void seed(PhoneDeviceRepository repo, String deviceId) {
         repo.upsert(new PhoneIngest(deviceId, "phone", "SER", "oriole", "Pixel 6",
                 "GrapheneOS", "2026071400", "hugmesh.internal", "https://hs.internal",
-                "100.64.0.7", "phone-host", "user", "acme.hugmesh.systems", true, 10L,
+                "100.64.0.7", "phone-host", "user", "acme.hugmesh.net", true, 10L,
                 "vault-seed", true, "com.hmdm.launcher", "https://headwind.internal",
                 "adb-device-owner", Instant.parse("2026-07-14T11:58:00Z"),
                 "https://attest", "auditor", "operator-paired",
@@ -194,8 +194,8 @@ class PhoneManagementServiceTest {
 
     private static final String ALICE = "alice-subject";
     private static final String BOB = "bob-subject";
-    private static final String ACME = "acme.hugmesh.systems";
-    private static final String BETA = "beta.hugmesh.systems";
+    private static final String ACME = "acme.hugmesh.net";
+    private static final String BETA = "beta.hugmesh.net";
 
     @Test
     void setOwner_assignsOwnerAndDomain_leavesManagementUntouched() {

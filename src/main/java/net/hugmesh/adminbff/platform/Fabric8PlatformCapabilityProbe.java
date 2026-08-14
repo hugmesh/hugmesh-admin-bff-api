@@ -47,7 +47,7 @@ public class Fabric8PlatformCapabilityProbe implements PlatformCapabilityProbe {
     private static final Logger log = LoggerFactory.getLogger(Fabric8PlatformCapabilityProbe.class);
 
     /** The x86 build-stick node label the generator stamps (documented in MEMORY: x86 binhost). */
-    static final String BUILD_NODE_LABEL = "hugmesh.systems/build-node";
+    static final String BUILD_NODE_LABEL = "hugmesh.net/build-node";
     /** The standard well-known arch label, to confirm the build node is genuinely amd64/x86. */
     static final String ARCH_LABEL = "kubernetes.io/arch";
 

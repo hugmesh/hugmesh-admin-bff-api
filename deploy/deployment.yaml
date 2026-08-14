@@ -18,14 +18,14 @@ kind: Deployment
 metadata:
   name: hugmesh-admin-bff-api
   namespace: hugmesh-backend
-  labels: { app: hugmesh-admin-bff-api, app.kubernetes.io/part-of: hugmesh.systems }
+  labels: { app: hugmesh-admin-bff-api, app.kubernetes.io/part-of: hugmesh.net }
 spec:
   replicas: 1
   selector: { matchLabels: { app: hugmesh-admin-bff-api } }
   template:
     metadata: { labels: { app: hugmesh-admin-bff-api } }
     spec:
-      nodeSelector: { hugmesh.systems/backend: "true" }
+      nodeSelector: { hugmesh.net/backend: "true" }
       # ── Cloud-backups effector identity (least-privilege Velero CR apply) ────
       # The cloudbackup VeleroBackupEffector's fabric8 in-cluster client runs as
       # THIS pod's ServiceAccount. backups-effector (manifests/velero/rbac.yaml) is
@@ -98,7 +98,7 @@ spec:
           env:
             # OAuth2 resource server: validate the cluster Casdoor JWT itself.
             - name: CASDOOR_ISSUER_URI
-              value: "https://id.hugmesh.systems"
+              value: "https://id.hugmesh.net"
             # ── API-to-API mTLS (server side) ─────────────────────────────────
             # Enforce a client cert chaining to the cluster CA. The store passwords
             # come from /stores/application-tls.properties (in-pod generated, loaded

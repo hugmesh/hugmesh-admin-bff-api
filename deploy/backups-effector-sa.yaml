@@ -20,7 +20,7 @@ metadata:
   labels:
     app.kubernetes.io/name: cloud-backups
     app.kubernetes.io/component: effector
-    app.kubernetes.io/part-of: hugmesh.systems
+    app.kubernetes.io/part-of: hugmesh.net
 # The admin-bff Deployment mounts this SA's token via automountServiceAccountToken
 # on the pod spec; no other pod in the namespace uses this SA.
 automountServiceAccountToken: false

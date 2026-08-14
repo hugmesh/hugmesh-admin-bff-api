@@ -83,8 +83,8 @@ public class Fabric8InstanceConfigMapWriter implements InstanceConfigMapWriter {
                                     .withNewMetadata()
                                     .withName(cmName)
                                     .withNamespace(namespace)
-                                    .addToLabels("app.kubernetes.io/part-of", "hugmesh.systems")
-                                    .addToLabels("hugmesh.systems/games-instances-domain", sanitize(domain))
+                                    .addToLabels("app.kubernetes.io/part-of", "hugmesh.net")
+                                    .addToLabels("hugmesh.net/games-instances-domain", sanitize(domain))
                                     .endMetadata()
                                     .withData(data)
                                     .build();

@@ -21,7 +21,7 @@ metadata:
   labels:
     app.kubernetes.io/part-of: hugmesh
     app.kubernetes.io/component: service-catalog-builder
-    hugmesh.systems/build-name: "${BUILD_NAME}"
+    hugmesh.net/build-name: "${BUILD_NAME}"
 spec:
   ttlSecondsAfterFinished: 86400   # keep the finished Job 24h for log inspection, then reap
   backoffLimit: 0                  # a failed build is a result, not something to retry blindly
@@ -30,7 +30,7 @@ spec:
     metadata:
       labels:
         app.kubernetes.io/component: service-catalog-builder
-        hugmesh.systems/build-name: "${BUILD_NAME}"
+        hugmesh.net/build-name: "${BUILD_NAME}"
     spec:
       serviceAccountName: service-catalog-builder
       restartPolicy: Never

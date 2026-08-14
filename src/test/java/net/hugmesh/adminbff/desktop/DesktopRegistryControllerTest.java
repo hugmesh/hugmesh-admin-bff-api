@@ -57,7 +57,7 @@ class DesktopRegistryControllerTest {
 
     /** The configured single-issuer (application.yml); a token from THIS issuer resolves to
      *  the "default" brand. A token from any OTHER issuer fails closed to NO_DOMAIN. */
-    private static final String TRUSTED_ISSUER = "https://id.hugmesh.systems";
+    private static final String TRUSTED_ISSUER = "https://id.hugmesh.net";
 
     // A discover user whose token comes from the TRUSTED issuer -> domain "default".
     private WebTestClient asDiscover() {

@@ -1,12 +1,12 @@
 // NOTE ON THE DIRECTORY: the templating renderer substitutes tokens in file
 // CONTENT only (paths are static), so this file lives under the neutral
-// src/main/java/systems/hugmesh/app/ directory while declaring the REAL
-// per-repo package systems.hugmesh.{{APP_SLUG}}. javac places classes by the
+// src/main/java/net/hugmesh/app/ directory while declaring the REAL
+// per-repo package net.hugmesh.{{APP_SLUG}}. javac places classes by the
 // DECLARED package (source directories need not match), so the build is
 // unaffected; after adopting the tree, `git mv` the sources into
-// src/main/java/systems/hugmesh/{{APP_SLUG}}/ to restore the conventional
+// src/main/java/net/hugmesh/{{APP_SLUG}}/ to restore the conventional
 // layout. See README.md, "Package layout".
-package systems.hugmesh.{{APP_SLUG}};
+package net.hugmesh.{{APP_SLUG}};
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;

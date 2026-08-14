@@ -1,4 +1,4 @@
-package systems.hugmesh.{{APP_SLUG}};
+package net.hugmesh.{{APP_SLUG}};
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;

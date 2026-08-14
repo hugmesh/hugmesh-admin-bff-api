@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  CONSUMER Maven settings for resolving the PRIVATE systems.hugmesh parent
+  CONSUMER Maven settings for resolving the PRIVATE net.hugmesh parent
   (and, once this service uses them, hugmesh-commons/auth-core) from the org's
   GitLab GROUP-level Maven Package Registry. Copied from the admin-bff-api
   exemplar — two resolution paths, no secrets in git:

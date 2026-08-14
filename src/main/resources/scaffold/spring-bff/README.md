@@ -16,8 +16,8 @@ curl -si localhost:8080/api/{{APP_SLUG}}/hello  # no JWT  -> 401
 
 | Piece | File | Shape |
 |---|---|---|
-| Org parent | `pom.xml` | `systems.hugmesh:hugmesh-parent` (the admin-bff-api exemplar's pin) — injects WebFlux/actuator/security/OAuth2 + the shared test stack |
-| App | `src/main/java/.../Application.java` | `@SpringBootApplication`, package `systems.hugmesh.{{APP_SLUG}}` |
+| Org parent | `pom.xml` | `net.hugmesh:hugmesh-parent` (the admin-bff-api exemplar's pin) — injects WebFlux/actuator/security/OAuth2 + the shared test stack |
+| App | `src/main/java/.../Application.java` | `@SpringBootApplication`, package `net.hugmesh.{{APP_SLUG}}` |
 | API | `HelloController` | `GET /api/{{APP_SLUG}}/hello` -> `{service, message}` |
 | Security | `SecurityConfig` | permitAll `/actuator/health(/**)`, `authenticated()` everywhere else, Bearer-JWT resource server, CSRF off (no cookie mint) |
 | Config | `application.yml` | fully `${ENV:default}`-driven (Casdoor issuer/JWKS, management include, port) |
@@ -30,7 +30,7 @@ curl -si localhost:8080/api/{{APP_SLUG}}/hello  # no JWT  -> 401
 
 The `repos[].identity` **`app_slug` for this skeleton MUST match `[a-z0-9]+`**
 (lowercase alphanumeric, NO hyphens, non-empty): it is rendered into the Java
-package `systems.hugmesh.{{APP_SLUG}}` and Java package names cannot contain
+package `net.hugmesh.{{APP_SLUG}}` and Java package names cannot contain
 `-`. Slugs like `character-studio` are fine for the angular-mfe archetype but
 NOT here — pick `characterstudio`-style slugs for a skeleton-rendered BFF. The
 same rule is recorded in the archetype `recipe.yaml` header comment.
@@ -39,14 +39,14 @@ same rule is recorded in the archetype `recipe.yaml` header comment.
 
 The templating renderer substitutes tokens in file CONTENT only (paths are
 static), so the sources live under the neutral directory
-`src/main/java/systems/hugmesh/app/` while declaring the real package
-`systems.hugmesh.{{APP_SLUG}}`. javac places classes by the DECLARED package,
+`src/main/java/net/hugmesh/app/` while declaring the real package
+`net.hugmesh.{{APP_SLUG}}`. javac places classes by the DECLARED package,
 so the build is unaffected. After adopting the tree, restore the conventional
 layout with:
 
 ```
-git mv src/main/java/systems/hugmesh/app src/main/java/systems/hugmesh/{{APP_SLUG}}
-git mv src/test/java/systems/hugmesh/app src/test/java/systems/hugmesh/{{APP_SLUG}}
+git mv src/main/java/net/hugmesh/app src/main/java/net/hugmesh/{{APP_SLUG}}
+git mv src/test/java/net/hugmesh/app src/test/java/net/hugmesh/{{APP_SLUG}}
 ```
 
 ## No persistence yet — deliberately

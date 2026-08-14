@@ -86,7 +86,7 @@ class AuthControllerWebFluxTest {
 
     // ── Fixture account and token ───────────────────────────────────────
 
-    private static final String EMAIL = "alice@hugmesh.systems";
+    private static final String EMAIL = "alice@hugmesh.net";
     private static final String ACCOUNT_ID = "google:" + EMAIL;
     private static final String SESSION_TOKEN = "bff_test_token_abc123";
 

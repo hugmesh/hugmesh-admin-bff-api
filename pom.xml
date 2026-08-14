@@ -12,12 +12,17 @@
        hugmesh-parent is itself a child of spring-boot-starter-parent:4.0.7, so the
        Spring Boot dependency + plugin management is inherited TRANSITIVELY. -->
   <parent>
-    <groupId>systems.hugmesh</groupId>
+    <groupId>net.hugmesh</groupId>
     <artifactId>hugmesh-parent</artifactId>
     <version>2.8.0</version>
     <relativePath/>
   </parent>
 
+  <!-- Declared EXPLICITLY (not inherited from the parent) so this module's published
+       coordinate can never silently drift back to a parent's groupId — that silent
+       inheritance is exactly how this module kept publishing under the retired
+       reverse-domain coordinate while its Java packages had already moved here. -->
+  <groupId>net.hugmesh</groupId>
   <artifactId>admin-bff</artifactId>
   <version>0.1.0</version>
 
@@ -51,7 +56,7 @@
          security.{Roles,DomainRegistry,DomainScope} + config.{CasdoorAuthorities,
          TenancyResourceServerConfig} + web.ApiException. -->
     <dependency>
-      <groupId>systems.hugmesh</groupId>
+      <groupId>net.hugmesh</groupId>
       <artifactId>hugmesh-commons</artifactId>
     </dependency>
 
@@ -63,7 +68,7 @@
          same jar but reaches the data over /bff/internal. NOT in the parent BOM (BFF-only, kept
          off the gateway classpath), so the version is pinned explicitly here. -->
     <dependency>
-      <groupId>systems.hugmesh</groupId>
+      <groupId>net.hugmesh</groupId>
       <artifactId>hugmesh-auth-core</artifactId>
       <!-- 2.1.0 adds the BFF-JWT-custody seam (bff_session custody columns on BffSession,
            AccountStore.stampCustody/clearCustody/sessionRow, BffCustodyCipher AES-256-GCM,
@@ -235,7 +240,7 @@
          PostgresTestSupport base (per-class fresh Postgres + r2dbc/liquibase
          auto-wiring) used by the converted full-context HTTP tests. -->
     <dependency>
-      <groupId>systems.hugmesh</groupId>
+      <groupId>net.hugmesh</groupId>
       <artifactId>hugmesh-commons</artifactId>
       <version>2.1.0</version>
       <classifier>tests</classifier>

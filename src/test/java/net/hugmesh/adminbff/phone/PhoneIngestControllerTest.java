@@ -69,11 +69,11 @@ class PhoneIngestControllerTest {
         return new PhoneDevice("pd-1", deviceId, "phone", "1C291FDF3005A", "oriole",
                 "Pixel 6", "GrapheneOS", "2026071400", "hugmesh.internal",
                 "https://headscale.hugmesh.internal", "100.64.0.7",
-                "phone-1c291fdf3005a", "user", "acme.hugmesh.systems", true, 10L,
+                "phone-1c291fdf3005a", "user", "acme.hugmesh.net", true, 10L,
                 "vault-seed", true, "com.hmdm.launcher",
                 "https://headwind.hugmesh.internal", "adb-device-owner",
                 Instant.parse("2026-07-14T11:58:00Z"),
-                "https://attestation.hugmesh.systems",
+                "https://attestation.hugmesh.net",
                 "net.hugmesh.auditor", "operator-paired",
                 Instant.parse("2026-07-14T12:00:00Z"), Instant.parse("2026-07-14T12:05:00Z"),
                 Instant.now(), Instant.now(), count,
@@ -88,9 +88,9 @@ class PhoneIngestControllerTest {
              "superdomain":"hugmesh.internal",
              "login_server":"https://headscale.hugmesh.internal",
              "tailscale_ip":"100.64.0.7","tailscale_hostname":"phone-1c291fdf3005a",
-             "role":"user","attached_domain":"acme.hugmesh.systems",
+             "role":"user","attached_domain":"acme.hugmesh.net",
              "enterprise_profile":{"present":true,"user_id":10,"credential_custody":"vault-seed"},
-             "attestation_url":"https://attestation.hugmesh.systems",
+             "attestation_url":"https://attestation.hugmesh.net",
              "auditor_package":"net.hugmesh.auditor",
              "attestation_verdict":"operator-paired",
              "enrolled_at":"2026-07-14T12:00:00Z","generated_at":"2026-07-14T12:05:00Z"}""";
@@ -127,12 +127,12 @@ class PhoneIngestControllerTest {
         assertThat(b.tailscaleIp()).isEqualTo("100.64.0.7");
         assertThat(b.tailscaleHostname()).isEqualTo("phone-1c291fdf3005a");
         assertThat(b.role()).isEqualTo("user");
-        assertThat(b.attachedDomain()).isEqualTo("acme.hugmesh.systems");
+        assertThat(b.attachedDomain()).isEqualTo("acme.hugmesh.net");
         assertThat(b.enterpriseProfile()).isNotNull();
         assertThat(b.enterpriseProfile().present()).isTrue();
         assertThat(b.enterpriseProfile().userId()).isEqualTo(10L);
         assertThat(b.enterpriseProfile().credentialCustody()).isEqualTo("vault-seed");
-        assertThat(b.attestationUrl()).isEqualTo("https://attestation.hugmesh.systems");
+        assertThat(b.attestationUrl()).isEqualTo("https://attestation.hugmesh.net");
         assertThat(b.auditorPackage()).isEqualTo("net.hugmesh.auditor");
         assertThat(b.attestationVerdict()).isEqualTo("operator-paired");
         assertThat(b.enrolledAt()).isEqualTo(Instant.parse("2026-07-14T12:00:00Z"));
@@ -150,12 +150,12 @@ class PhoneIngestControllerTest {
              "superdomain":"hugmesh.internal",
              "login_server":"https://headscale.hugmesh.internal",
              "tailscale_ip":"100.64.0.7","tailscale_hostname":"phone-1c291fdf3005a",
-             "role":"user","attached_domain":"acme.hugmesh.systems",
+             "role":"user","attached_domain":"acme.hugmesh.net",
              "enterprise_profile":{"present":true,"user_id":10,"credential_custody":"vault-seed"},
              "mdm":{"enrolled":true,"dpc_package":"com.hmdm.launcher",
               "headwind_url":"https://headwind.hugmesh.internal",
               "set_via":"adb-device-owner","enrolled_at":"2026-07-14T11:58:00Z"},
-             "attestation_url":"https://attestation.hugmesh.systems",
+             "attestation_url":"https://attestation.hugmesh.net",
              "auditor_package":"net.hugmesh.auditor",
              "attestation_verdict":"operator-paired",
              "enrolled_at":"2026-07-14T12:00:00Z","generated_at":"2026-07-14T12:05:00Z"}""";

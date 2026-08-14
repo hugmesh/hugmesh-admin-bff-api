@@ -34,7 +34,7 @@ import java.util.function.Supplier;
  * <h3>Service bearer — reused VERBATIM from the platform pattern</h3>
  * The clear-source endpoint is {@code hasAnyRole('ADMIN','SUPERADMIN')} and
  * domain-scoped on the ISSUER, so this caller presents a Casdoor SUPERADMIN service
- * JWT minted via the OAuth2 {@code client_credentials} grant against hugmesh.systems
+ * JWT minted via the OAuth2 {@code client_credentials} grant against hugmesh.net
  * Casdoor — the SAME mechanism + the SAME
  * {@code app.casdoor.systems.{base-url,client-id,client-secret}} credentials
  * {@code UserBffNotificationConfig} uses to mint its ROLE_SERVICE token. The token is

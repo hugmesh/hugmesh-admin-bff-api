@@ -214,7 +214,7 @@ public class ImageBuildOrchestrator {
                 + "  labels:\n"
                 + "    app.kubernetes.io/part-of: hugmesh\n"
                 + "    app.kubernetes.io/component: image-gen\n"
-                + "    hugmesh.systems/image-build-id: \"" + build.id() + "\"\n"
+                + "    hugmesh.net/image-build-id: \"" + build.id() + "\"\n"
                 + "data:\n"
                 + "  spec.json: |\n"
                 + "    " + spec + "\n"

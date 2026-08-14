@@ -52,7 +52,7 @@ public interface WorkloadClient {
 
     Mono<PodInspect> inspectPod(String namespace, String name);
 
-    /** The namespace's owner-chain domain attribution — the {@code hugmesh.systems/domain}
+    /** The namespace's owner-chain domain attribution — the {@code hugmesh.net/domain}
      *  label the generator stamps on the namespace via the ArgoCD owner chain (the STEP-7
      *  per-tenant cut for the namespace-wide reads: metrics/events/volumes/network). Emits the
      *  label value, or EMPTY when the namespace carries none (the single-brand-cluster default,

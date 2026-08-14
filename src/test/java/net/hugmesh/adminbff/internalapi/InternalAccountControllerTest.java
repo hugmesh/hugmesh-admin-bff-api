@@ -184,16 +184,16 @@ class InternalAccountControllerTest {
     @Test
     void ensureAccount_casdoor_extractsSubjectAndNormalizesRoles() {
         String idToken = fakeIdToken(
-                "{\"email\":\"e2e-admin@hugmesh.systems\","
+                "{\"email\":\"e2e-admin@hugmesh.net\","
                         + "\"roles\":[\"ROLE_ADMIN\",\"ROLE_USER\"]}");
-        when(accounts.ensureAccount(eq("casdoor"), eq("e2e-admin@hugmesh.systems"), any()))
+        when(accounts.ensureAccount(eq("casdoor"), eq("e2e-admin@hugmesh.net"), any()))
                 .thenReturn(Mono.just(acct(true)));
         StepVerifier.create(controller.ensureAccount(
                         new InternalAccountController.EnsureAccountRequest("casdoor", idToken)))
                 .expectNextCount(1)
                 .verifyComplete();
         // ROLE_ADMIN/ROLE_USER (gateway-facing convention) -> admin/user (BFF session convention).
-        verify(accounts).ensureAccount("casdoor", "e2e-admin@hugmesh.systems", List.of("admin", "user"));
+        verify(accounts).ensureAccount("casdoor", "e2e-admin@hugmesh.net", List.of("admin", "user"));
     }
 
     @Test

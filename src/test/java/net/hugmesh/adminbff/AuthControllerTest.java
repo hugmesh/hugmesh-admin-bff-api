@@ -72,7 +72,7 @@ class AuthControllerTest {
     @TestConfiguration
     static class Cfg {
         @Bean AccountStore accountStore(DatabaseClient db) {
-            AccountStore store = new AccountStore(net.hugmesh.adminbff.testutil.R2dbcRepos.of(db, net.hugmesh.authcore.account.AllowlistRepository.class), net.hugmesh.adminbff.testutil.R2dbcRepos.of(db, net.hugmesh.authcore.account.AccountRowRepository.class), net.hugmesh.adminbff.testutil.R2dbcRepos.of(db, net.hugmesh.authcore.account.BffSessionRepository.class), net.hugmesh.adminbff.testutil.R2dbcRepos.of(db, net.hugmesh.authcore.account.NamespaceGrantRepository.class), "admin@hugmesh.systems");
+            AccountStore store = new AccountStore(net.hugmesh.adminbff.testutil.R2dbcRepos.of(db, net.hugmesh.authcore.account.AllowlistRepository.class), net.hugmesh.adminbff.testutil.R2dbcRepos.of(db, net.hugmesh.authcore.account.AccountRowRepository.class), net.hugmesh.adminbff.testutil.R2dbcRepos.of(db, net.hugmesh.authcore.account.BffSessionRepository.class), net.hugmesh.adminbff.testutil.R2dbcRepos.of(db, net.hugmesh.authcore.account.NamespaceGrantRepository.class), "admin@hugmesh.net");
             store.seedAdmins();
             return store;
         }
@@ -108,11 +108,11 @@ class AuthControllerTest {
     void registerGoogle_invited_returnsSessionWithToken() {
         stubUsage();
         web.post().uri("/bff/register/google").contentType(MediaType.APPLICATION_JSON)
-                .bodyValue("{\"email\":\"admin@hugmesh.systems\"}")
+                .bodyValue("{\"email\":\"admin@hugmesh.net\"}")
                 .exchange().expectStatus().isOk()
                 .expectBody()
                 .jsonPath("$.token").exists()
-                .jsonPath("$.id").isEqualTo("google:admin@hugmesh.systems")
+                .jsonPath("$.id").isEqualTo("google:admin@hugmesh.net")
                 .jsonPath("$.provider").isEqualTo("google")
                 .jsonPath("$.roles[0]").isEqualTo("user")
                 .jsonPath("$.roles[1]").isEqualTo("admin")
@@ -239,12 +239,12 @@ class AuthControllerTest {
 
         // Now provision brokers a real token (mocked).
         when(broker.matrixToken(anyString())).thenReturn(Mono.just(
-                Map.of("access_token", "mx_tok", "user_id", "@flow:hugmesh.systems")));
+                Map.of("access_token", "mx_tok", "user_id", "@flow:hugmesh.net")));
         web.mutateWith(asFlow).post().uri("/bff/provision/matrix").exchange()
                 .expectStatus().isOk()
                 .expectBody()
                 .jsonPath("$.access_token").isEqualTo("mx_tok")
-                .jsonPath("$.user_id").isEqualTo("@flow:hugmesh.systems");
+                .jsonPath("$.user_id").isEqualTo("@flow:hugmesh.net");
 
         // /bff/me/namespaces: a non-admin user starts with no grants.
         web.mutateWith(asFlow).get().uri("/bff/me/namespaces").exchange()
@@ -293,7 +293,7 @@ class AuthControllerTest {
         // reserved app prefix. Even after a completed registration the broker
         // must never be asked to mint a real homeserver account for it.
         // (NOT "admin": this class's shared durable store already has a
-        // google:admin@hugmesh.systems row whose localpart is ALSO "admin" —
+        // google:admin@hugmesh.net row whose localpart is ALSO "admin" —
         // reusing that literal here would trip the NEW account-localpart-collision
         // guard instead of exercising the reserved-username rejection this test is
         // actually about. This account is created directly via AccountStore

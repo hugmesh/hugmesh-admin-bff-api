@@ -15,7 +15,7 @@ spec:
   template:
     metadata: { labels: { app: {{APP_SLUG}}-bff } }
     spec:
-      nodeSelector: { hugmesh.systems/backend: "true" }
+      nodeSelector: { hugmesh.net/backend: "true" }
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000

@@ -31,7 +31,7 @@ The copy is mechanical and lossless:
   exactly as the generator authors them (they are rendered at request time by
   `TokenRenderer`, not at copy time);
 - file **paths are unchanged** (the Java sources stay under the neutral
-  `src/main/java/systems/hugmesh/app/` directory the generator uses; the
+  `src/main/java/net/hugmesh/app/` directory the generator uses; the
   scaffold renderer relocates them into the real package path per request — see
   `ScaffoldService`).
 

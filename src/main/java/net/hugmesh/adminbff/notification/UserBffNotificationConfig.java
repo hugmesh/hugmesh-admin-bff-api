@@ -32,7 +32,7 @@ import java.util.function.Supplier;
  * <h3>Service bearer — reused VERBATIM from the platform pattern</h3>
  * The in-app notification endpoint is ROLE_SERVICE-gated on the user-bff side, so this
  * caller presents a Casdoor SERVICE JWT minted via the OAuth2 {@code client_credentials}
- * grant against hugmesh.systems Casdoor — the SAME mechanism + the SAME
+ * grant against hugmesh.net Casdoor — the SAME mechanism + the SAME
  * {@code app.casdoor.systems.{base-url,client-id,client-secret}} credentials
  * hugmesh-actions' {@code FederationUsernameClientConfig} uses to mint its
  * ROLE_SERVICE token (and the same the federation username gate consumes). The token is

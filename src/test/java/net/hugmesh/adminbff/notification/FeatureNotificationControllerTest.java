@@ -54,7 +54,7 @@ class FeatureNotificationControllerTest {
     // The configured single-issuer (application.yml issuer-uri); DomainRegistry maps it to
     // "default". The JWT MUST carry it or PrincipalDomain fails closed to NO_DOMAIN (a real,
     // tested behaviour — see unknownIssuer_failsClosed below).
-    private static final String ISSUER = "https://id.hugmesh.systems";
+    private static final String ISSUER = "https://id.hugmesh.net";
 
     private WebTestClient asAdmin() {
         return web.mutateWith(mockJwt().jwt(j -> j.issuer(ISSUER)).authorities(

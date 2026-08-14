@@ -26,8 +26,8 @@ metadata:
   labels:
     app.kubernetes.io/part-of: hugmesh
     app.kubernetes.io/component: image-gen
-    hugmesh.systems/image-build-id: "${BUILD_ID}"
-    hugmesh.systems/image-type: "${IMAGE_TYPE}"
+    hugmesh.net/image-build-id: "${BUILD_ID}"
+    hugmesh.net/image-type: "${IMAGE_TYPE}"
 spec:
   ttlSecondsAfterFinished: 86400   # keep the finished Job 24h for log inspection, then reap
   backoffLimit: 0                  # a failed build is a result, not something to retry blindly
@@ -36,7 +36,7 @@ spec:
     metadata:
       labels:
         app.kubernetes.io/component: image-gen
-        hugmesh.systems/image-build-id: "${BUILD_ID}"
+        hugmesh.net/image-build-id: "${BUILD_ID}"
     spec:
       serviceAccountName: image-gen
       restartPolicy: Never

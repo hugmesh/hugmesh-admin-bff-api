@@ -68,7 +68,7 @@ class AdminControllerAllowlistTest {
     @TestConfiguration
     static class Cfg {
         @Bean AccountStore accountStore(DatabaseClient db) {
-            AccountStore store = new AccountStore(net.hugmesh.adminbff.testutil.R2dbcRepos.of(db, net.hugmesh.authcore.account.AllowlistRepository.class), net.hugmesh.adminbff.testutil.R2dbcRepos.of(db, net.hugmesh.authcore.account.AccountRowRepository.class), net.hugmesh.adminbff.testutil.R2dbcRepos.of(db, net.hugmesh.authcore.account.BffSessionRepository.class), net.hugmesh.adminbff.testutil.R2dbcRepos.of(db, net.hugmesh.authcore.account.NamespaceGrantRepository.class), "admin@hugmesh.systems");
+            AccountStore store = new AccountStore(net.hugmesh.adminbff.testutil.R2dbcRepos.of(db, net.hugmesh.authcore.account.AllowlistRepository.class), net.hugmesh.adminbff.testutil.R2dbcRepos.of(db, net.hugmesh.authcore.account.AccountRowRepository.class), net.hugmesh.adminbff.testutil.R2dbcRepos.of(db, net.hugmesh.authcore.account.BffSessionRepository.class), net.hugmesh.adminbff.testutil.R2dbcRepos.of(db, net.hugmesh.authcore.account.NamespaceGrantRepository.class), "admin@hugmesh.net");
             store.seedAdmins();
             return store;
         }
@@ -105,12 +105,12 @@ class AdminControllerAllowlistTest {
         // seedAdmins() does. The mockJwt() slice principals carry no issuer claim, so
         // PrincipalDomain resolves them to the NO_DOMAIN sentinel scope (Roles read JWT
         // claims, NOT Spring authorities); invite into that same scope the admin reads from.
-        store.inviteEmail("admin@hugmesh.systems",
+        store.inviteEmail("admin@hugmesh.net",
                 net.hugmesh.commons.security.PrincipalDomain.NO_DOMAIN).block();
         asAdmin().get().uri("/bff/admin/allowlist").exchange()
                 .expectStatus().isOk()
                 .expectBody()
-                .jsonPath("$.emails").value(org.hamcrest.Matchers.hasItem("admin@hugmesh.systems"))
+                .jsonPath("$.emails").value(org.hamcrest.Matchers.hasItem("admin@hugmesh.net"))
                 .jsonPath("$.discord").isArray();
     }
 

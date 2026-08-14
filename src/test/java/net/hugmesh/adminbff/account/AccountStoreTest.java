@@ -35,7 +35,7 @@ class AccountStoreTest extends AdminBffPostgresTestSupport {
     @Autowired DatabaseClient db;
 
     private AccountStore newStore() {
-        AccountStore store = new AccountStore(net.hugmesh.adminbff.testutil.R2dbcRepos.of(db, net.hugmesh.authcore.account.AllowlistRepository.class), net.hugmesh.adminbff.testutil.R2dbcRepos.of(db, net.hugmesh.authcore.account.AccountRowRepository.class), net.hugmesh.adminbff.testutil.R2dbcRepos.of(db, net.hugmesh.authcore.account.BffSessionRepository.class), net.hugmesh.adminbff.testutil.R2dbcRepos.of(db, net.hugmesh.authcore.account.NamespaceGrantRepository.class), "admin@hugmesh.systems");
+        AccountStore store = new AccountStore(net.hugmesh.adminbff.testutil.R2dbcRepos.of(db, net.hugmesh.authcore.account.AllowlistRepository.class), net.hugmesh.adminbff.testutil.R2dbcRepos.of(db, net.hugmesh.authcore.account.AccountRowRepository.class), net.hugmesh.adminbff.testutil.R2dbcRepos.of(db, net.hugmesh.authcore.account.BffSessionRepository.class), net.hugmesh.adminbff.testutil.R2dbcRepos.of(db, net.hugmesh.authcore.account.NamespaceGrantRepository.class), "admin@hugmesh.net");
         store.seedAdmins();   // @PostConstruct equivalent — seed the durable allowlist
         return store;
     }
@@ -43,9 +43,9 @@ class AccountStoreTest extends AdminBffPostgresTestSupport {
     @Test
     void seedAdminIsInvitedAndGetsAdminRole() {
         AccountStore store = newStore();
-        StepVerifier.create(store.isEmailInvited("admin@hugmesh.systems"))
+        StepVerifier.create(store.isEmailInvited("admin@hugmesh.net"))
                 .expectNext(true).verifyComplete();
-        Account a = store.ensureAccount("google", "admin@hugmesh.systems").block();
+        Account a = store.ensureAccount("google", "admin@hugmesh.net").block();
         assertThat(a.roles()).containsExactly("user", "admin");
         assertThat(a.isAdmin()).isTrue();
         assertThat(a.registrationComplete()).isFalse();
@@ -108,7 +108,7 @@ class AccountStoreTest extends AdminBffPostgresTestSupport {
     @Test
     void sessionResolvesAccount_andSurvivesRestart() {
         AccountStore store = newStore();
-        Account a = store.ensureAccount("google", "admin@hugmesh.systems").block();
+        Account a = store.ensureAccount("google", "admin@hugmesh.net").block();
         String token = store.newSession(a).block();
 
         StepVerifier.create(store.sessionOf("Bearer " + token)).expectNext(a).verifyComplete();
@@ -118,7 +118,7 @@ class AccountStoreTest extends AdminBffPostgresTestSupport {
 
         // "Restart": a brand-new store over the SAME durable datastore still
         // resolves the session — the in-memory-map-loses-state-on-restart bug fixed.
-        AccountStore afterRestart = new AccountStore(net.hugmesh.adminbff.testutil.R2dbcRepos.of(db, net.hugmesh.authcore.account.AllowlistRepository.class), net.hugmesh.adminbff.testutil.R2dbcRepos.of(db, net.hugmesh.authcore.account.AccountRowRepository.class), net.hugmesh.adminbff.testutil.R2dbcRepos.of(db, net.hugmesh.authcore.account.BffSessionRepository.class), net.hugmesh.adminbff.testutil.R2dbcRepos.of(db, net.hugmesh.authcore.account.NamespaceGrantRepository.class), "admin@hugmesh.systems");
+        AccountStore afterRestart = new AccountStore(net.hugmesh.adminbff.testutil.R2dbcRepos.of(db, net.hugmesh.authcore.account.AllowlistRepository.class), net.hugmesh.adminbff.testutil.R2dbcRepos.of(db, net.hugmesh.authcore.account.AccountRowRepository.class), net.hugmesh.adminbff.testutil.R2dbcRepos.of(db, net.hugmesh.authcore.account.BffSessionRepository.class), net.hugmesh.adminbff.testutil.R2dbcRepos.of(db, net.hugmesh.authcore.account.NamespaceGrantRepository.class), "admin@hugmesh.net");
         StepVerifier.create(afterRestart.sessionOf("Bearer " + token)).expectNext(a).verifyComplete();
     }
 
@@ -151,7 +151,7 @@ class AccountStoreTest extends AdminBffPostgresTestSupport {
 
         // Full token shape: the 'bff_' prefix is preserved and fits varchar(64).
         AccountStore store = newStore();
-        Account a = store.ensureAccount("google", "admin@hugmesh.systems").block();
+        Account a = store.ensureAccount("google", "admin@hugmesh.net").block();
         String full = store.newSession(a).block();
         assertThat(full).startsWith("bff_");
         assertThat(full.length()).isLessThanOrEqualTo(64);
@@ -166,14 +166,14 @@ class AccountStoreTest extends AdminBffPostgresTestSupport {
         assertThat(done.registrationComplete()).isTrue();
         assertThat(store.account(a.id()).block().registrationComplete()).isTrue();
         // New store sees the persisted completion (durable across replicas).
-        AccountStore other = new AccountStore(net.hugmesh.adminbff.testutil.R2dbcRepos.of(db, net.hugmesh.authcore.account.AllowlistRepository.class), net.hugmesh.adminbff.testutil.R2dbcRepos.of(db, net.hugmesh.authcore.account.AccountRowRepository.class), net.hugmesh.adminbff.testutil.R2dbcRepos.of(db, net.hugmesh.authcore.account.BffSessionRepository.class), net.hugmesh.adminbff.testutil.R2dbcRepos.of(db, net.hugmesh.authcore.account.NamespaceGrantRepository.class), "admin@hugmesh.systems");
+        AccountStore other = new AccountStore(net.hugmesh.adminbff.testutil.R2dbcRepos.of(db, net.hugmesh.authcore.account.AllowlistRepository.class), net.hugmesh.adminbff.testutil.R2dbcRepos.of(db, net.hugmesh.authcore.account.AccountRowRepository.class), net.hugmesh.adminbff.testutil.R2dbcRepos.of(db, net.hugmesh.authcore.account.BffSessionRepository.class), net.hugmesh.adminbff.testutil.R2dbcRepos.of(db, net.hugmesh.authcore.account.NamespaceGrantRepository.class), "admin@hugmesh.net");
         assertThat(other.account(a.id()).block().registrationComplete()).isTrue();
     }
 
     @Test
     void namespacesForAdminAreAll_grantsForUsers() {
         AccountStore store = newStore();
-        Account admin = store.ensureAccount("google", "admin@hugmesh.systems").block();
+        Account admin = store.ensureAccount("google", "admin@hugmesh.net").block();
         assertThat(store.namespacesFor(admin).block())
                 .containsExactlyElementsOf(AccountStore.NAMESPACES);
 

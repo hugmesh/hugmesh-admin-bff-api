@@ -13,7 +13,7 @@ metadata:
   labels:
     app.kubernetes.io/part-of: hugmesh
     app.kubernetes.io/component: backup-worker
-    hugmesh.systems/restore-of: "${JOB_ID}"
+    hugmesh.net/restore-of: "${JOB_ID}"
 spec:
   ttlSecondsAfterFinished: 3600
   backoffLimit: 1

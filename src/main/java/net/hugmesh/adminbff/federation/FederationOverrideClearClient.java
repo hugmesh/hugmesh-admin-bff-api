@@ -35,7 +35,7 @@ import java.util.function.Supplier;
  * brand. The expiry action runs in a SYSTEM / SCHEDULED context (no human request, no
  * forwardable caller JWT) and is the single cross-brand clock, so it presents a Casdoor
  * SERVICE-account JWT minted via the OAuth2 {@code client_credentials} grant against
- * hugmesh.systems Casdoor — the SAME mechanism + the SAME
+ * hugmesh.net Casdoor — the SAME mechanism + the SAME
  * {@code app.casdoor.systems.{base-url,client-id,client-secret}} credentials the
  * {@code UserBffNotificationConfig} / hugmesh-actions service clients use. That
  * service account carries the cross-domain SUPERADMIN authority (the infra control

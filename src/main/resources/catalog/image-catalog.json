@@ -1,10 +1,1371 @@
 {
+  "archs": [
+    {
+      "id": "x86-64",
+      "label": "x86-64 (Intel/AMD PCs)"
+    },
+    {
+      "id": "arm64",
+      "label": "ARM64 (single-board / edge devices)"
+    },
+    {
+      "id": "armv7",
+      "label": "ARMv7 (32-bit \u2014 no aarch64 toolchain fit)"
+    },
+    {
+      "id": "riscv64",
+      "label": "RISC-V 64 (no builder / no toolchain)"
+    }
+  ],
+  "devices": [
+    {
+      "arch": "x86-64",
+      "config_axes": {
+        "board": "",
+        "platform": "x86"
+      },
+      "family": "x86-pcs",
+      "id": "x86-pc",
+      "label": "x86-64 desktop PC / mini-PC (UEFI)",
+      "notes": "the generic UEFI x86 target: standalone desktops, cloud clients, and every x86 cluster-node role",
+      "reason": "",
+      "roles": {
+        "cloud": [
+          {
+            "label": "Laptop desktop \u2014 tailnet + SSO",
+            "role": "laptop"
+          },
+          {
+            "label": "Chromebook desktop \u2014 coreboot/UEFI laptop image (ADR-16); tailnet + SSO",
+            "role": "chromebook"
+          },
+          {
+            "label": "Desktop client \u2014 tailnet + SSO",
+            "role": "desktop"
+          }
+        ],
+        "mesh": [
+          {
+            "label": "PKI node \u2014 cluster certificate authority (x86 or Raspberry Pi 4/5)",
+            "role": "pki"
+          },
+          {
+            "label": "Backend node (x86 or Raspberry Pi 4/5)",
+            "role": "be"
+          },
+          {
+            "label": "Frontend node (x86 or Raspberry Pi 4/5)",
+            "role": "fe"
+          },
+          {
+            "label": "Backend + GPU node",
+            "role": "be+gpu"
+          },
+          {
+            "label": "Omnibus \u2014 every cluster role on one node",
+            "role": "omnibus"
+          },
+          {
+            "label": "Laptop desktop \u2014 tailnet + SSO client for a person on this mesh",
+            "role": "laptop"
+          },
+          {
+            "label": "Chromebook desktop \u2014 coreboot/UEFI laptop client (ADR-16); tailnet + SSO",
+            "role": "chromebook"
+          },
+          {
+            "label": "Desktop client \u2014 tailnet + SSO client for a person on this mesh",
+            "role": "desktop"
+          },
+          {
+            "label": "Edge-AI node \u2014 GPU + OpenAI-compatible model API",
+            "role": "edge_ai"
+          }
+        ],
+        "standalone": [
+          {
+            "label": "Standalone thin \u2014 hardened LXDE desktop, no mesh/SSO",
+            "role": "standalone-thin"
+          },
+          {
+            "label": "Standalone thick \u2014 hardened full desktop, no mesh/SSO",
+            "role": "standalone-thick"
+          },
+          {
+            "label": "Unaffiliated desktop \u2014 plain Gentoo, no HugMesh (zero branding/tooling baked)",
+            "role": "standalone-unaffiliated"
+          },
+          {
+            "label": "Chromebook desktop \u2014 coreboot/UEFI laptop image (ADR-16), standalone (no mesh/SSO)",
+            "role": "chromebook"
+          }
+        ]
+      },
+      "soc": "any x86-64 (Intel/AMD) \u2014 covers NUC / Beelink / Minisforum / ODROID-H4 class mini-PCs",
+      "status": "supported"
+    },
+    {
+      "arch": "x86-64",
+      "config_axes": {
+        "board": "",
+        "platform": "x86"
+      },
+      "family": "x86-pcs",
+      "id": "x86-laptop",
+      "label": "x86-64 laptop (UEFI)",
+      "notes": "same builder target as the desktop PC \u2014 laptop vs desktop is user intent (the role), not a board axis; the builder accepts every x86 role on any x86-64 machine",
+      "reason": "",
+      "roles": {
+        "cloud": [
+          {
+            "label": "Laptop desktop \u2014 tailnet + SSO",
+            "role": "laptop"
+          },
+          {
+            "label": "Chromebook desktop \u2014 coreboot/UEFI laptop image (ADR-16); tailnet + SSO",
+            "role": "chromebook"
+          },
+          {
+            "label": "Desktop client \u2014 tailnet + SSO",
+            "role": "desktop"
+          }
+        ],
+        "mesh": [
+          {
+            "label": "PKI node \u2014 cluster certificate authority (x86 or Raspberry Pi 4/5)",
+            "role": "pki"
+          },
+          {
+            "label": "Backend node (x86 or Raspberry Pi 4/5)",
+            "role": "be"
+          },
+          {
+            "label": "Frontend node (x86 or Raspberry Pi 4/5)",
+            "role": "fe"
+          },
+          {
+            "label": "Backend + GPU node",
+            "role": "be+gpu"
+          },
+          {
+            "label": "Omnibus \u2014 every cluster role on one node",
+            "role": "omnibus"
+          },
+          {
+            "label": "Laptop desktop \u2014 tailnet + SSO client for a person on this mesh",
+            "role": "laptop"
+          },
+          {
+            "label": "Chromebook desktop \u2014 coreboot/UEFI laptop client (ADR-16); tailnet + SSO",
+            "role": "chromebook"
+          },
+          {
+            "label": "Desktop client \u2014 tailnet + SSO client for a person on this mesh",
+            "role": "desktop"
+          },
+          {
+            "label": "Edge-AI node \u2014 GPU + OpenAI-compatible model API",
+            "role": "edge_ai"
+          }
+        ],
+        "standalone": [
+          {
+            "label": "Standalone thin \u2014 hardened LXDE desktop, no mesh/SSO",
+            "role": "standalone-thin"
+          },
+          {
+            "label": "Standalone thick \u2014 hardened full desktop, no mesh/SSO",
+            "role": "standalone-thick"
+          },
+          {
+            "label": "Unaffiliated desktop \u2014 plain Gentoo, no HugMesh (zero branding/tooling baked)",
+            "role": "standalone-unaffiliated"
+          },
+          {
+            "label": "Chromebook desktop \u2014 coreboot/UEFI laptop image (ADR-16), standalone (no mesh/SSO)",
+            "role": "chromebook"
+          }
+        ]
+      },
+      "soc": "any x86-64 (Intel/AMD)",
+      "status": "supported"
+    },
+    {
+      "arch": "x86-64",
+      "config_axes": {
+        "board": "",
+        "platform": "x86"
+      },
+      "family": "x86-pcs",
+      "id": "chromebook",
+      "label": "Chromebook (coreboot/UEFI, x86-64)",
+      "notes": "ADR-16: the chromebook ROLE is the coreboot-UEFI laptop image \u2014 role_allow narrows this device to it (never adds); reachable standalone (no mesh/SSO) and as a cloud client",
+      "reason": "",
+      "roles": {
+        "cloud": [
+          {
+            "label": "Chromebook desktop \u2014 coreboot/UEFI laptop image (ADR-16); tailnet + SSO",
+            "role": "chromebook"
+          }
+        ],
+        "mesh": [
+          {
+            "label": "Chromebook desktop \u2014 coreboot/UEFI laptop client (ADR-16); tailnet + SSO",
+            "role": "chromebook"
+          }
+        ],
+        "standalone": [
+          {
+            "label": "Chromebook desktop \u2014 coreboot/UEFI laptop image (ADR-16), standalone (no mesh/SSO)",
+            "role": "chromebook"
+          }
+        ]
+      },
+      "soc": "x86-64 Chromebooks (coreboot-UEFI payload)",
+      "status": "supported"
+    },
+    {
+      "arch": "arm64",
+      "config_axes": {
+        "board": "rpi5",
+        "platform": "rpi5"
+      },
+      "family": "raspberry-pi",
+      "id": "rpi5",
+      "label": "Raspberry Pi 5",
+      "notes": "desktop client + cluster node (pki/be/fe) + plain generic server",
+      "reason": "",
+      "roles": {
+        "cloud": [
+          {
+            "label": "Raspberry Pi 5 / 4 / 3 arm64 desktop client \u2014 tailnet + SSO (choose board below)",
+            "role": "rpi5-desktop"
+          }
+        ],
+        "mesh": [
+          {
+            "label": "PKI node \u2014 cluster certificate authority (x86 or Raspberry Pi 4/5)",
+            "role": "pki"
+          },
+          {
+            "label": "Backend node (x86 or Raspberry Pi 4/5)",
+            "role": "be"
+          },
+          {
+            "label": "Frontend node (x86 or Raspberry Pi 4/5)",
+            "role": "fe"
+          },
+          {
+            "label": "Raspberry Pi 5 / 4 / 3 desktop \u2014 arm64 client (compose with --standalone for FDE, no mesh)",
+            "role": "rpi5-desktop"
+          }
+        ],
+        "standalone": [
+          {
+            "label": "Generic arm64 server \u2014 plain Gentoo Raspberry Pi 5, unbranded (builder default role)",
+            "role": "generic"
+          }
+        ]
+      },
+      "soc": "Broadcom BCM2712 (4x Cortex-A76)",
+      "status": "supported"
+    },
+    {
+      "arch": "arm64",
+      "config_axes": {
+        "board": "rpi4",
+        "platform": "rpi5"
+      },
+      "family": "raspberry-pi",
+      "id": "rpi4",
+      "label": "Raspberry Pi 4 Model B",
+      "notes": "desktop client + cluster node (pki/be/fe) + plain generic server",
+      "reason": "",
+      "roles": {
+        "cloud": [
+          {
+            "label": "Raspberry Pi 5 / 4 / 3 arm64 desktop client \u2014 tailnet + SSO (choose board below)",
+            "role": "rpi5-desktop"
+          }
+        ],
+        "mesh": [
+          {
+            "label": "PKI node \u2014 cluster certificate authority (x86 or Raspberry Pi 4/5)",
+            "role": "pki"
+          },
+          {
+            "label": "Backend node (x86 or Raspberry Pi 4/5)",
+            "role": "be"
+          },
+          {
+            "label": "Frontend node (x86 or Raspberry Pi 4/5)",
+            "role": "fe"
+          },
+          {
+            "label": "Raspberry Pi 5 / 4 / 3 desktop \u2014 arm64 client (compose with --standalone for FDE, no mesh)",
+            "role": "rpi5-desktop"
+          }
+        ],
+        "standalone": [
+          {
+            "label": "Generic arm64 server \u2014 plain Gentoo Raspberry Pi 5, unbranded (builder default role)",
+            "role": "generic"
+          }
+        ]
+      },
+      "soc": "Broadcom BCM2711 (4x Cortex-A72)",
+      "status": "supported"
+    },
+    {
+      "arch": "arm64",
+      "config_axes": {
+        "board": "rpi3",
+        "platform": "rpi5"
+      },
+      "family": "raspberry-pi",
+      "id": "rpi3",
+      "label": "Raspberry Pi 3 Model B/B+",
+      "notes": "DESKTOP-ONLY: build-rpi5-stage4.sh hard-errors every node role on --board rpi3 (1GB RAM cannot host the hardened SELinux/containerd/kubelet stack). No standalone role fits either \u2014 'generic' is a cluster/server image; the only image class is the desktop client (cloud/mesh paths)",
+      "reason": "",
+      "roles": {
+        "cloud": [
+          {
+            "label": "Raspberry Pi 5 / 4 / 3 arm64 desktop client \u2014 tailnet + SSO (choose board below)",
+            "role": "rpi5-desktop"
+          }
+        ],
+        "mesh": [
+          {
+            "label": "Raspberry Pi 5 / 4 / 3 desktop \u2014 arm64 client (compose with --standalone for FDE, no mesh)",
+            "role": "rpi5-desktop"
+          }
+        ],
+        "standalone": []
+      },
+      "soc": "Broadcom BCM2837 (4x Cortex-A53, 1GB RAM)",
+      "status": "supported"
+    },
+    {
+      "arch": "arm64",
+      "config_axes": {
+        "board": "la-frite",
+        "platform": "frite"
+      },
+      "family": "libre-computer",
+      "id": "la-frite",
+      "label": "Libre Computer La Frite (AML-S805X-AC)",
+      "notes": "single 'frite' role (FDE local desktop; board + flavor + light/none desktop axes) \u2014 no cluster-node role axis: the frite builder bakes no cluster tree",
+      "reason": "",
+      "roles": {
+        "cloud": [
+          {
+            "label": "La Frite family arm64 client (board + live/installer flavor)",
+            "role": "frite"
+          }
+        ],
+        "mesh": [],
+        "standalone": [
+          {
+            "label": "La Frite family arm64 standalone (FDE local desktop; board + flavor)",
+            "role": "frite"
+          }
+        ]
+      },
+      "soc": "Amlogic S805X (4x Cortex-A53)",
+      "status": "supported"
+    },
+    {
+      "arch": "arm64",
+      "config_axes": {
+        "board": "le-potato",
+        "platform": "frite"
+      },
+      "family": "libre-computer",
+      "id": "le-potato",
+      "label": "Libre Computer Le Potato (AML-S905X-CC)",
+      "notes": "single 'frite' role \u2014 no cluster-node role axis (the frite builder bakes no cluster tree)",
+      "reason": "",
+      "roles": {
+        "cloud": [
+          {
+            "label": "La Frite family arm64 client (board + live/installer flavor)",
+            "role": "frite"
+          }
+        ],
+        "mesh": [],
+        "standalone": [
+          {
+            "label": "La Frite family arm64 standalone (FDE local desktop; board + flavor)",
+            "role": "frite"
+          }
+        ]
+      },
+      "soc": "Amlogic S905X (4x Cortex-A53)",
+      "status": "supported"
+    },
+    {
+      "arch": "arm64",
+      "config_axes": {
+        "board": "sweet-potato",
+        "platform": "frite"
+      },
+      "family": "libre-computer",
+      "id": "sweet-potato",
+      "label": "Libre Computer Sweet Potato (AML-S905X-CC-V2)",
+      "notes": "single 'frite' role \u2014 no cluster-node role axis (the frite builder bakes no cluster tree)",
+      "reason": "",
+      "roles": {
+        "cloud": [
+          {
+            "label": "La Frite family arm64 client (board + live/installer flavor)",
+            "role": "frite"
+          }
+        ],
+        "mesh": [],
+        "standalone": [
+          {
+            "label": "La Frite family arm64 standalone (FDE local desktop; board + flavor)",
+            "role": "frite"
+          }
+        ]
+      },
+      "soc": "Amlogic S905X (4x Cortex-A53)",
+      "status": "supported"
+    },
+    {
+      "arch": "arm64",
+      "config_axes": {
+        "board": "orin-nano",
+        "platform": "jetson"
+      },
+      "family": "nvidia-jetson",
+      "id": "orin-nano",
+      "label": "NVIDIA Jetson Orin Nano [Super] devkit 8GB",
+      "notes": "mesh-only: edge_ai / gpu-host / full / jetson-desktop",
+      "reason": "hardware validation pending (specs-jetson/README.md) \u2014 fail-loud preflight; mesh-only roles in ROLE_CHOICES; the builder blocks --encrypt-root; the l4t kernel-flavor build is a stub that hard-errors",
+      "roles": {
+        "cloud": [],
+        "mesh": [
+          {
+            "label": "Edge-AI node \u2014 GPU + OpenAI-compatible model API",
+            "role": "edge_ai"
+          },
+          {
+            "label": "Jetson full-stack node \u2014 EXPERIMENTAL, hardware validation pending",
+            "role": "full"
+          },
+          {
+            "label": "Jetson GPU host \u2014 EXPERIMENTAL, hardware validation pending",
+            "role": "gpu-host"
+          },
+          {
+            "label": "Jetson desktop \u2014 EXPERIMENTAL, hardware validation pending",
+            "role": "jetson-desktop"
+          }
+        ],
+        "standalone": []
+      },
+      "soc": "NVIDIA Tegra234 (Orin, 6x Cortex-A78AE + Ampere GPU)",
+      "status": "experimental"
+    },
+    {
+      "arch": "arm64",
+      "config_axes": {
+        "board": "orin-nano-4gb",
+        "platform": "jetson"
+      },
+      "family": "nvidia-jetson",
+      "id": "orin-nano-4gb",
+      "label": "NVIDIA Jetson Orin Nano devkit 4GB",
+      "notes": "mesh-only: edge_ai / gpu-host / full / jetson-desktop",
+      "reason": "hardware validation pending (specs-jetson/README.md) \u2014 fail-loud preflight; mesh-only roles; no --encrypt-root; l4t kernel-flavor is a stub",
+      "roles": {
+        "cloud": [],
+        "mesh": [
+          {
+            "label": "Edge-AI node \u2014 GPU + OpenAI-compatible model API",
+            "role": "edge_ai"
+          },
+          {
+            "label": "Jetson full-stack node \u2014 EXPERIMENTAL, hardware validation pending",
+            "role": "full"
+          },
+          {
+            "label": "Jetson GPU host \u2014 EXPERIMENTAL, hardware validation pending",
+            "role": "gpu-host"
+          },
+          {
+            "label": "Jetson desktop \u2014 EXPERIMENTAL, hardware validation pending",
+            "role": "jetson-desktop"
+          }
+        ],
+        "standalone": []
+      },
+      "soc": "NVIDIA Tegra234 (Orin)",
+      "status": "experimental"
+    },
+    {
+      "arch": "arm64",
+      "config_axes": {
+        "board": "orin-nx-8gb",
+        "platform": "jetson"
+      },
+      "family": "nvidia-jetson",
+      "id": "orin-nx-8gb",
+      "label": "NVIDIA Jetson Orin NX 8GB (devkit carrier)",
+      "notes": "mesh-only: edge_ai / gpu-host / full / jetson-desktop",
+      "reason": "hardware validation pending \u2014 additionally marked UNTESTED in the builder's own usage text; mesh-only roles; no --encrypt-root; l4t kernel-flavor is a stub",
+      "roles": {
+        "cloud": [],
+        "mesh": [
+          {
+            "label": "Edge-AI node \u2014 GPU + OpenAI-compatible model API",
+            "role": "edge_ai"
+          },
+          {
+            "label": "Jetson full-stack node \u2014 EXPERIMENTAL, hardware validation pending",
+            "role": "full"
+          },
+          {
+            "label": "Jetson GPU host \u2014 EXPERIMENTAL, hardware validation pending",
+            "role": "gpu-host"
+          },
+          {
+            "label": "Jetson desktop \u2014 EXPERIMENTAL, hardware validation pending",
+            "role": "jetson-desktop"
+          }
+        ],
+        "standalone": []
+      },
+      "soc": "NVIDIA Tegra234 (Orin NX)",
+      "status": "experimental"
+    },
+    {
+      "arch": "arm64",
+      "config_axes": {
+        "board": "orin-nx-16gb",
+        "platform": "jetson"
+      },
+      "family": "nvidia-jetson",
+      "id": "orin-nx-16gb",
+      "label": "NVIDIA Jetson Orin NX 16GB (devkit carrier)",
+      "notes": "mesh-only: edge_ai / gpu-host / full / jetson-desktop",
+      "reason": "hardware validation pending \u2014 additionally marked UNTESTED in the builder's own usage text; mesh-only roles; no --encrypt-root; l4t kernel-flavor is a stub",
+      "roles": {
+        "cloud": [],
+        "mesh": [
+          {
+            "label": "Edge-AI node \u2014 GPU + OpenAI-compatible model API",
+            "role": "edge_ai"
+          },
+          {
+            "label": "Jetson full-stack node \u2014 EXPERIMENTAL, hardware validation pending",
+            "role": "full"
+          },
+          {
+            "label": "Jetson GPU host \u2014 EXPERIMENTAL, hardware validation pending",
+            "role": "gpu-host"
+          },
+          {
+            "label": "Jetson desktop \u2014 EXPERIMENTAL, hardware validation pending",
+            "role": "jetson-desktop"
+          }
+        ],
+        "standalone": []
+      },
+      "soc": "NVIDIA Tegra234 (Orin NX)",
+      "status": "experimental"
+    },
+    {
+      "arch": "arm64",
+      "config_axes": {
+        "board": "orange-pi-5-plus",
+        "platform": "orangepi5"
+      },
+      "family": "orange-pi",
+      "id": "orange-pi-5-plus",
+      "label": "Orange Pi 5 Plus",
+      "notes": "single 'orangepi5' role (FDE local desktop; board + flavor axes)",
+      "reason": "hardware validation pending (specs-orangepi5/README.md) \u2014 fail-loud preflight; single client-desktop role: the orangepi5 builder has no cluster-node role axis (extending it is a builder change, not a selection)",
+      "roles": {
+        "cloud": [
+          {
+            "label": "Orange Pi 5 / 5 Plus arm64 client \u2014 EXPERIMENTAL (board + live/installer flavor)",
+            "role": "orangepi5"
+          }
+        ],
+        "mesh": [],
+        "standalone": [
+          {
+            "label": "Orange Pi 5 / 5 Plus arm64 standalone \u2014 EXPERIMENTAL (FDE local desktop; board + flavor)",
+            "role": "orangepi5"
+          }
+        ]
+      },
+      "soc": "Rockchip RK3588 (4x Cortex-A76 + 4x Cortex-A55)",
+      "status": "experimental"
+    },
+    {
+      "arch": "arm64",
+      "config_axes": {
+        "board": "orange-pi-5",
+        "platform": "orangepi5"
+      },
+      "family": "orange-pi",
+      "id": "orange-pi-5",
+      "label": "Orange Pi 5",
+      "notes": "single 'orangepi5' role (FDE local desktop; board + flavor axes)",
+      "reason": "hardware validation pending (specs-orangepi5/README.md) \u2014 fail-loud preflight; single client-desktop role: the orangepi5 builder has no cluster-node role axis (extending it is a builder change, not a selection)",
+      "roles": {
+        "cloud": [
+          {
+            "label": "Orange Pi 5 / 5 Plus arm64 client \u2014 EXPERIMENTAL (board + live/installer flavor)",
+            "role": "orangepi5"
+          }
+        ],
+        "mesh": [],
+        "standalone": [
+          {
+            "label": "Orange Pi 5 / 5 Plus arm64 standalone \u2014 EXPERIMENTAL (FDE local desktop; board + flavor)",
+            "role": "orangepi5"
+          }
+        ]
+      },
+      "soc": "Rockchip RK3588S (4x Cortex-A76 + 4x Cortex-A55)",
+      "status": "experimental"
+    },
+    {
+      "arch": "arm64",
+      "config_axes": {
+        "board": "",
+        "platform": "orangepizero2"
+      },
+      "family": "orange-pi",
+      "id": "orange-pi-zero2",
+      "label": "Orange Pi Zero 2",
+      "notes": "single 'orangepizero2' headless-appliance role (flavor axis only)",
+      "reason": "hardware validation pending (specs-orangepi-zero2/README.md) \u2014 fail-loud preflight; HEADLESS APPLIANCE: no desktop mode EVER, no board axis (single-board platform)",
+      "roles": {
+        "cloud": [
+          {
+            "label": "Orange Pi Zero 2 arm64 HEADLESS APPLIANCE \u2014 EXPERIMENTAL (live/installer flavor only; no board/desktop axis)",
+            "role": "orangepizero2"
+          }
+        ],
+        "mesh": [],
+        "standalone": [
+          {
+            "label": "Orange Pi Zero 2 arm64 standalone HEADLESS APPLIANCE \u2014 EXPERIMENTAL (FDE; flavor only)",
+            "role": "orangepizero2"
+          }
+        ]
+      },
+      "soc": "Allwinner H616 (4x Cortex-A53)",
+      "status": "experimental"
+    },
+    {
+      "arch": "arm64",
+      "config_axes": {
+        "board": "",
+        "platform": "orangepizero2w"
+      },
+      "family": "orange-pi",
+      "id": "orange-pi-zero2w",
+      "label": "Orange Pi Zero 2W",
+      "notes": "single 'orangepizero2w' headless-appliance role (flavor axis only)",
+      "reason": "hardware validation pending (specs-orangepi-zero2w/README.md) \u2014 fail-loud preflight; HEADLESS APPLIANCE: no desktop mode EVER, no board axis (single-board platform), NO onboard Ethernet (USB-Ethernet-first)",
+      "roles": {
+        "cloud": [
+          {
+            "label": "Orange Pi Zero 2W arm64 HEADLESS APPLIANCE \u2014 EXPERIMENTAL (live/installer flavor only; no board/desktop axis)",
+            "role": "orangepizero2w"
+          }
+        ],
+        "mesh": [],
+        "standalone": [
+          {
+            "label": "Orange Pi Zero 2W arm64 standalone HEADLESS APPLIANCE \u2014 EXPERIMENTAL (FDE; flavor only)",
+            "role": "orangepizero2w"
+          }
+        ]
+      },
+      "soc": "Allwinner H618 (4x Cortex-A53)",
+      "status": "experimental"
+    },
+    {
+      "arch": "arm64",
+      "config_axes": {
+        "board": "",
+        "platform": "orangepizero3"
+      },
+      "family": "orange-pi",
+      "id": "orange-pi-zero3",
+      "label": "Orange Pi Zero 3",
+      "notes": "single 'orangepizero3' headless-appliance role (flavor axis only)",
+      "reason": "hardware validation pending (specs-orangepi-zero3/README.md) \u2014 fail-loud preflight; HEADLESS APPLIANCE: no desktop mode EVER, no board axis (single-board platform); onboard Gigabit Ethernet is BACK (Ethernet-first, unlike the Zero 2W)",
+      "roles": {
+        "cloud": [
+          {
+            "label": "Orange Pi Zero 3 arm64 HEADLESS APPLIANCE \u2014 EXPERIMENTAL (live/installer flavor only; no board/desktop axis)",
+            "role": "orangepizero3"
+          }
+        ],
+        "mesh": [],
+        "standalone": [
+          {
+            "label": "Orange Pi Zero 3 arm64 standalone HEADLESS APPLIANCE \u2014 EXPERIMENTAL (FDE; flavor only)",
+            "role": "orangepizero3"
+          }
+        ]
+      },
+      "soc": "Allwinner H618 (4x Cortex-A53)",
+      "status": "experimental"
+    },
+    {
+      "arch": "arm64",
+      "config_axes": {
+        "board": "",
+        "platform": "orangepi3-lts"
+      },
+      "family": "orange-pi",
+      "id": "orange-pi-3-lts",
+      "label": "Orange Pi 3 LTS",
+      "notes": "single 'orangepi3-lts' headless-appliance role (flavor axis only)",
+      "reason": "hardware validation pending (specs-orangepi3-lts/README.md) \u2014 fail-loud preflight; HEADLESS APPLIANCE: no desktop mode, no board axis (single-board platform); boots the PLAIN Orange Pi 3's mainline DTB/defconfig (mainline has no -lts variant) and the onboard GbE jack is DEAD on that DTB \u2014 USB-Ethernet-first, like the Zero 2W",
+      "roles": {
+        "cloud": [
+          {
+            "label": "Orange Pi 3 LTS arm64 HEADLESS APPLIANCE \u2014 EXPERIMENTAL (live/installer flavor only; no board/desktop axis)",
+            "role": "orangepi3-lts"
+          }
+        ],
+        "mesh": [],
+        "standalone": [
+          {
+            "label": "Orange Pi 3 LTS arm64 standalone HEADLESS APPLIANCE \u2014 EXPERIMENTAL (FDE; flavor only)",
+            "role": "orangepi3-lts"
+          }
+        ]
+      },
+      "soc": "Allwinner H6 (4x Cortex-A53)",
+      "status": "experimental"
+    },
+    {
+      "arch": "arm64",
+      "config_axes": {
+        "board": "",
+        "platform": "orangepi4-lts"
+      },
+      "family": "orange-pi",
+      "id": "orange-pi-4-lts",
+      "label": "Orange Pi 4 LTS",
+      "notes": "single 'orangepi4-lts' light-desktop role (flavor axis only)",
+      "reason": "hardware validation pending (specs-orangepi4-lts/README.md) \u2014 fail-loud preflight; LIGHT DESKTOP (not an appliance: the mainline rk3399-orangepi DTB it boots has an enabled Mali-T860 GPU, enabled HDMI and both VOPs); no board axis (single-board platform \u2014 mainline ships one Orange Pi RK3399 DTB/defconfig for the whole 4/4B/4 LTS family); onboard GbE works via the SoC GMAC, and the boot chain is blob-free (mainline U-Boot TPL + mainline TF-A BL31)",
+      "roles": {
+        "cloud": [
+          {
+            "label": "Orange Pi 4 LTS arm64 LIGHT DESKTOP client \u2014 EXPERIMENTAL (live/installer flavor only; single board, no board axis)",
+            "role": "orangepi4-lts"
+          }
+        ],
+        "mesh": [],
+        "standalone": [
+          {
+            "label": "Orange Pi 4 LTS arm64 standalone LIGHT DESKTOP \u2014 EXPERIMENTAL (FDE local desktop; flavor only, single board)",
+            "role": "orangepi4-lts"
+          }
+        ]
+      },
+      "soc": "Rockchip RK3399 (2x Cortex-A72 + 4x Cortex-A53, Mali-T860 MP4)",
+      "status": "experimental"
+    },
+    {
+      "arch": "arm64",
+      "config_axes": {
+        "board": "rpi4",
+        "platform": "rpi5"
+      },
+      "family": "raspberry-pi",
+      "id": "rpi400",
+      "label": "Raspberry Pi 400 (keyboard PC)",
+      "notes": "maps to the accepted rpi4 board row",
+      "reason": "same BCM2711 SoC/boot chain as the Pi 4 (builds as --board rpi4), but the keyboard-PC form factor and its DTB are unvalidated on silicon \u2014 fail-loud preflight; no builder change involved",
+      "roles": {
+        "cloud": [
+          {
+            "label": "Raspberry Pi 5 / 4 / 3 arm64 desktop client \u2014 tailnet + SSO (choose board below)",
+            "role": "rpi5-desktop"
+          }
+        ],
+        "mesh": [
+          {
+            "label": "PKI node \u2014 cluster certificate authority (x86 or Raspberry Pi 4/5)",
+            "role": "pki"
+          },
+          {
+            "label": "Backend node (x86 or Raspberry Pi 4/5)",
+            "role": "be"
+          },
+          {
+            "label": "Frontend node (x86 or Raspberry Pi 4/5)",
+            "role": "fe"
+          },
+          {
+            "label": "Raspberry Pi 5 / 4 / 3 desktop \u2014 arm64 client (compose with --standalone for FDE, no mesh)",
+            "role": "rpi5-desktop"
+          }
+        ],
+        "standalone": [
+          {
+            "label": "Generic arm64 server \u2014 plain Gentoo Raspberry Pi 5, unbranded (builder default role)",
+            "role": "generic"
+          }
+        ]
+      },
+      "soc": "Broadcom BCM2711 (4x Cortex-A72)",
+      "status": "experimental"
+    },
+    {
+      "arch": "arm64",
+      "config_axes": {
+        "board": "rpi4",
+        "platform": "rpi5"
+      },
+      "family": "raspberry-pi",
+      "id": "rpi-cm4",
+      "label": "Raspberry Pi Compute Module 4 (on carrier)",
+      "notes": "maps to the accepted rpi4 board row",
+      "reason": "same BCM2711 boot chain as the Pi 4 (builds as --board rpi4); the eMMC flash path and carrier-board DTB are unvalidated \u2014 fail-loud preflight",
+      "roles": {
+        "cloud": [
+          {
+            "label": "Raspberry Pi 5 / 4 / 3 arm64 desktop client \u2014 tailnet + SSO (choose board below)",
+            "role": "rpi5-desktop"
+          }
+        ],
+        "mesh": [
+          {
+            "label": "PKI node \u2014 cluster certificate authority (x86 or Raspberry Pi 4/5)",
+            "role": "pki"
+          },
+          {
+            "label": "Backend node (x86 or Raspberry Pi 4/5)",
+            "role": "be"
+          },
+          {
+            "label": "Frontend node (x86 or Raspberry Pi 4/5)",
+            "role": "fe"
+          },
+          {
+            "label": "Raspberry Pi 5 / 4 / 3 desktop \u2014 arm64 client (compose with --standalone for FDE, no mesh)",
+            "role": "rpi5-desktop"
+          }
+        ],
+        "standalone": [
+          {
+            "label": "Generic arm64 server \u2014 plain Gentoo Raspberry Pi 5, unbranded (builder default role)",
+            "role": "generic"
+          }
+        ]
+      },
+      "soc": "Broadcom BCM2711 (4x Cortex-A72)",
+      "status": "experimental"
+    },
+    {
+      "arch": "arm64",
+      "config_axes": {
+        "board": "rpi5",
+        "platform": "rpi5"
+      },
+      "family": "raspberry-pi",
+      "id": "rpi500",
+      "label": "Raspberry Pi 500 (keyboard PC)",
+      "notes": "maps to the accepted rpi5 board row",
+      "reason": "same BCM2712 SoC/boot chain as the Pi 5 (builds as --board rpi5); the keyboard-PC form factor is unvalidated on silicon \u2014 fail-loud preflight",
+      "roles": {
+        "cloud": [
+          {
+            "label": "Raspberry Pi 5 / 4 / 3 arm64 desktop client \u2014 tailnet + SSO (choose board below)",
+            "role": "rpi5-desktop"
+          }
+        ],
+        "mesh": [
+          {
+            "label": "PKI node \u2014 cluster certificate authority (x86 or Raspberry Pi 4/5)",
+            "role": "pki"
+          },
+          {
+            "label": "Backend node (x86 or Raspberry Pi 4/5)",
+            "role": "be"
+          },
+          {
+            "label": "Frontend node (x86 or Raspberry Pi 4/5)",
+            "role": "fe"
+          },
+          {
+            "label": "Raspberry Pi 5 / 4 / 3 desktop \u2014 arm64 client (compose with --standalone for FDE, no mesh)",
+            "role": "rpi5-desktop"
+          }
+        ],
+        "standalone": [
+          {
+            "label": "Generic arm64 server \u2014 plain Gentoo Raspberry Pi 5, unbranded (builder default role)",
+            "role": "generic"
+          }
+        ]
+      },
+      "soc": "Broadcom BCM2712 (4x Cortex-A76)",
+      "status": "experimental"
+    },
+    {
+      "arch": "arm64",
+      "config_axes": {
+        "board": "rpi5",
+        "platform": "rpi5"
+      },
+      "family": "raspberry-pi",
+      "id": "rpi-cm5",
+      "label": "Raspberry Pi Compute Module 5 (on carrier)",
+      "notes": "maps to the accepted rpi5 board row",
+      "reason": "same BCM2712 boot chain as the Pi 5 (builds as --board rpi5); the eMMC flash path and carrier-board DTB are unvalidated \u2014 fail-loud preflight",
+      "roles": {
+        "cloud": [
+          {
+            "label": "Raspberry Pi 5 / 4 / 3 arm64 desktop client \u2014 tailnet + SSO (choose board below)",
+            "role": "rpi5-desktop"
+          }
+        ],
+        "mesh": [
+          {
+            "label": "PKI node \u2014 cluster certificate authority (x86 or Raspberry Pi 4/5)",
+            "role": "pki"
+          },
+          {
+            "label": "Backend node (x86 or Raspberry Pi 4/5)",
+            "role": "be"
+          },
+          {
+            "label": "Frontend node (x86 or Raspberry Pi 4/5)",
+            "role": "fe"
+          },
+          {
+            "label": "Raspberry Pi 5 / 4 / 3 desktop \u2014 arm64 client (compose with --standalone for FDE, no mesh)",
+            "role": "rpi5-desktop"
+          }
+        ],
+        "standalone": [
+          {
+            "label": "Generic arm64 server \u2014 plain Gentoo Raspberry Pi 5, unbranded (builder default role)",
+            "role": "generic"
+          }
+        ]
+      },
+      "soc": "Broadcom BCM2712 (4x Cortex-A76)",
+      "status": "experimental"
+    },
+    {
+      "arch": "armv7",
+      "config_axes": null,
+      "family": "raspberry-pi",
+      "id": "rpi2",
+      "label": "Raspberry Pi 2",
+      "notes": "",
+      "reason": "INFEASIBLE: 32-bit ARMv7 \u2014 the whole rpi5 toolchain is aarch64-only (#351 verdict)",
+      "roles": {},
+      "soc": "Broadcom BCM2836 (4x Cortex-A7, 32-bit)",
+      "status": "unsupported"
+    },
+    {
+      "arch": "arm64",
+      "config_axes": null,
+      "family": "raspberry-pi",
+      "id": "rpi6",
+      "label": "\"Raspberry Pi 6\"",
+      "notes": "",
+      "reason": "DOES NOT EXIST \u2014 the latest shipping Raspberry Pi is the Pi 5 (#351 verdict); listed so the request dies honestly",
+      "roles": {},
+      "soc": "does not exist",
+      "status": "unsupported"
+    },
+    {
+      "arch": "arm64",
+      "config_axes": null,
+      "family": "raspberry-pi",
+      "id": "rpi-zero2w",
+      "label": "Raspberry Pi Zero 2 W",
+      "notes": "",
+      "reason": "512MB RAM is below even the Pi 3 desktop-only floor \u2014 no builder role fits (the node stack needs >1GB, the desktop needs >=1GB)",
+      "roles": {},
+      "soc": "Broadcom RP3A0 (BCM2710, 512MB RAM)",
+      "status": "unsupported"
+    },
+    {
+      "arch": "armv7",
+      "config_axes": null,
+      "family": "orange-pi",
+      "id": "opi2",
+      "label": "Orange Pi 2",
+      "notes": "",
+      "reason": "INFEASIBLE: 32-bit ARMv7 \u2014 the aarch64-only toolchain blocker (#351 verdict)",
+      "roles": {},
+      "soc": "Allwinner H3 (4x Cortex-A7, 32-bit)",
+      "status": "unsupported"
+    },
+    {
+      "arch": "arm64",
+      "config_axes": null,
+      "family": "orange-pi",
+      "id": "opi3",
+      "label": "Orange Pi 3 (non-LTS)",
+      "notes": "",
+      "reason": "the LTS revision now has its own platform (orangepi3-lts / specs-orangepi3-lts, which ironically boots THIS board's own mainline DTB/defconfig \u2014 mainline has no -lts variant), so promoting the non-LTS board is a validation task, not a builder task \u2014 but its board row (AP6256 radio, 1/2GB RAM SKUs, PCIe) is unverified against that recipe and is not claimed until a real board proves it (#351 honesty rule)",
+      "roles": {},
+      "soc": "Allwinner H6 (4x Cortex-A53)",
+      "status": "unsupported"
+    },
+    {
+      "arch": "arm64",
+      "config_axes": null,
+      "family": "orange-pi",
+      "id": "opi4",
+      "label": "Orange Pi 4",
+      "notes": "",
+      "reason": "the LTS revision now has its own platform (orangepi4-lts / specs-orangepi4-lts, which boots THIS board's own mainline DTB and U-Boot defconfig \u2014 mainline has no -lts variant of either), so promoting the non-LTS board is a validation task, not a builder task. Its board row (no onboard eMMC, differing RAM SKUs) is unverified against that recipe and is not claimed until a real board proves it (#351 honesty rule)",
+      "roles": {},
+      "soc": "Rockchip RK3399 (2x Cortex-A72 + 4x Cortex-A53)",
+      "status": "unsupported"
+    },
+    {
+      "arch": "arm64",
+      "config_axes": null,
+      "family": "orange-pi",
+      "id": "opi4-pro",
+      "label": "Orange Pi 4 Pro",
+      "notes": "",
+      "reason": "UNCONFIRMED SKU \u2014 folds into the Orange Pi 4 verdict only IF proven RK3399 (#351). If proven, it would ride the orangepi4-lts platform rather than needing a new builder",
+      "roles": {},
+      "soc": "unconfirmed SKU",
+      "status": "unsupported"
+    },
+    {
+      "arch": "arm64",
+      "config_axes": null,
+      "family": "orange-pi",
+      "id": "opi5-pro",
+      "label": "Orange Pi 5 Pro",
+      "notes": "",
+      "reason": "RK3588S variant with newer LPDDR5/boot bits; the board row is unverified against the opi5 recipe \u2014 a promotion path exists (opi5 board axis + fail-loud preflight) but is not claimed until verified",
+      "roles": {},
+      "soc": "Rockchip RK3588S (newer LPDDR5 fit)",
+      "status": "unsupported"
+    },
+    {
+      "arch": "arm64",
+      "config_axes": null,
+      "family": "orange-pi",
+      "id": "opi5-max",
+      "label": "Orange Pi 5 Max",
+      "notes": "",
+      "reason": "RK3588 variant with newer LPDDR5/boot bits; the board row is unverified against the opi5 recipe \u2014 a promotion path exists (opi5 board axis + fail-loud preflight) but is not claimed until verified",
+      "roles": {},
+      "soc": "Rockchip RK3588 (newer LPDDR5 fit)",
+      "status": "unsupported"
+    },
+    {
+      "arch": "arm64",
+      "config_axes": null,
+      "family": "orange-pi",
+      "id": "opi6",
+      "label": "Orange Pi 6 / 6 Plus",
+      "notes": "",
+      "reason": "2025 SoC on a vendor-BSP/out-of-tree stack \u2014 no trustworthy mainline u-boot/kernel/DTB to build a recipe against (#351 verdict)",
+      "roles": {},
+      "soc": "CIX Sky1 (CD8180)",
+      "status": "unsupported"
+    },
+    {
+      "arch": "arm64",
+      "config_axes": null,
+      "family": "banana-pi",
+      "id": "bpi-m5",
+      "label": "Banana Pi BPI-M5",
+      "notes": "",
+      "reason": "S905X3 is Amlogic SM1, not GXL \u2014 the frite builder's BL31-signed FIP boot chain is not reusable; needs new blobs + a new specs tree",
+      "roles": {},
+      "soc": "Amlogic S905X3 (4x Cortex-A55, SM1)",
+      "status": "unsupported"
+    },
+    {
+      "arch": "armv7",
+      "config_axes": null,
+      "family": "banana-pi",
+      "id": "bpi-m2-zero",
+      "label": "Banana Pi BPI-M2 Zero",
+      "notes": "",
+      "reason": "INFEASIBLE: 32-bit ARMv7 \u2014 the aarch64-only toolchain blocker",
+      "roles": {},
+      "soc": "Allwinner H2+/H3 (4x Cortex-A7, 32-bit)",
+      "status": "unsupported"
+    },
+    {
+      "arch": "arm64",
+      "config_axes": null,
+      "family": "banana-pi",
+      "id": "bpi-m7",
+      "label": "Banana Pi BPI-M7",
+      "notes": "",
+      "reason": "RK3588 sibling, but no confirmed mainline u-boot defconfig + DTB pair \u2014 promotion is blocked until that is verifiable (contrast the ROCK 5B, where the pair is verified upstream)",
+      "roles": {},
+      "soc": "Rockchip RK3588",
+      "status": "unsupported"
+    },
+    {
+      "arch": "riscv64",
+      "config_axes": null,
+      "family": "banana-pi",
+      "id": "bpi-f3",
+      "label": "Banana Pi BPI-F3",
+      "notes": "",
+      "reason": "a different CPU architecture entirely (RISC-V) \u2014 no builder, no toolchain; demonstrates the extensible arch enum",
+      "roles": {},
+      "soc": "SpacemiT K1 (8x RISC-V X60)",
+      "status": "unsupported"
+    },
+    {
+      "arch": "arm64",
+      "config_axes": null,
+      "family": "radxa",
+      "id": "rock-5b",
+      "label": "Radxa ROCK 5B",
+      "notes": "",
+      "reason": "promotion path exists \u2014 mainline u-boot rock5b-rk3588_defconfig + mainline DTB rk3588-rock-5b.dtb, same rkbin DDR-init + TF-A BL31 chain as the Orange Pi 5 \u2014 but the additive board row + fail-loud preflight have NOT shipped in build-orangepi5-stage4.sh, so it is not selectable (the drift guard pins catalog boards to the builder's accepted set)",
+      "roles": {},
+      "soc": "Rockchip RK3588",
+      "status": "unsupported"
+    },
+    {
+      "arch": "arm64",
+      "config_axes": null,
+      "family": "friendlyelec",
+      "id": "nanopc-t6",
+      "label": "FriendlyElec NanoPC-T6",
+      "notes": "",
+      "reason": "promotion path exists \u2014 mainline nanopc-t6-rk3588_defconfig + rk3588-nanopc-t6.dtb, same boot chain as the Orange Pi 5 \u2014 but the additive board row + fail-loud preflight have NOT shipped in build-orangepi5-stage4.sh, so it is not selectable",
+      "roles": {},
+      "soc": "Rockchip RK3588",
+      "status": "unsupported"
+    },
+    {
+      "arch": "arm64",
+      "config_axes": null,
+      "family": "rockchip-generic",
+      "id": "rk3588-generic",
+      "label": "Generic RK3588 mini-PCs (Khadas Edge2, Mekotronics, no-name boxes)",
+      "notes": "",
+      "reason": "vendor/unknown boot chains \u2014 no verifiable mainline u-boot defconfig + DTB pair per device; each needs individual verification before even EXPERIMENTAL (#351: generic RK3588 mini-PCs not added)",
+      "roles": {},
+      "soc": "Rockchip RK3588 (vendor boot chains)",
+      "status": "unsupported"
+    },
+    {
+      "arch": "arm64",
+      "config_axes": null,
+      "family": "rockchip-generic",
+      "id": "rk3399-generic",
+      "label": "Generic RK3399 boards (Rock Pi 4, NanoPi M4, ...)",
+      "notes": "",
+      "reason": "same RK3399 blocker as the Orange Pi 4: the RK3588 recipe is not reusable \u2014 a new builder would be required",
+      "roles": {},
+      "soc": "Rockchip RK3399",
+      "status": "unsupported"
+    },
+    {
+      "arch": "arm64",
+      "config_axes": null,
+      "family": "odroid",
+      "id": "odroid-n2plus",
+      "label": "ODROID-N2+",
+      "notes": "",
+      "reason": "Amlogic G12B, not GXL \u2014 no covering builder (the x86 ODROID-H4 models ARE covered, by the x86 PC entry)",
+      "roles": {},
+      "soc": "Amlogic S922X (G12B)",
+      "status": "unsupported"
+    },
+    {
+      "arch": "arm64",
+      "config_axes": null,
+      "family": "odroid",
+      "id": "odroid-m1",
+      "label": "ODROID-M1",
+      "notes": "",
+      "reason": "RK3568 \u2014 no covering builder (neither the RK3588 recipe nor anything else here applies)",
+      "roles": {},
+      "soc": "Rockchip RK3568",
+      "status": "unsupported"
+    },
+    {
+      "arch": "arm64",
+      "config_axes": null,
+      "family": "nvidia-jetson",
+      "id": "jetson-agx-orin",
+      "label": "NVIDIA Jetson AGX Orin",
+      "notes": "",
+      "reason": "the jetson builder covers Tegra234 Orin modules on the DEVKIT carrier only; the AGX has a different carrier/flash layout",
+      "roles": {},
+      "soc": "NVIDIA Tegra234 (AGX Orin)",
+      "status": "unsupported"
+    },
+    {
+      "arch": "arm64",
+      "config_axes": null,
+      "family": "nvidia-jetson",
+      "id": "jetson-xavier",
+      "label": "NVIDIA Jetson Xavier (AGX/NX)",
+      "notes": "",
+      "reason": "Tegra194 \u2014 outside the Orin builder's board table and L4T generation",
+      "roles": {},
+      "soc": "NVIDIA Tegra194",
+      "status": "unsupported"
+    },
+    {
+      "arch": "arm64",
+      "config_axes": null,
+      "family": "nvidia-jetson",
+      "id": "jetson-nano-legacy",
+      "label": "NVIDIA Jetson Nano (legacy)",
+      "notes": "",
+      "reason": "Tegra210 \u2014 outside the Orin builder's board table and L4T generation",
+      "roles": {},
+      "soc": "NVIDIA Tegra210",
+      "status": "unsupported"
+    },
+    {
+      "arch": "arm64",
+      "config_axes": null,
+      "family": "libre-computer",
+      "id": "lc-renegade",
+      "label": "Libre Computer ROC-RK3328-CC Renegade",
+      "notes": "",
+      "reason": "RK3328 (Rockchip), not Amlogic GXL \u2014 the frite builder is inapplicable, and the RK3588 builder is too (different DDR-init/TF-A)",
+      "roles": {},
+      "soc": "Rockchip RK3328",
+      "status": "unsupported"
+    },
+    {
+      "arch": "arm64",
+      "config_axes": null,
+      "family": "libre-computer",
+      "id": "lc-alta",
+      "label": "Libre Computer AML-A311D-CC Alta",
+      "notes": "",
+      "reason": "Amlogic G12B, not GXL \u2014 the frite FIP boot chain is not reusable",
+      "roles": {},
+      "soc": "Amlogic A311D (G12B)",
+      "status": "unsupported"
+    },
+    {
+      "arch": "arm64",
+      "config_axes": null,
+      "family": "libre-computer",
+      "id": "lc-solitude",
+      "label": "Libre Computer AML-S905D3-CC Solitude",
+      "notes": "",
+      "reason": "Amlogic SM1 \u2014 the same boot-chain blocker as the Alta / Banana Pi BPI-M5",
+      "roles": {},
+      "soc": "Amlogic S905D3 (SM1)",
+      "status": "unsupported"
+    },
+    {
+      "arch": "arm64",
+      "config_axes": null,
+      "family": "edge-ai-other",
+      "id": "coral-devboard",
+      "label": "Google Coral Dev Board (and other non-NVIDIA edge-AI boards, e.g. Hailo kits)",
+      "notes": "",
+      "reason": "no builder covers these \u2014 the edge_ai role exists only on x86 and the Jetson Orin devkits",
+      "roles": {},
+      "soc": "NXP i.MX8M + Edge TPU (Coral) / various",
+      "status": "unsupported"
+    }
+  ],
+  "families": [
+    {
+      "arch": "x86-64",
+      "id": "x86-pcs",
+      "label": "x86 PCs",
+      "vendor": "various (Intel/AMD UEFI)"
+    },
+    {
+      "arch": "arm64",
+      "id": "raspberry-pi",
+      "label": "Raspberry Pi",
+      "vendor": "Raspberry Pi Foundation"
+    },
+    {
+      "arch": "arm64",
+      "id": "libre-computer",
+      "label": "Libre Computer",
+      "vendor": "Libre Computer"
+    },
+    {
+      "arch": "arm64",
+      "id": "orange-pi",
+      "label": "Orange Pi",
+      "vendor": "Shenzhen Xunlong"
+    },
+    {
+      "arch": "arm64",
+      "id": "nvidia-jetson",
+      "label": "NVIDIA Jetson",
+      "vendor": "NVIDIA"
+    },
+    {
+      "arch": "arm64",
+      "id": "banana-pi",
+      "label": "Banana Pi",
+      "vendor": "SinoVoip"
+    },
+    {
+      "arch": "arm64",
+      "id": "radxa",
+      "label": "Radxa",
+      "vendor": "Radxa"
+    },
+    {
+      "arch": "arm64",
+      "id": "friendlyelec",
+      "label": "FriendlyElec",
+      "vendor": "FriendlyElec"
+    },
+    {
+      "arch": "arm64",
+      "id": "rockchip-generic",
+      "label": "Generic Rockchip mini-PCs",
+      "vendor": "various"
+    },
+    {
+      "arch": "arm64",
+      "id": "odroid",
+      "label": "ODROID (Hardkernel)",
+      "vendor": "Hardkernel"
+    },
+    {
+      "arch": "arm64",
+      "id": "edge-ai-other",
+      "label": "Other edge-AI boards",
+      "vendor": "various"
+    }
+  ],
   "platform_labels": {
     "frite": "Libre AML-S805X La Frite family (arm64)",
     "jetson": "NVIDIA Jetson Orin (arm64) \u2014 EXPERIMENTAL: hardware validation pending",
+    "orangepi3-lts": "Orange Pi 3 LTS (Allwinner H6, arm64) \u2014 HEADLESS APPLIANCE, no desktop mode \u2014 EXPERIMENTAL: hardware validation pending",
+    "orangepi4-lts": "Orange Pi 4 LTS (Rockchip RK3399, arm64) \u2014 LIGHT DESKTOP (Mali-T860/panfrost) \u2014 EXPERIMENTAL: hardware validation pending",
     "orangepi5": "Orange Pi 5 / 5 Plus (Rockchip RK3588/RK3588S, arm64) \u2014 EXPERIMENTAL: hardware validation pending",
     "orangepizero2": "Orange Pi Zero 2 (Allwinner H616, arm64) \u2014 HEADLESS APPLIANCE, no desktop mode ever \u2014 EXPERIMENTAL: hardware validation pending",
-    "rpi5": "Raspberry Pi 5 / Pi 4 / Pi 3 (arm64; --board rpi5 [DEFAULT] | rpi4 | rpi3 [desktop-only])",
+    "orangepizero2w": "Orange Pi Zero 2W (Allwinner H618, arm64) \u2014 HEADLESS APPLIANCE, no desktop mode ever \u2014 EXPERIMENTAL: hardware validation pending",
+    "orangepizero3": "Orange Pi Zero 3 (Allwinner H618, arm64) \u2014 HEADLESS APPLIANCE, no desktop mode ever \u2014 EXPERIMENTAL: hardware validation pending",
+    "rpi5": "Raspberry Pi 5 / 4 / 3 (arm64) \u2014 desktop OR mesh node; --board rpi5 [DEFAULT] | rpi4 | rpi3 [desktop-only, no node]",
     "x86": "x86_64 host"
   },
   "role_class": {
@@ -18,7 +1379,8 @@
       "rpi5-desktop",
       "jetson-desktop",
       "frite",
-      "orangepi5"
+      "orangepi5",
+      "orangepi4-lts"
     ],
     "node": [
       "pki",
@@ -30,6 +1392,9 @@
       "full",
       "gpu-host",
       "orangepizero2",
+      "orangepizero2w",
+      "orangepizero3",
+      "orangepi3-lts",
       "generic"
     ]
   },
@@ -37,7 +1402,7 @@
     "cloud": [
       {
         "image_class": "desktop",
-        "label": "Laptop client \u2014 tailnet + SSO",
+        "label": "Laptop desktop \u2014 tailnet + SSO",
         "platforms": [
           {
             "axes": {
@@ -53,7 +1418,7 @@
       },
       {
         "image_class": "desktop",
-        "label": "Chromebook client \u2014 tailnet + SSO",
+        "label": "Chromebook desktop \u2014 coreboot/UEFI laptop image (ADR-16); tailnet + SSO",
         "platforms": [
           {
             "axes": {
@@ -85,7 +1450,7 @@
       },
       {
         "image_class": "desktop",
-        "label": "Raspberry Pi 5 / 4 arm64 client \u2014 tailnet + SSO (board axis)",
+        "label": "Raspberry Pi 5 / 4 / 3 arm64 desktop client \u2014 tailnet + SSO (choose board below)",
         "platforms": [
           {
             "axes": {
@@ -163,28 +1528,90 @@
           }
         ],
         "role": "orangepizero2"
+      },
+      {
+        "image_class": "node",
+        "label": "Orange Pi Zero 2W arm64 HEADLESS APPLIANCE \u2014 EXPERIMENTAL (live/installer flavor only; no board/desktop axis)",
+        "platforms": [
+          {
+            "axes": {
+              "flavor": [
+                "live",
+                "installer",
+                "both"
+              ]
+            },
+            "platform": "orangepizero2w"
+          }
+        ],
+        "role": "orangepizero2w"
+      },
+      {
+        "image_class": "node",
+        "label": "Orange Pi Zero 3 arm64 HEADLESS APPLIANCE \u2014 EXPERIMENTAL (live/installer flavor only; no board/desktop axis)",
+        "platforms": [
+          {
+            "axes": {
+              "flavor": [
+                "live",
+                "installer",
+                "both"
+              ]
+            },
+            "platform": "orangepizero3"
+          }
+        ],
+        "role": "orangepizero3"
+      },
+      {
+        "image_class": "node",
+        "label": "Orange Pi 3 LTS arm64 HEADLESS APPLIANCE \u2014 EXPERIMENTAL (live/installer flavor only; no board/desktop axis)",
+        "platforms": [
+          {
+            "axes": {
+              "flavor": [
+                "live",
+                "installer",
+                "both"
+              ]
+            },
+            "platform": "orangepi3-lts"
+          }
+        ],
+        "role": "orangepi3-lts"
+      },
+      {
+        "image_class": "desktop",
+        "label": "Orange Pi 4 LTS arm64 LIGHT DESKTOP client \u2014 EXPERIMENTAL (live/installer flavor only; single board, no board axis)",
+        "platforms": [
+          {
+            "axes": {
+              "flavor": [
+                "live",
+                "installer",
+                "both"
+              ]
+            },
+            "platform": "orangepi4-lts"
+          }
+        ],
+        "role": "orangepi4-lts"
       }
     ],
     "mesh": [
       {
         "image_class": "node",
-        "label": "PKI node \u2014 cluster certificate authority",
+        "label": "PKI node \u2014 cluster certificate authority (x86 or Raspberry Pi 4/5)",
         "platforms": [
           {
-            "axes": {
-              "desktop": [
-                "thin",
-                "full"
-              ]
-            },
+            "axes": {},
             "platform": "x86"
           },
           {
             "axes": {
               "board": [
                 "rpi5",
-                "rpi4",
-                "rpi3"
+                "rpi4"
               ]
             },
             "platform": "rpi5"
@@ -194,23 +1621,17 @@
       },
       {
         "image_class": "node",
-        "label": "Backend node",
+        "label": "Backend node (x86 or Raspberry Pi 4/5)",
         "platforms": [
           {
-            "axes": {
-              "desktop": [
-                "thin",
-                "full"
-              ]
-            },
+            "axes": {},
             "platform": "x86"
           },
           {
             "axes": {
               "board": [
                 "rpi5",
-                "rpi4",
-                "rpi3"
+                "rpi4"
               ]
             },
             "platform": "rpi5"
@@ -220,23 +1641,17 @@
       },
       {
         "image_class": "node",
-        "label": "Frontend node",
+        "label": "Frontend node (x86 or Raspberry Pi 4/5)",
         "platforms": [
           {
-            "axes": {
-              "desktop": [
-                "thin",
-                "full"
-              ]
-            },
+            "axes": {},
             "platform": "x86"
           },
           {
             "axes": {
               "board": [
                 "rpi5",
-                "rpi4",
-                "rpi3"
+                "rpi4"
               ]
             },
             "platform": "rpi5"
@@ -249,12 +1664,7 @@
         "label": "Backend + GPU node",
         "platforms": [
           {
-            "axes": {
-              "desktop": [
-                "thin",
-                "full"
-              ]
-            },
+            "axes": {},
             "platform": "x86"
           }
         ],
@@ -263,6 +1673,17 @@
       {
         "image_class": "node",
         "label": "Omnibus \u2014 every cluster role on one node",
+        "platforms": [
+          {
+            "axes": {},
+            "platform": "x86"
+          }
+        ],
+        "role": "omnibus"
+      },
+      {
+        "image_class": "desktop",
+        "label": "Laptop desktop \u2014 tailnet + SSO client for a person on this mesh",
         "platforms": [
           {
             "axes": {
@@ -274,11 +1695,43 @@
             "platform": "x86"
           }
         ],
-        "role": "omnibus"
+        "role": "laptop"
       },
       {
         "image_class": "desktop",
-        "label": "RPi5 desktop \u2014 arm64 client (compose with --standalone for FDE, no mesh)",
+        "label": "Chromebook desktop \u2014 coreboot/UEFI laptop client (ADR-16); tailnet + SSO",
+        "platforms": [
+          {
+            "axes": {
+              "desktop": [
+                "thin",
+                "full"
+              ]
+            },
+            "platform": "x86"
+          }
+        ],
+        "role": "chromebook"
+      },
+      {
+        "image_class": "desktop",
+        "label": "Desktop client \u2014 tailnet + SSO client for a person on this mesh",
+        "platforms": [
+          {
+            "axes": {
+              "desktop": [
+                "thin",
+                "full"
+              ]
+            },
+            "platform": "x86"
+          }
+        ],
+        "role": "desktop"
+      },
+      {
+        "image_class": "desktop",
+        "label": "Raspberry Pi 5 / 4 / 3 desktop \u2014 arm64 client (compose with --standalone for FDE, no mesh)",
         "platforms": [
           {
             "axes": {
@@ -298,12 +1751,7 @@
         "label": "Edge-AI node \u2014 GPU + OpenAI-compatible model API",
         "platforms": [
           {
-            "axes": {
-              "desktop": [
-                "thin",
-                "full"
-              ]
-            },
+            "axes": {},
             "platform": "x86"
           },
           {
@@ -383,8 +1831,7 @@
           {
             "axes": {
               "desktop": [
-                "thin",
-                "full"
+                "thin"
               ]
             },
             "platform": "x86"
@@ -399,7 +1846,6 @@
           {
             "axes": {
               "desktop": [
-                "thin",
                 "full"
               ]
             },
@@ -415,7 +1861,6 @@
           {
             "axes": {
               "desktop": [
-                "thin",
                 "full"
               ]
             },
@@ -432,8 +1877,7 @@
             "axes": {
               "board": [
                 "rpi5",
-                "rpi4",
-                "rpi3"
+                "rpi4"
               ]
             },
             "platform": "rpi5"
@@ -504,6 +1948,90 @@
           }
         ],
         "role": "orangepizero2"
+      },
+      {
+        "image_class": "node",
+        "label": "Orange Pi Zero 2W arm64 standalone HEADLESS APPLIANCE \u2014 EXPERIMENTAL (FDE; flavor only)",
+        "platforms": [
+          {
+            "axes": {
+              "flavor": [
+                "live",
+                "installer",
+                "both"
+              ]
+            },
+            "platform": "orangepizero2w"
+          }
+        ],
+        "role": "orangepizero2w"
+      },
+      {
+        "image_class": "node",
+        "label": "Orange Pi Zero 3 arm64 standalone HEADLESS APPLIANCE \u2014 EXPERIMENTAL (FDE; flavor only)",
+        "platforms": [
+          {
+            "axes": {
+              "flavor": [
+                "live",
+                "installer",
+                "both"
+              ]
+            },
+            "platform": "orangepizero3"
+          }
+        ],
+        "role": "orangepizero3"
+      },
+      {
+        "image_class": "node",
+        "label": "Orange Pi 3 LTS arm64 standalone HEADLESS APPLIANCE \u2014 EXPERIMENTAL (FDE; flavor only)",
+        "platforms": [
+          {
+            "axes": {
+              "flavor": [
+                "live",
+                "installer",
+                "both"
+              ]
+            },
+            "platform": "orangepi3-lts"
+          }
+        ],
+        "role": "orangepi3-lts"
+      },
+      {
+        "image_class": "desktop",
+        "label": "Orange Pi 4 LTS arm64 standalone LIGHT DESKTOP \u2014 EXPERIMENTAL (FDE local desktop; flavor only, single board)",
+        "platforms": [
+          {
+            "axes": {
+              "flavor": [
+                "live",
+                "installer",
+                "both"
+              ]
+            },
+            "platform": "orangepi4-lts"
+          }
+        ],
+        "role": "orangepi4-lts"
+      },
+      {
+        "image_class": "desktop",
+        "label": "Chromebook desktop \u2014 coreboot/UEFI laptop image (ADR-16), standalone (no mesh/SSO)",
+        "platforms": [
+          {
+            "axes": {
+              "desktop": [
+                "thin",
+                "full"
+              ]
+            },
+            "platform": "x86"
+          }
+        ],
+        "role": "chromebook"
       }
     ]
   }

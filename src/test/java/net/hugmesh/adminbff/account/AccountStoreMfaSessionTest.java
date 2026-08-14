@@ -33,7 +33,7 @@ class AccountStoreMfaSessionTest extends AdminBffPostgresTestSupport {
     @Autowired DatabaseClient db;
 
     private AccountStore newStore() {
-        AccountStore store = new AccountStore(net.hugmesh.adminbff.testutil.R2dbcRepos.of(db, net.hugmesh.authcore.account.AllowlistRepository.class), net.hugmesh.adminbff.testutil.R2dbcRepos.of(db, net.hugmesh.authcore.account.AccountRowRepository.class), net.hugmesh.adminbff.testutil.R2dbcRepos.of(db, net.hugmesh.authcore.account.BffSessionRepository.class), net.hugmesh.adminbff.testutil.R2dbcRepos.of(db, net.hugmesh.authcore.account.NamespaceGrantRepository.class), "admin@hugmesh.systems");
+        AccountStore store = new AccountStore(net.hugmesh.adminbff.testutil.R2dbcRepos.of(db, net.hugmesh.authcore.account.AllowlistRepository.class), net.hugmesh.adminbff.testutil.R2dbcRepos.of(db, net.hugmesh.authcore.account.AccountRowRepository.class), net.hugmesh.adminbff.testutil.R2dbcRepos.of(db, net.hugmesh.authcore.account.BffSessionRepository.class), net.hugmesh.adminbff.testutil.R2dbcRepos.of(db, net.hugmesh.authcore.account.NamespaceGrantRepository.class), "admin@hugmesh.net");
         store.seedAdmins();
         return store;
     }
@@ -41,7 +41,7 @@ class AccountStoreMfaSessionTest extends AdminBffPostgresTestSupport {
     @Test
     void dualReadParity_headerAndRawToken_sameRow() {
         AccountStore store = newStore();
-        Account a = store.ensureAccount("google", "admin@hugmesh.systems").block();
+        Account a = store.ensureAccount("google", "admin@hugmesh.net").block();
         String token = store.newSession(a).block();
         // BOTH carriers resolve the SAME account.
         StepVerifier.create(store.sessionOf("Bearer " + token)).expectNext(a).verifyComplete();
@@ -53,7 +53,7 @@ class AccountStoreMfaSessionTest extends AdminBffPostgresTestSupport {
     @Test
     void mfaState_defaultsFalse_thenStamp_thenClear() {
         AccountStore store = newStore();
-        Account a = store.ensureAccount("google", "admin@hugmesh.systems").block();
+        Account a = store.ensureAccount("google", "admin@hugmesh.net").block();
         String token = store.newSession(a).block();
 
         // default: a fresh session is NOT mfa-satisfied (fail-closed default).
@@ -78,7 +78,7 @@ class AccountStoreMfaSessionTest extends AdminBffPostgresTestSupport {
     @Test
     void deleteSession_returnsAccountId_thenTokenUnresolvable() {
         AccountStore store = newStore();
-        Account a = store.ensureAccount("google", "admin@hugmesh.systems").block();
+        Account a = store.ensureAccount("google", "admin@hugmesh.net").block();
         String token = store.newSession(a).block();
 
         StepVerifier.create(store.deleteSession(token)).expectNext(a.id()).verifyComplete();

@@ -152,22 +152,22 @@ class PhoneManagementSuperadminControllerTest {
     @Test
     void setOwner_superadmin_withStepUp_ok() {
         when(stepUp.isSatisfied(any(), eq(TOKEN))).thenReturn(true);
-        when(service.setOwner(eq("phone-1"), eq("alice-subject"), eq("acme.hugmesh.systems"), any()))
-                .thenReturn(Mono.just(ownedPhone("phone-1", "alice-subject", "acme.hugmesh.systems")));
+        when(service.setOwner(eq("phone-1"), eq("alice-subject"), eq("acme.hugmesh.net"), any()))
+                .thenReturn(Mono.just(ownedPhone("phone-1", "alice-subject", "acme.hugmesh.net")));
         asSuperadmin().put().uri("/bff/superadmin/phone-devices/phone-1/owner")
                 .header(STEP_UP, TOKEN).contentType(MediaType.APPLICATION_JSON)
-                .bodyValue("{\"physicalOwner\":\"alice-subject\",\"ownerDomain\":\"acme.hugmesh.systems\"}")
+                .bodyValue("{\"physicalOwner\":\"alice-subject\",\"ownerDomain\":\"acme.hugmesh.net\"}")
                 .exchange().expectStatus().isOk()
                 .expectBody()
                 .jsonPath("$.physicalOwner").isEqualTo("alice-subject")
-                .jsonPath("$.ownerDomain").isEqualTo("acme.hugmesh.systems");
+                .jsonPath("$.ownerDomain").isEqualTo("acme.hugmesh.net");
     }
 
     @Test
     void setOwner_admin_forbidden_neverReachService() {
         asAdmin().put().uri("/bff/superadmin/phone-devices/phone-1/owner")
                 .header(STEP_UP, TOKEN).contentType(MediaType.APPLICATION_JSON)
-                .bodyValue("{\"physicalOwner\":\"alice-subject\",\"ownerDomain\":\"acme.hugmesh.systems\"}")
+                .bodyValue("{\"physicalOwner\":\"alice-subject\",\"ownerDomain\":\"acme.hugmesh.net\"}")
                 .exchange().expectStatus().isForbidden();
         verify(service, never()).setOwner(any(), any(), any(), any());
     }
@@ -177,7 +177,7 @@ class PhoneManagementSuperadminControllerTest {
         when(stepUp.isSatisfied(any(), any())).thenReturn(false);
         asSuperadmin().put().uri("/bff/superadmin/phone-devices/phone-1/owner")
                 .contentType(MediaType.APPLICATION_JSON)
-                .bodyValue("{\"physicalOwner\":\"alice-subject\",\"ownerDomain\":\"acme.hugmesh.systems\"}")
+                .bodyValue("{\"physicalOwner\":\"alice-subject\",\"ownerDomain\":\"acme.hugmesh.net\"}")
                 .exchange().expectStatus().isForbidden();
         verify(service, never()).setOwner(any(), any(), any(), any());
     }

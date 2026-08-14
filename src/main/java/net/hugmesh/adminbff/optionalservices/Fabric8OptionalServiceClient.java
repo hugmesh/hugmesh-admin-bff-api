@@ -14,7 +14,7 @@ import java.util.Map;
 
 /**
  * The REAL {@link OptionalServiceClient}: lists the {@code OptionalService}
- * ({@code platform.hugmesh.systems/v1alpha1}) CRs and writes their {@code /status}
+ * ({@code platform.hugmesh.net/v1alpha1}) CRs and writes their {@code /status}
  * subresource via the fabric8 generic-resource API — the SAME idiom
  * {@code cloudbackup.Fabric8VeleroStatusReader} uses (the platform ships no typed
  * {@code CustomResource} model). The {@link ClientFactory} builds the client LAZILY (per
@@ -26,7 +26,7 @@ public class Fabric8OptionalServiceClient implements OptionalServiceClient {
     private static final Logger log = LoggerFactory.getLogger(Fabric8OptionalServiceClient.class);
 
     static final ResourceDefinitionContext OPTSVC_RDC = new ResourceDefinitionContext.Builder()
-            .withGroup("platform.hugmesh.systems").withVersion("v1alpha1")
+            .withGroup("platform.hugmesh.net").withVersion("v1alpha1")
             .withKind("OptionalService").withPlural("optionalservices").withNamespaced(true).build();
 
     /** Supplies a configured client; separated so it can be stubbed in tests. */

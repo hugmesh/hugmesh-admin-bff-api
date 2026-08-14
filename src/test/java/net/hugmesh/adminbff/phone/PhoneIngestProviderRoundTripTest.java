@@ -39,7 +39,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class PhoneIngestProviderRoundTripTest {
 
     private static final String OWNER = "owner-subject";
-    private static final String DOMAIN = "acme.hugmesh.systems";
+    private static final String DOMAIN = "acme.hugmesh.net";
 
     @Autowired DatabaseClient db;
 
@@ -57,7 +57,7 @@ class PhoneIngestProviderRoundTripTest {
     private static PhoneIngest headwindIngest(String deviceId) {
         return new PhoneIngest(deviceId, "phone", "SER-1", "oriole", "Pixel 6", "GrapheneOS",
                 "2026071400", "hugmesh.internal", "https://hs.internal", "100.64.0.7",
-                "phone-host", "user", "acme.hugmesh.systems", true, 10L, "vault-seed",
+                "phone-host", "user", "acme.hugmesh.net", true, 10L, "vault-seed",
                 true, "com.hmdm.launcher", "https://headwind.internal", "adb-device-owner",
                 Instant.parse("2026-07-14T11:58:00Z"), "https://attest", "auditor",
                 "operator-paired", Instant.parse("2026-07-14T12:00:00Z"),
@@ -70,7 +70,7 @@ class PhoneIngestProviderRoundTripTest {
     private static PhoneIngest azureReIngest(String deviceId) {
         return new PhoneIngest(deviceId, "phone", "SER-2", "raven", "Pixel 6 Pro", "unknown",
                 "2026081500", "other.internal", "https://hs2.internal", "100.64.9.9",
-                "phone-renamed", "admin", "beta.hugmesh.systems", false, null, null,
+                "phone-renamed", "admin", "beta.hugmesh.net", false, null, null,
                 false, "com.other.dpc", "https://headwind2.internal", "qr-provisioning",
                 Instant.parse("2026-08-15T00:58:00Z"), "https://attest2", "auditor2",
                 "failed", Instant.parse("2026-08-15T01:00:00Z"),

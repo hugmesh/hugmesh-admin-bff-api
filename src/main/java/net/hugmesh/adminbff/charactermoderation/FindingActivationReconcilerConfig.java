@@ -39,7 +39,7 @@ import java.util.function.Supplier;
  *
  * <h3>Service bearer — reused VERBATIM from the platform pattern</h3>
  * Both endpoints are ROLE_SERVICE-gated; both clients present a Casdoor SERVICE JWT minted
- * via the OAuth2 {@code client_credentials} grant against hugmesh.systems Casdoor — the
+ * via the OAuth2 {@code client_credentials} grant against hugmesh.net Casdoor — the
  * SAME mechanism + the SAME {@code app.casdoor.systems.{base-url,client-id,client-secret}}
  * credentials the sibling service clients use. ONE caching supplier is shared by both
  * clients (one token, two call sites). When the credentials are absent (a gate-off

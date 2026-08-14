@@ -86,7 +86,7 @@ class DomainCapabilityAdminControllerTest {
      * derives {@code superadmin()} via {@code Roles.isSuperadmin(Jwt)}, which reads the raw
      * claim — the converted Spring authority alone does not drive it.
      */
-    private static final String ISSUER = "https://id.hugmesh.systems";
+    private static final String ISSUER = "https://id.hugmesh.net";
 
     private WebTestClient asSuperadmin() {
         return web.mutateWith(mockJwt().jwt(j -> j.issuer(ISSUER).claim("roles", List.of("superadmin")))

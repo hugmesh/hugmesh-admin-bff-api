@@ -36,8 +36,8 @@ class PhoneFleetOwnerRepositoryTest {
 
     private static final String ALICE = "alice-subject";
     private static final String BOB = "bob-subject";
-    private static final String ACME = "acme.hugmesh.systems";
-    private static final String BETA = "beta.hugmesh.systems";
+    private static final String ACME = "acme.hugmesh.net";
+    private static final String BETA = "beta.hugmesh.net";
 
     @Autowired DatabaseClient db;
 
@@ -54,7 +54,7 @@ class PhoneFleetOwnerRepositoryTest {
     private static PhoneIngest ingest(String deviceId) {
         return new PhoneIngest(deviceId, "phone", "SER-" + deviceId, "oriole", "Pixel 6",
                 "GrapheneOS", "2026071400", "hugmesh.internal", "https://hs.internal",
-                "100.64.0.7", "phone-host", "user", "acme.hugmesh.systems", true, 10L,
+                "100.64.0.7", "phone-host", "user", "acme.hugmesh.net", true, 10L,
                 "vault-seed", true, "com.hmdm.launcher", "https://headwind.internal",
                 "adb-device-owner", Instant.parse("2026-07-14T11:58:00Z"),
                 "https://attest", "auditor", "operator-paired",
@@ -66,7 +66,7 @@ class PhoneFleetOwnerRepositoryTest {
     private static PhoneIngest reIngest(String deviceId) {
         return new PhoneIngest(deviceId, "phone", "NEWSERIAL", "raven", "Pixel 6 Pro",
                 "unknown", "2026081500", "other.internal", "https://hs2.internal",
-                "100.64.9.9", "phone-renamed", "admin", "beta.hugmesh.systems",
+                "100.64.9.9", "phone-renamed", "admin", "beta.hugmesh.net",
                 false, null, null, false, null, null, null, null, null, null, null, null, null,
                 "headwind", null);
     }

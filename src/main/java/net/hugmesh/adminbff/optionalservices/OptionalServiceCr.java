@@ -2,7 +2,7 @@ package net.hugmesh.adminbff.optionalservices;
 
 /**
  * A fabric8-free projection of ONE {@code OptionalService}
- * ({@code platform.hugmesh.systems/v1alpha1}) custom resource — the runtime
+ * ({@code platform.hugmesh.net/v1alpha1}) custom resource — the runtime
  * desired-state object for a slug. Mirrors the {@code cloudbackup.VeleroCr} pattern:
  * the {@link OptionalServiceClient} reads the CRs via the fabric8 generic-resource API
  * (the platform's established idiom — no typed {@code CustomResource} model exists in

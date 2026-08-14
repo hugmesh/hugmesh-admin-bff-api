@@ -18,12 +18,12 @@ import java.util.Set;
  * <h3>CR → backup_set identity (the reliable mapping)</h3>
  * The effector ({@code VeleroResourceFactory.cr}) stamps the set identity onto every CR it builds:
  * <ul>
- *   <li>label {@code hugmesh.systems/backup-set-id} = {@code PerServiceIdentity.slug(set.id())};
+ *   <li>label {@code hugmesh.net/backup-set-id} = {@code PerServiceIdentity.slug(set.id())};
  *       a {@code backup_set} id is an app-generated UUID, which is already
  *       lowercase-hex-with-single-hyphens — the DNS/label-safe charset — so {@code slug(uuid)}
  *       equals the raw UUID byte-for-byte (proven in the reconciler test). The label is therefore a
  *       RELIABLE, round-trippable key, NOT a lossy slug, FOR THIS SCHEMA.</li>
- *   <li>annotation {@code hugmesh.systems/backup-set-id} = the RAW set id (annotations are not
+ *   <li>annotation {@code hugmesh.net/backup-set-id} = the RAW set id (annotations are not
  *       charset-restricted). The sweep PREFERS this so the mapping stays correct even if the id
  *       scheme ever changes to one the slug would mangle. The effector leg (#76) currently stamps
  *       only the label; until it also stamps this annotation, {@link #setId()} falls back to the
@@ -37,10 +37,10 @@ public record VeleroCr(String kind, String name, String phase, String setIdAnnot
                        String setIdLabel) {
 
     /** The metadata annotation carrying the RAW backup_set id (preferred mapping key). */
-    public static final String SET_ID_ANNOTATION = "hugmesh.systems/backup-set-id";
+    public static final String SET_ID_ANNOTATION = "hugmesh.net/backup-set-id";
     /** The metadata label carrying {@code slug(backup_set id)} (the effector's current stamp;
      *  lossless for the UUID id schema, the fallback mapping key). */
-    public static final String SET_ID_LABEL = "hugmesh.systems/backup-set-id";
+    public static final String SET_ID_LABEL = "hugmesh.net/backup-set-id";
 
     /** Velero terminal {@code .status.phase} values — the worker is DONE reconciling the CR and
      *  the outcome will not change, so the catalog row may be flipped off {@code running}. Lower-

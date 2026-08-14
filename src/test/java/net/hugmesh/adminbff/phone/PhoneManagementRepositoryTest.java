@@ -51,10 +51,10 @@ class PhoneManagementRepositoryTest {
         return new PhoneIngest(deviceId, "phone", "1C291FDF3005A", "oriole", "Pixel 6",
                 "GrapheneOS", "2026071400", "hugmesh.internal",
                 "https://headscale.hugmesh.internal", "100.64.0.7", "phone-hostname",
-                "user", "acme.hugmesh.systems", true, 10L, "vault-seed",
+                "user", "acme.hugmesh.net", true, 10L, "vault-seed",
                 true, "com.hmdm.launcher", "https://headwind.hugmesh.internal",
                 "adb-device-owner", Instant.parse("2026-07-14T11:58:00Z"),
-                "https://attestation.hugmesh.systems", "net.hugmesh.auditor",
+                "https://attestation.hugmesh.net", "net.hugmesh.auditor",
                 "operator-paired", Instant.parse("2026-07-14T12:00:00Z"),
                 Instant.parse("2026-07-14T12:05:00Z"), "headwind", null);
     }
@@ -63,7 +63,7 @@ class PhoneManagementRepositoryTest {
     private static PhoneIngest reIngest(String deviceId) {
         return new PhoneIngest(deviceId, "phone", "NEWSERIAL", "raven", "Pixel 6 Pro",
                 "unknown", "2026081500", "other.internal", "https://hs2.internal",
-                "100.64.9.9", "phone-renamed", "admin", "beta.hugmesh.systems",
+                "100.64.9.9", "phone-renamed", "admin", "beta.hugmesh.net",
                 false, null, null, false, null, null, null, null, null, null, null, null, null,
                 "headwind", null);
     }
