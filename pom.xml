@@ -110,11 +110,15 @@
            games-shadows-of-the-net from the Character Forge track — so this BFF's
            invite/grant/provision username gates and the route-access
            reserved-prefix warning now enforce those five labels at runtime.
-           RELEASE NOTE: 2.4.1 exists on hugmesh-auth-core branch
-           feat/character-forge-reserved-labels and is NOT yet published to the
-           registry — until it is released, CI resolution of this pin FAILS (local
-           builds work via a locally-installed ./mvnw install of that branch). -->
-      <version>2.4.1</version>
+           2.4.2 SUPERSEDES 2.4.1 and is what this pin now names. 2.4.1 only ever
+           existed on the hugmesh-auth-core branch feat/character-forge-reserved-labels
+           and was never published, so this pin could not resolve in CI or on any
+           clean clone — it resolved locally only via a hand-installed build of that
+           branch. auth-core's shipped 2.4.2 carries all five rev-9 labels the note
+           above describes (verified in ReservedNames: hmdm, attest, character-forge,
+           games-character-forge, games-shadows-of-the-net), so the runtime guarantee
+           is unchanged and the unresolvable pin is gone. -->
+      <version>2.4.2</version>
     </dependency>
 
     <!-- ============================================================================
