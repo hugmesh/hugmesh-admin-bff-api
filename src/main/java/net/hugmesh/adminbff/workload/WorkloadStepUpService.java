@@ -68,6 +68,17 @@ public class WorkloadStepUpService {
             return Mono.error(new StepUpDeniedException(
                     "step-up can only be minted by the Lease leader (" + leader.label() + ")"));
         }
+        // Never key an entry under a blank subject. validate() resolves the caller through
+        // tokens.get(subject) — the SAME map this writes — so an entry stored under "" would make
+        // validate("", token) succeed for any caller whose subject resolved to blank. Checked
+        // BEFORE the licence lookup so an unusable request never reaches the database. Only the
+        // SUPERADMIN workload-console path passes subject and operatorId separately (the desktop
+        // path passes one value twice, so a blank there already fails the licence check), which
+        // makes this defense in depth rather than a live fix — but the map must not be poisonable.
+        if (subject == null || subject.isBlank()) {
+            return Mono.error(new StepUpDeniedException(
+                    "step-up denied: no subject on the authenticated principal"));
+        }
         return hasActiveLicense(operatorId)
                 // Gate on active license then generate and store a secure step-up token.
                 .flatMap(licensed -> mintIfLicensed(licensed, subject));
