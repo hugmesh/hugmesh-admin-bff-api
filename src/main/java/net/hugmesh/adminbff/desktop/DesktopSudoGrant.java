@@ -49,4 +49,11 @@ public record DesktopSudoGrant(
     public boolean isActive() {
         return STATE_ACTIVE.equals(state);
     }
+
+    /** This grant with {@code propagationState} replaced (records are immutable) — the
+     *  in-memory twin of {@code updatePropagationState}'s partial UPDATE. */
+    public DesktopSudoGrant withPropagationState(String newPropagationState) {
+        return new DesktopSudoGrant(id, subject, deviceId, state, grantedBy, grantedAt,
+                revokedAt, revokedBy, domain, newPropagationState, generation);
+    }
 }

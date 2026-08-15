@@ -6,6 +6,8 @@ import org.springframework.boot.data.r2dbc.test.autoconfigure.DataR2dbcTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.r2dbc.core.DatabaseClient;
 import org.springframework.test.context.ActiveProfiles;
+import net.hugmesh.adminbff.support.DeviceRegistryCleanup;
+import net.hugmesh.adminbff.support.DeviceRegistryCleanupConfig;
 import net.hugmesh.adminbff.support.TestDatabaseConfig;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -22,17 +24,19 @@ import static org.assertj.core.api.Assertions.assertThat;
  * is exercised by inserting against a real registered device row.
  */
 @DataR2dbcTest
-@Import(TestDatabaseConfig.class)
+@Import({TestDatabaseConfig.class, DeviceRegistryCleanupConfig.class})
 @ActiveProfiles("test")
 class NodeStorageChangelogTest {
 
     @Autowired DatabaseClient db;
 
+    @Autowired DeviceRegistryCleanup deviceRegistryCleanup;
+
     @org.junit.jupiter.api.BeforeEach
     void clear() {
         db.sql("DELETE FROM storage_service_assignment").fetch().rowsUpdated().block();
         db.sql("DELETE FROM node_storage_pool").fetch().rowsUpdated().block();
-        db.sql("DELETE FROM device_registry").fetch().rowsUpdated().block();
+        deviceRegistryCleanup.clearDeviceRegistry().block();
     }
 
     /** Register a real device row the pool FK can reference. */

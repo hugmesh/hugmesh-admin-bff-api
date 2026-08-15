@@ -15,6 +15,8 @@ import org.springframework.test.context.ActiveProfiles;
 import reactor.test.StepVerifier;
 import net.hugmesh.commons.security.DomainRegistry;
 import net.hugmesh.commons.security.PrincipalDomain;
+import net.hugmesh.adminbff.support.DeviceRegistryCleanup;
+import net.hugmesh.adminbff.support.DeviceRegistryCleanupConfig;
 import net.hugmesh.adminbff.support.TestDatabaseConfig;
 
 import java.time.Instant;
@@ -31,11 +33,13 @@ import static org.assertj.core.api.Assertions.assertThat;
  * requests (negative isolation); the admin decide is brand-scoped + single-winner.
  */
 @DataR2dbcTest
-@Import(TestDatabaseConfig.class)
+@Import({TestDatabaseConfig.class, DeviceRegistryCleanupConfig.class})
 @ActiveProfiles("test")
 class DesktopInstallRequestRepositoryTest {
 
     @Autowired DatabaseClient db;
+
+    @Autowired DeviceRegistryCleanup deviceRegistryCleanup;
 
     private static final String DEV_X = "dev-x-1";
     private static final String DEV_Y = "dev-y-1";
@@ -45,7 +49,7 @@ class DesktopInstallRequestRepositoryTest {
         db.sql("DELETE FROM desktop_install_request").fetch().rowsUpdated().block();
         db.sql("DELETE FROM desktop_sudo_grant").fetch().rowsUpdated().block();
         db.sql("DELETE FROM device_ssh_license").fetch().rowsUpdated().block();
-        db.sql("DELETE FROM device_registry").fetch().rowsUpdated().block();
+        deviceRegistryCleanup.clearDeviceRegistry().block();
         insertDevice(DEV_X, "fp-x", "brandx");
         insertDevice(DEV_Y, "fp-y", "brandy");
     }

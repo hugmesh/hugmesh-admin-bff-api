@@ -26,6 +26,27 @@ import net.hugmesh.commons.security.PrincipalDomain;
  * <h3>residency-stamped domain</h3>
  * {@code grant.domain} is stamped from the RESOLVED device's residency (never caller-
  * supplied), so a grant can never claim a different brand than the device it targets.
+ *
+ * <h3>IdP claim propagation ({@link DesktopSudoClaimSync})</h3>
+ * The DB row is the desired state; what actually reaches the {@code roles} claim is
+ * membership on the generator-seeded {@code desktop-sudo} Casdoor role. Every mutate arms
+ * {@code propagation_state='pending'}, is pushed inline through the claim-sync seam
+ * (best-effort — a push failure NEVER fails the grant/revoke, the row is already
+ * authoritative), and the {@link DesktopSudoClaimReconciler} sweep retries whatever stayed
+ * {@code pending}/{@code failed}. Ships dark: with
+ * {@code app.desktop.sudo.claim-sync.enabled=false} (the default) the seam is the Noop and
+ * rows honestly stay {@code pending}.
+ *
+ * <h3>Revocation vs live sessions — HONEST semantics</h3>
+ * Revocation follows the platform's role-change model ({@code AdminController.revokeRole}):
+ * it takes effect at the NEXT token refresh/login — there is NO desktop session-kill
+ * anywhere in the platform, so a desktop session already holding a sudo-bearing token keeps
+ * it until that token expires (and the on-device PAM/polkit re-consults the claim at its
+ * next evaluation). Two things bound the stale window: (1) the entitlement read above denies
+ * the device the moment the row flips (an IdP/desktop that re-checks per privileged action
+ * sees the revoke immediately), and (2) the claim-sync leg posts a best-effort
+ * {@code subject:<subject>} gateway revocation (same as every direct role revoke) so a live
+ * WEB custody JWT is denied at the gateway rather than riding out its ~1 h TTL.
  */
 @Service
 public class DesktopSudoGrantService {
@@ -35,12 +56,14 @@ public class DesktopSudoGrantService {
     private final DesktopSudoGrantRepository repo;
     private final DeviceRegistryRepository devices;
     private final SshLicenseRepository licenses;
+    private final DesktopSudoClaimSync claimSync;
 
     public DesktopSudoGrantService(DesktopSudoGrantRepository repo, DeviceRegistryRepository devices,
-                                   SshLicenseRepository licenses) {
+                                   SshLicenseRepository licenses, DesktopSudoClaimSync claimSync) {
         this.repo = repo;
         this.devices = devices;
         this.licenses = licenses;
+        this.claimSync = claimSync;
     }
 
     /**
@@ -117,7 +140,31 @@ public class DesktopSudoGrantService {
                         repo.insertActive(subject, deviceId, device.domain(), grantedBy, maxGen + 1)
                                 .doOnNext(g -> log.info(
                                         "[desktop-sudo] granted sudo {} on device {} domain={} gen={} (id={})",
-                                        subject, deviceId, device.domain(), g.generation(), g.id())))));
+                                        subject, deviceId, device.domain(), g.generation(), g.id()))
+                                // Push the new grant to the IdP (Casdoor desktop-sudo role) inline;
+                                // best-effort — the row is already the desired state, the worker retries.
+                                .flatMap(this::propagateAndStamp))));
+    }
+
+    /**
+     * Push one just-mutated row through the claim-sync seam and stamp the outcome on
+     * {@code propagation_state} (only when it changed — the fresh row is already
+     * {@code pending}, so a dark/dry-run push writes nothing). BEST-EFFORT by contract:
+     * {@link DesktopSudoClaimSync#propagate} never errors, and even a failed STAMP write is
+     * swallowed (logged) — the mutate has already succeeded and the
+     * {@link DesktopSudoClaimReconciler} sweep re-drives anything not {@code applied}.
+     */
+    private Mono<DesktopSudoGrant> propagateAndStamp(DesktopSudoGrant g) {
+        return claimSync.propagate(g)
+                .flatMap(state -> state.equals(g.propagationState())
+                        ? Mono.just(g)
+                        : repo.updatePropagationState(g.id(), state)
+                                .thenReturn(g.withPropagationState(state)))
+                .onErrorResume(e -> {
+                    log.warn("[desktop-sudo] claim propagation stamp for id={} failed "
+                            + "(worker retries): {}", g.id(), e.toString());
+                    return Mono.just(g);
+                });
     }
 
     /** True iff {@code operator} holds an ACTIVE ssh-license covering {@code device} — a
@@ -132,14 +179,22 @@ public class DesktopSudoGrantService {
     }
 
     /** Revoke a grant by id (CAS {@code active -> revoked}, NEVER deleted = audit) at the
-     *  next monotonic generation; marks propagation pending so the claim/PAM removal is
-     *  reconciled forward. Returns rows-updated (1 = revoked, 0 = already revoked / absent /
-     *  out of scope). */
+     *  next monotonic generation; marks propagation pending, then pushes the removal to the
+     *  IdP inline (Casdoor role drop when no other active grant remains, best-effort — the
+     *  worker retries; see the class javadoc for the honest next-refresh session semantics).
+     *  Returns rows-updated (1 = revoked, 0 = already revoked / absent / out of scope). */
     public Mono<Long> revoke(String grantId, String revokedBy, PrincipalDomain scope) {
         return repo.maxGeneration().flatMap(maxGen ->
                 repo.revoke(grantId, revokedBy, maxGen + 1, scope)
                         .doOnNext(n -> log.info("[desktop-sudo] revoke id={} by={} gen={} rows={}",
-                                grantId, revokedBy, maxGen + 1, n)));
+                                grantId, revokedBy, maxGen + 1, n))
+                        .flatMap(n -> n == 0
+                                ? Mono.just(n)
+                                // Only the CAS WINNER pushes (n==1): re-read the now-revoked row
+                                // so the sync sees the post-CAS state, then stamp the outcome.
+                                : repo.findById(grantId)
+                                        .flatMap(this::propagateAndStamp)
+                                        .then(Mono.just(n))));
     }
 
     /** ALL grants VISIBLE to the given tenant scope — the ADMIN read surface. */

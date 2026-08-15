@@ -12,6 +12,8 @@ import reactor.test.StepVerifier;
 import net.hugmesh.adminbff.device.DeviceRegistryRepository;
 import net.hugmesh.adminbff.device.SshLicenseRepository;
 import net.hugmesh.commons.security.PrincipalDomain;
+import net.hugmesh.adminbff.support.DeviceRegistryCleanup;
+import net.hugmesh.adminbff.support.DeviceRegistryCleanupConfig;
 import net.hugmesh.adminbff.support.TestDatabaseConfig;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -27,11 +29,13 @@ import static org.assertj.core.api.Assertions.assertThat;
  * also authorizes).
  */
 @DataR2dbcTest
-@Import(TestDatabaseConfig.class)
+@Import({TestDatabaseConfig.class, DeviceRegistryCleanupConfig.class})
 @ActiveProfiles("test")
 class DesktopRemoteInstallServiceTest {
 
     @Autowired DatabaseClient db;
+
+    @Autowired DeviceRegistryCleanup deviceRegistryCleanup;
 
     private static final String DEV_X = "dev-x-1";   // brandx, ADMIN-owned
     private static final String DEV_Y = "dev-y-1";   // brandy, ADMIN-owned
@@ -43,7 +47,7 @@ class DesktopRemoteInstallServiceTest {
         db.sql("DELETE FROM desktop_install_request").fetch().rowsUpdated().block();
         db.sql("DELETE FROM desktop_sudo_grant").fetch().rowsUpdated().block();
         db.sql("DELETE FROM desktop_app_catalog").fetch().rowsUpdated().block();
-        db.sql("DELETE FROM device_registry").fetch().rowsUpdated().block();
+        deviceRegistryCleanup.clearDeviceRegistry().block();
         insertDevice(DEV_X, "fp-x", "brandx", "ADMIN");
         insertDevice(DEV_Y, "fp-y", "brandy", "ADMIN");
         insertDevice(DEV_S, "fp-s", "brandx", "SUPERADMIN");

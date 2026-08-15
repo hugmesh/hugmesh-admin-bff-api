@@ -24,6 +24,8 @@ import net.hugmesh.adminbff.device.SshLicenseService;
 import net.hugmesh.adminbff.lease.LeaderElection;
 import net.hugmesh.commons.security.DomainRegistry;
 import net.hugmesh.commons.security.PrincipalDomain;
+import net.hugmesh.adminbff.support.DeviceRegistryCleanup;
+import net.hugmesh.adminbff.support.DeviceRegistryCleanupConfig;
 import net.hugmesh.adminbff.support.TestDatabaseConfig;
 
 import java.util.List;
@@ -51,10 +53,12 @@ import static org.assertj.core.api.Assertions.assertThat;
  * </ul>
  */
 @DataR2dbcTest
-@Import(TestDatabaseConfig.class)
+@Import({TestDatabaseConfig.class, DeviceRegistryCleanupConfig.class})
 class AdminSshKeyIssuanceServiceTest {
 
     @Autowired DatabaseClient db;
+
+    @Autowired DeviceRegistryCleanup deviceRegistryCleanup;
 
     private static final String DEV_X = "dev-x-1";       // brandx, ADMIN-owned
     private static final String DEV_Y = "dev-y-1";       // brandy, ADMIN-owned
@@ -85,7 +89,7 @@ class AdminSshKeyIssuanceServiceTest {
     void setup() {
         db.sql("DELETE FROM admin_ssh_issued_key").fetch().rowsUpdated().block();
         db.sql("DELETE FROM device_ssh_license").fetch().rowsUpdated().block();
-        db.sql("DELETE FROM device_registry").fetch().rowsUpdated().block();
+        deviceRegistryCleanup.clearDeviceRegistry().block();
         insertDevice(DEV_X, MK_X, "brandx", "ADMIN");
         insertDevice(DEV_Y, "mk-y", "brandy", "ADMIN");
         insertDevice(DEV_SA, "mk-sa", "brandx", "SUPERADMIN");
@@ -121,7 +125,7 @@ class AdminSshKeyIssuanceServiceTest {
         // class (whose device_registry cleanup does not clear these child tables).
         db.sql("DELETE FROM admin_ssh_issued_key").fetch().rowsUpdated().block();
         db.sql("DELETE FROM device_ssh_license").fetch().rowsUpdated().block();
-        db.sql("DELETE FROM device_registry").fetch().rowsUpdated().block();
+        deviceRegistryCleanup.clearDeviceRegistry().block();
     }
 
     private void insertDevice(String id, String mk, String domain, String owner) {

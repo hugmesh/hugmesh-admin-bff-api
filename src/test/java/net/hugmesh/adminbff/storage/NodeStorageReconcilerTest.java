@@ -13,6 +13,8 @@ import net.hugmesh.adminbff.device.DeviceRegistryService;
 import net.hugmesh.adminbff.lease.LeaderElection;
 import net.hugmesh.commons.security.DomainRegistry;
 import net.hugmesh.commons.security.PrincipalDomain;
+import net.hugmesh.adminbff.support.DeviceRegistryCleanup;
+import net.hugmesh.adminbff.support.DeviceRegistryCleanupConfig;
 import net.hugmesh.adminbff.support.TestDatabaseConfig;
 
 import java.time.Instant;
@@ -39,11 +41,13 @@ import static org.assertj.core.api.Assertions.assertThat;
  * (FakeLeader + RecordingWriter).
  */
 @DataR2dbcTest
-@Import(TestDatabaseConfig.class)
+@Import({TestDatabaseConfig.class, DeviceRegistryCleanupConfig.class})
 @ActiveProfiles("test")
 class NodeStorageReconcilerTest {
 
     @Autowired DatabaseClient db;
+
+    @Autowired DeviceRegistryCleanup deviceRegistryCleanup;
 
     private static final DomainRegistry REGISTRY = new DomainRegistry("",
             "https://idp.brandx.example=brandx,https://idp.brandy.example=brandy");
@@ -53,7 +57,7 @@ class NodeStorageReconcilerTest {
     void clear() {
         db.sql("DELETE FROM storage_service_assignment").fetch().rowsUpdated().block();
         db.sql("DELETE FROM node_storage_pool").fetch().rowsUpdated().block();
-        db.sql("DELETE FROM device_registry").fetch().rowsUpdated().block();
+        deviceRegistryCleanup.clearDeviceRegistry().block();
     }
 
     private DeviceRegistryRepository deviceRepo() {

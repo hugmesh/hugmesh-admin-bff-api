@@ -6,6 +6,8 @@ import org.springframework.boot.data.r2dbc.test.autoconfigure.DataR2dbcTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.r2dbc.core.DatabaseClient;
 import org.springframework.test.context.ActiveProfiles;
+import net.hugmesh.adminbff.support.DeviceRegistryCleanup;
+import net.hugmesh.adminbff.support.DeviceRegistryCleanupConfig;
 import net.hugmesh.adminbff.support.TestDatabaseConfig;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -24,16 +26,18 @@ import static org.assertj.core.api.Assertions.assertThat;
  * device row.
  */
 @DataR2dbcTest
-@Import(TestDatabaseConfig.class)
+@Import({TestDatabaseConfig.class, DeviceRegistryCleanupConfig.class})
 @ActiveProfiles("test")
 class NodeRadioChangelogTest {
 
     @Autowired DatabaseClient db;
 
+    @Autowired DeviceRegistryCleanup deviceRegistryCleanup;
+
     @org.junit.jupiter.api.BeforeEach
     void clear() {
         db.sql("DELETE FROM node_radio_device").fetch().rowsUpdated().block();
-        db.sql("DELETE FROM device_registry").fetch().rowsUpdated().block();
+        deviceRegistryCleanup.clearDeviceRegistry().block();
     }
 
     @org.junit.jupiter.api.AfterEach
@@ -43,7 +47,7 @@ class NodeRadioChangelogTest {
         // device_registry cleanup does not clear this child table). Mirrors
         // AdminSshIssuedKeyRepositoryTest's teardown idiom.
         db.sql("DELETE FROM node_radio_device").fetch().rowsUpdated().block();
-        db.sql("DELETE FROM device_registry").fetch().rowsUpdated().block();
+        deviceRegistryCleanup.clearDeviceRegistry().block();
     }
 
     /** Register a real device row the radio FK can reference. */
