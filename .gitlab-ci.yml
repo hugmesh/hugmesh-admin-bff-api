@@ -38,13 +38,46 @@ test:mvn:
     TESTCONTAINERS_RYUK_DISABLED: "true"
     TESTCONTAINERS_HOST_OVERRIDE: "docker"
     MAVEN_OPTS: "-Dapi.version=1.43"
+    # The generator carries the CANONICAL image-gen catalogs; src/main/resources/catalog/*.json
+    # here are a vendored copy. Same cross-repo shape as the generator's layer-a-headscale-acl
+    # job, which clones THIS repo for the mirror half of that contract.
+    CATALOG_GENERATOR_REF: "main"
+    CATALOG_SIBLING_ROOT: "${CI_PROJECT_DIR}/.catalog-sibling"
   rules:
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+  before_script:
+    # WHY THIS CLONE EXISTS: ImageCatalogDriftTest assumeTrue()-SKIPS when the generator source
+    # is absent. pom.xml defaults catalog.source.dir to ${project.basedir}/../hugmesh-generator,
+    # which resolves to a real sibling checkout on a developer machine but to NOTHING in CI,
+    # where only this repo is cloned. So that drift guard has never once run here — it is green
+    # locally and dark in the pipeline, which is the worst of both.
+    - ORG_BASE="$(dirname "${CI_REPOSITORY_URL}")"
+    - mkdir -p "${CATALOG_SIBLING_ROOT}"
+    - git clone --depth 1 --branch "${CATALOG_GENERATOR_REF}" "${ORG_BASE}/hugmesh-generator.git" "${CATALOG_SIBLING_ROOT}/hugmesh-generator"
+    # A FAILED CLONE MUST NOT LOOK LIKE A PASS. Without this, a missing source dir sends the
+    # drift test straight back to its SKIP branch and the job goes green while checking nothing
+    # — the exact failure this change exists to end. Assert the file by name.
+    - test -f "${CATALOG_SIBLING_ROOT}/hugmesh-generator/docs/catalog/image-catalog.json"
+      || { echo "CATALOG SOURCE MISSING — the drift test would SKIP and this job would be green while blind"; exit 1; }
   script:
     # settings.xml (committed) resolves the PRIVATE hugmesh-parent + hugmesh-commons
     # (incl. the tests classifier) from the GitLab Maven registry via CI_JOB_TOKEN.
-    - ./mvnw -B -s settings.xml clean test
+    # -Dcatalog.source.dir points the drift test at the clone. Deliberately NOT -Pcatalog-copy:
+    # in CI the committed copy must be ASSERTED, never silently refreshed into agreement.
+    # NO -Dopenapi.spec.write here, deliberately: OpenApiSpecDumpTest now ASSERTS the committed
+    # src/main/resources/openapi/openapi.json by default and only rewrites it when that flag is
+    # passed. It used to be the reverse, and nothing ever set the old opt-in check flag — so every
+    # run rewrote the contract into a discarded CI workspace and went green while the committed
+    # spec drifted.
+    - ./mvnw -B -s settings.xml clean test -Dcatalog.source.dir="${CATALOG_SIBLING_ROOT}/hugmesh-generator/docs/catalog"
+    # THE GENERAL FORM OF THAT BUG: any test that regenerates a COMMITTED artefact passes by
+    # rewriting it, and in a throwaway CI workspace nobody ever sees the diff. Both known cases
+    # (the vendored catalogs and the OpenAPI spec) now assert instead of writing — this catches
+    # the NEXT one without knowing what it is. A clean tree after `clean test` is the invariant;
+    # a dirty one means the build silently disagreed with something that is checked in.
+    - git diff --exit-code
+      || { echo "BUILD REWROTE A COMMITTED FILE (see the diff above) — a test regenerated a checked-in artefact instead of asserting it. Regenerate locally and commit, or make that test assert."; exit 1; }
   artifacts:
     when: always
     reports:
