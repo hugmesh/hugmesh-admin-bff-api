@@ -65,7 +65,7 @@
       app can return the new row id. timestamptz -> the portable Liquibase
       'timestamp with time zone' generic type, defaultValueComputed="now()". The
       PG-only GRANT is gated with a dbms=postgresql precondition (onFail=MARK_RAN) so
-      the H2 test store — which has no admin_bff role — never fails the changelog.
+      the H2 test store — which has no adminbff_app role — never fails the changelog.
 
       NOTE: domain_registry is the REGISTRY OF BRANDS itself, so it carries NO per-row
       tenant `domain` discriminator (the 010 pattern) — it is inherently CROSS-DOMAIN
@@ -112,7 +112,7 @@
     </changeSet>
 
     <changeSet id="012-domain-registry-grant" author="hugmesh">
-        <!-- PostgreSQL-only runtime grant. The H2 test store has no admin_bff role, so
+        <!-- PostgreSQL-only runtime grant. The H2 test store has no adminbff_app role, so
              GRANT would error there; the dbms precondition skips this changeSet entirely
              off-Postgres (onFail=MARK_RAN records it as run) so the H2 changelog
              continues. On a real Postgres deployment the grant applies. No DELETE — a
@@ -120,9 +120,9 @@
         <preConditions onFail="MARK_RAN" onError="MARK_RAN">
             <dbms type="postgresql"/>
         </preConditions>
-        <comment>GRANT SELECT,INSERT,UPDATE on domain_registry to the admin_bff role
+        <comment>GRANT SELECT,INSERT,UPDATE on domain_registry to the adminbff_app role
                  (no DELETE — soft-disable via enabled=false, never hard-delete).</comment>
-        <sql>GRANT SELECT, INSERT, UPDATE ON domain_registry TO admin_bff</sql>
-        <rollback>REVOKE SELECT, INSERT, UPDATE ON domain_registry FROM admin_bff</rollback>
+        <sql>GRANT SELECT, INSERT, UPDATE ON domain_registry TO adminbff_app</sql>
+        <rollback>REVOKE SELECT, INSERT, UPDATE ON domain_registry FROM adminbff_app</rollback>
     </changeSet>
 </databaseChangeLog>

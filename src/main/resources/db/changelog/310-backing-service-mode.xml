@@ -125,10 +125,10 @@
         <preConditions onFail="MARK_RAN" onError="MARK_RAN">
             <dbms type="postgresql"/>
         </preConditions>
-        <comment>GRANT SELECT,INSERT on backing_service_mode to admin_bff. NEVER UPDATE or DELETE —
+        <comment>GRANT SELECT,INSERT on backing_service_mode to adminbff_app. NEVER UPDATE or DELETE —
                  the ledger is APPEND-ONLY (a mode change is a new row; audit rows are immutable).</comment>
-        <sql>GRANT SELECT, INSERT ON backing_service_mode TO admin_bff</sql>
-        <rollback>REVOKE SELECT, INSERT ON backing_service_mode FROM admin_bff</rollback>
+        <sql>GRANT SELECT, INSERT ON backing_service_mode TO adminbff_app</sql>
+        <rollback>REVOKE SELECT, INSERT ON backing_service_mode FROM adminbff_app</rollback>
     </changeSet>
 
 </databaseChangeLog>

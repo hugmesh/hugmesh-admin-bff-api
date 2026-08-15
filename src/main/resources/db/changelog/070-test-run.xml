@@ -231,7 +231,7 @@
     </changeSet>
 
     <changeSet id="070-test-run-grant" author="hugmesh">
-        <!-- PostgreSQL-only runtime grant. The H2 test store has no admin_bff role,
+        <!-- PostgreSQL-only runtime grant. The H2 test store has no adminbff_app role,
              so GRANT would error there; the dbms precondition skips this changeSet
              off-Postgres (onFail=MARK_RAN records it as run) so the H2 changelog
              continues. On a real Postgres deployment the grant applies. -->
@@ -239,14 +239,14 @@
             <dbms type="postgresql"/>
         </preConditions>
         <comment>GRANT SELECT,INSERT,UPDATE,DELETE on the test-run tables to the
-                 admin_bff role (DELETE = retention prune of the oldest runs).</comment>
+                 adminbff_app role (DELETE = retention prune of the oldest runs).</comment>
         <sql>
-            GRANT SELECT, INSERT, UPDATE, DELETE ON test_run TO admin_bff;
-            GRANT SELECT, INSERT, UPDATE, DELETE ON test_run_result TO admin_bff;
+            GRANT SELECT, INSERT, UPDATE, DELETE ON test_run TO adminbff_app;
+            GRANT SELECT, INSERT, UPDATE, DELETE ON test_run_result TO adminbff_app;
         </sql>
         <rollback>
-            REVOKE SELECT, INSERT, UPDATE, DELETE ON test_run FROM admin_bff;
-            REVOKE SELECT, INSERT, UPDATE, DELETE ON test_run_result FROM admin_bff;
+            REVOKE SELECT, INSERT, UPDATE, DELETE ON test_run FROM adminbff_app;
+            REVOKE SELECT, INSERT, UPDATE, DELETE ON test_run_result FROM adminbff_app;
         </rollback>
     </changeSet>
 </databaseChangeLog>

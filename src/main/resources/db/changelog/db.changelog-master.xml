@@ -636,7 +636,7 @@
       true) + optional seats + optional expires_at (timestamptz) + updated_at. A non-superadmin
       FLEET_ADMIN reaches /bff/admin/phone-fleet/** ONLY while an active, unexpired row exists
       for their subject (SUPERADMIN exempt); superadmin-managed via /bff/superadmin/
-      fleet-entitlements. New GRANT SELECT/INSERT/UPDATE/DELETE to admin_bff (PG-gated,
+      fleet-entitlements. New GRANT SELECT/INSERT/UPDATE/DELETE to adminbff_app (PG-gated,
       MARK_RAN off-PG) — DELETE granted because an entitlement is revocable state, not an audit
       trail. Band 306: next free above 305. Appended LAST (net-new table).
     -->
@@ -679,7 +679,7 @@
       varchar(36) UUID id ((gen_random_uuid())::text default + INSERT ... RETURNING id),
       never-hard-delete state IN ('requested','archived') CASed by the archive endpoint, a
       per-row `domain` discriminator (010 pattern), created_at/updated_at DEFAULT now(). PG-only
-      GRANT SELECT/INSERT/UPDATE to admin_bff (no DELETE — the row is the audit trail). Band
+      GRANT SELECT/INSERT/UPDATE to adminbff_app (no DELETE — the row is the audit trail). Band
       320: next free above the current max wired band (310). Appended LAST (net-new table).
     -->
     <include file="db/changelog/320-service-scaffold.xml"/>

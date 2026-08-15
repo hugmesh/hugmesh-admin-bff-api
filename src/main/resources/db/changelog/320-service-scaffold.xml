@@ -110,9 +110,9 @@
         <preConditions onFail="MARK_RAN" onError="MARK_RAN">
             <dbms type="postgresql"/>
         </preConditions>
-        <comment>GRANT SELECT,INSERT,UPDATE on service_scaffold to the admin_bff role
+        <comment>GRANT SELECT,INSERT,UPDATE on service_scaffold to the adminbff_app role
                  (no DELETE — the archive CAS is an update, the row is the audit).</comment>
-        <sql>GRANT SELECT, INSERT, UPDATE ON service_scaffold TO admin_bff</sql>
-        <rollback>REVOKE SELECT, INSERT, UPDATE ON service_scaffold FROM admin_bff</rollback>
+        <sql>GRANT SELECT, INSERT, UPDATE ON service_scaffold TO adminbff_app</sql>
+        <rollback>REVOKE SELECT, INSERT, UPDATE ON service_scaffold FROM adminbff_app</rollback>
     </changeSet>
 </databaseChangeLog>

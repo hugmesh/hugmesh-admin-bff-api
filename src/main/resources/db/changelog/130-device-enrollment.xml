@@ -69,7 +69,7 @@
             <dbms type="postgresql"/>
         </preConditions>
         <comment>App role privileges (PG only; H2 test store needs no GRANT).</comment>
-        <sql>GRANT SELECT, INSERT, UPDATE ON device_enrollment TO admin_bff</sql>
+        <sql>GRANT SELECT, INSERT, UPDATE ON device_enrollment TO adminbff_app</sql>
     </changeSet>
 
 </databaseChangeLog>

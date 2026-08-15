@@ -54,7 +54,7 @@
       NON_KEYWORDS) test store with no pgcrypto dependency and the app returns the id.
       timestamptz -> the portable Liquibase 'timestamp with time zone' generic type.
       The PG-only GRANTs are gated dbms=postgresql (onFail=MARK_RAN) so the H2 test store
-      (no admin_bff role) never fails the changelog. The partial UNIQUE on the offer
+      (no adminbff_app role) never fails the changelog. The partial UNIQUE on the offer
       table is PG-only (H2 has no partial indexes) — the service enforces the same
       one-offer-per-(domain,slug) invariant via find-before-insert on H2.
 
@@ -148,10 +148,10 @@
         <preConditions onFail="MARK_RAN" onError="MARK_RAN">
             <dbms type="postgresql"/>
         </preConditions>
-        <comment>GRANT SELECT,INSERT,UPDATE on game_server_catalog to admin_bff (no DELETE —
+        <comment>GRANT SELECT,INSERT,UPDATE on game_server_catalog to adminbff_app (no DELETE —
                  soft-disable via enabled=false).</comment>
-        <sql>GRANT SELECT, INSERT, UPDATE ON game_server_catalog TO admin_bff</sql>
-        <rollback>REVOKE SELECT, INSERT, UPDATE ON game_server_catalog FROM admin_bff</rollback>
+        <sql>GRANT SELECT, INSERT, UPDATE ON game_server_catalog TO adminbff_app</sql>
+        <rollback>REVOKE SELECT, INSERT, UPDATE ON game_server_catalog FROM adminbff_app</rollback>
     </changeSet>
 
     <!-- ── game_server_domain_offer: the per-(domain, slug) two-tier offer + gate ──── -->
@@ -223,9 +223,9 @@
         <preConditions onFail="MARK_RAN" onError="MARK_RAN">
             <dbms type="postgresql"/>
         </preConditions>
-        <comment>GRANT SELECT,INSERT,UPDATE on game_server_domain_offer to admin_bff.</comment>
-        <sql>GRANT SELECT, INSERT, UPDATE ON game_server_domain_offer TO admin_bff</sql>
-        <rollback>REVOKE SELECT, INSERT, UPDATE ON game_server_domain_offer FROM admin_bff</rollback>
+        <comment>GRANT SELECT,INSERT,UPDATE on game_server_domain_offer to adminbff_app.</comment>
+        <sql>GRANT SELECT, INSERT, UPDATE ON game_server_domain_offer TO adminbff_app</sql>
+        <rollback>REVOKE SELECT, INSERT, UPDATE ON game_server_domain_offer FROM adminbff_app</rollback>
     </changeSet>
 
     <!-- ── Curated FOSS seed — 8 digest-pinned servers + SPDX license per row ───────────
