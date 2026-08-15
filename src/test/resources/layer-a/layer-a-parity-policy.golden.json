@@ -1,0 +1,88 @@
+{
+  "acls": [
+    {
+      "action": "accept",
+      "dst": [
+        "10.244.0.0/16:*",
+        "10.96.0.0/12:*"
+      ],
+      "src": [
+        "tag:hugmesh"
+      ]
+    }
+  ],
+  "autoApprovers": {
+    "routes": {
+      "10.244.0.0/16": [
+        "tag:hugmesh"
+      ],
+      "10.96.0.0/12": [
+        "tag:hugmesh"
+      ]
+    }
+  },
+  "ssh": [
+    {
+      "action": "accept",
+      "dst": [
+        "tag:mesh_east-01"
+      ],
+      "src": [
+        "tag:superadmin"
+      ],
+      "users": [
+        "superadmin"
+      ]
+    },
+    {
+      "action": "accept",
+      "dst": [
+        "tag:dev_084628ddb3aa"
+      ],
+      "src": [
+        "tag:hugmesh"
+      ],
+      "users": [
+        "superadmin"
+      ]
+    },
+    {
+      "action": "accept",
+      "dst": [
+        "tag:dev_29f12e1deee6"
+      ],
+      "src": [
+        "tag:hugmesh"
+      ],
+      "users": [
+        "superadmin"
+      ]
+    }
+  ],
+  "tagOwners": {
+    "tag:be": [
+      "hugmesh"
+    ],
+    "tag:dev_084628ddb3aa": [
+      "hugmesh"
+    ],
+    "tag:dev_29f12e1deee6": [
+      "hugmesh"
+    ],
+    "tag:fe": [
+      "hugmesh"
+    ],
+    "tag:host": [
+      "hugmesh"
+    ],
+    "tag:hugmesh": [
+      "hugmesh"
+    ],
+    "tag:pki": [
+      "hugmesh"
+    ],
+    "tag:superadmin": [
+      "hugmesh"
+    ]
+  }
+}

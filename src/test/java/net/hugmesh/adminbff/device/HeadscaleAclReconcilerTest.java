@@ -107,7 +107,11 @@ class HeadscaleAclReconcilerTest {
                 .verifyComplete();
 
         assertThat(client.puts.get()).isEqualTo(1);
-        assertThat(client.lastPut.get()).contains("tag:node-FP-A");
+        // The dst tag is the SERVER-FORCED tag:dev_<sha256(fp)[0:12]> the node actually
+        // carries — NOT the old tag:node-<raw fp>, which no node has ever carried.
+        // Literal hash pinned independently: printf '%s' FP-A | openssl dgst -sha256 | cut -c1-12
+        assertThat(client.lastPut.get()).contains("tag:dev_250fb2ed2cb3");
+        assertThat(client.lastPut.get()).doesNotContain("tag:node-");
         assertThat(r.lastPushedPolicy()).isEqualTo(client.lastPut.get());
         assertThat(r.lastSuccessAt()).isAfter(java.time.Instant.EPOCH);
     }
@@ -139,7 +143,7 @@ class HeadscaleAclReconcilerTest {
         r.runOnce().block();   // tick 1
         r.runOnce().block();   // tick 2: changed -> push again
         assertThat(client.puts.get()).isEqualTo(2);
-        assertThat(client.lastPut.get()).contains("tag:node-FP-B");
+        assertThat(client.lastPut.get()).contains("tag:dev_de2fb9fcfb97");
     }
 
     @Test
