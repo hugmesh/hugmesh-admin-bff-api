@@ -1,5 +1,7 @@
 package net.hugmesh.adminbff.theme;
 
+import net.hugmesh.commons.security.PrincipalDomain;
+
 /**
  * One domain's chosen theme.
  *
@@ -10,8 +12,15 @@ package net.hugmesh.adminbff.theme;
  * because that derivation has already been corrected twice (the --sd-/--hug- prefix
  * bug, and accent text falling below AA on the lighter ramps).
  *
- * {@code domain} empty ({@code PrincipalDomain.NO_DOMAIN}) is the MESH DEFAULT: the
- * theme a domain with no row of its own inherits.
+ * {@code domain} empty ({@link #MESH_DEFAULT}) is the MESH DEFAULT: the theme a domain
+ * with no row of its own inherits.
+ *
+ * <p>{@link PrincipalDomain#NO_DOMAIN} is NOT the empty string — it is the sentinel
+ * {@code " no-domain"}, whose leading space cannot equal a registry-sanitized domain.
+ * Everything that keys a row therefore has to go through {@link #normalizeDomain} rather
+ * than through {@code trim()}: trimming that sentinel yields the ordinary-looking string
+ * {@code "no-domain"}, which is neither the mesh default nor a real domain, and letting
+ * it reach the primary key is how a fail-closed principal ends up owning a row.
  */
 public record DomainTheme(
         String domain,
@@ -25,11 +34,40 @@ public record DomainTheme(
     public static final String DEFAULT_RAMP = "dark";
     public static final String DEFAULT_STYLE = "soft";
 
-    /** Normalise on the way in so a blank and a null cannot mean different things in
-     *  the DB — the primary key is the domain, and "" vs null would allow two rows for
-     *  the mesh default. */
+    /** The storage key for the MESH DEFAULT — the row every domain without one of its
+     *  own inherits. Empty, because no real domain can be blank: {@code DomainRegistry}
+     *  sanitizes names to {@code [a-z0-9-]} and collapses blanks. */
+    public static final String MESH_DEFAULT = "";
+
+    /**
+     * The canonical storage key for a TARGET domain.
+     *
+     * <p>Null, blank, and {@link PrincipalDomain#NO_DOMAIN} all mean "no specific
+     * domain", which as a target is the mesh default. Collapsing them here is what keeps
+     * a write and a read agreeing on one key — the mesh default was previously WRITTEN
+     * through the record (trimmed to {@code "no-domain"}) but READ back as the untrimmed
+     * sentinel, so it never resolved and no domain ever inherited it.
+     *
+     * <p>Only ever apply this to a target. An ACTOR with no resolvable domain must match
+     * NOTHING, not the mesh default — see {@code DomainThemeService.actingDomain}.
+     */
+    public static String normalizeDomain(String domain) {
+        if (domain == null) {
+            return MESH_DEFAULT;
+        }
+        String d = domain.trim();
+        // Both spellings of the sentinel: as passed, and as an earlier trim would leave it.
+        if (d.isEmpty() || d.equals(PrincipalDomain.NO_DOMAIN.trim())) {
+            return MESH_DEFAULT;
+        }
+        return d;
+    }
+
+    /** Normalise on the way in so a blank, a null, and the NO_DOMAIN sentinel cannot mean
+     *  three different things in the DB — the primary key is the domain, and any two
+     *  spellings that mean "the default" would allow two rows for the mesh default. */
     public DomainTheme {
-        domain = domain == null ? "" : domain.trim();
+        domain = normalizeDomain(domain);
         preset = preset == null ? "" : preset.trim();
         ramp = (ramp == null || ramp.isBlank()) ? DEFAULT_RAMP : ramp.trim();
         style = (style == null || style.isBlank()) ? DEFAULT_STYLE : style.trim();

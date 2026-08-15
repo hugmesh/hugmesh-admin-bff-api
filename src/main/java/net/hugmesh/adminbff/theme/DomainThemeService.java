@@ -42,8 +42,13 @@ public class DomainThemeService {
             return repo.findAll();
         }
         String own = actingDomain(scope);
+        if (own.isEmpty()) {
+            // Unresolvable actor: it may still read the default it would inherit, but it
+            // has no "own domain" whose row it could be shown.
+            return repo.findByDomain(DomainTheme.MESH_DEFAULT).flux();
+        }
         return repo.findByDomain(own)
-                .concatWith(repo.findByDomain(PrincipalDomain.NO_DOMAIN))
+                .concatWith(repo.findByDomain(DomainTheme.MESH_DEFAULT))
                 .distinct(DomainTheme::domain);
     }
 
@@ -53,10 +58,14 @@ public class DomainThemeService {
      *  visitor who is not signed in at all still has to receive the right colours. It
      *  exposes no more than the domain's own public appearance. */
     public Mono<DomainTheme> resolve(String domain) {
-        String d = domain == null ? "" : domain.trim();
-        return repo.findByDomain(d)
-                .switchIfEmpty(repo.findByDomain(PrincipalDomain.NO_DOMAIN))
+        String d = DomainTheme.normalizeDomain(domain);
+        Mono<DomainTheme> fallback = repo.findByDomain(DomainTheme.MESH_DEFAULT)
                 .switchIfEmpty(Mono.just(meshFallback()));
+        // Asking for the default IS the fallback — going through findByDomain twice for
+        // the same key would be a wasted round trip on the unauthenticated render path.
+        return d.equals(DomainTheme.MESH_DEFAULT)
+                ? fallback
+                : repo.findByDomain(d).switchIfEmpty(fallback);
     }
 
     /** Set one domain's theme. Refuses unless the caller may manage that domain. */
@@ -99,29 +108,45 @@ public class DomainThemeService {
         }
         String own = actingDomain(scope);
         if (own.isEmpty()) {
-            return false;            // unscoped actor: fail closed
+            return false;            // unresolvable actor: fail closed
         }
-        String t = target == null ? "" : target.trim();
-        return !t.isEmpty() && t.equals(own);
+        // Through the same normalisation the row is KEYED by, so a caller cannot reach a
+        // row by spelling its domain differently than the write path would have.
+        String t = DomainTheme.normalizeDomain(target);
+        return !t.equals(DomainTheme.MESH_DEFAULT) && t.equals(own);
     }
 
     private static boolean isSuperadmin(PrincipalDomain scope) {
         return scope != null && !scope.scoped();
     }
 
-    /** The acting domain, with the null/blank cases collapsed to "no domain at all"
-     *  rather than to the mesh default — an actor with no domain must match nothing. */
+    /**
+     * The acting domain, with null/blank AND the {@link PrincipalDomain#NO_DOMAIN}
+     * sentinel all collapsed to "no domain at all" — an actor with no resolvable domain
+     * must match NOTHING.
+     *
+     * <p>This deliberately does NOT use {@link DomainTheme#normalizeDomain}: that maps
+     * the same inputs to the mesh default, which is correct for a target and catastrophic
+     * for an actor. Reading NO_DOMAIN as a domain name is precisely the bug this replaces
+     * — {@code " no-domain".trim()} is {@code "no-domain"}, a non-empty string that
+     * sailed past the fail-closed check and then matched the mesh default's own key, so a
+     * principal whose tenant could not be resolved could repaint every domain on the mesh.
+     */
     private static String actingDomain(PrincipalDomain scope) {
         if (scope == null) {
             return "";
         }
         String d = scope.domain();
-        return d == null ? "" : d.trim();
+        if (d == null) {
+            return "";
+        }
+        d = d.trim();
+        return d.equals(PrincipalDomain.NO_DOMAIN.trim()) ? "" : d;
     }
 
     /** What a mesh with no rows at all renders: the shipped brand on the dark ramp. */
     static DomainTheme meshFallback() {
-        return new DomainTheme(PrincipalDomain.NO_DOMAIN, "dark",
+        return new DomainTheme(DomainTheme.MESH_DEFAULT, "dark",
                 DomainTheme.DEFAULT_RAMP, DomainTheme.DEFAULT_STYLE, null, null, null);
     }
 }

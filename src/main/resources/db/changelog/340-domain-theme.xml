@@ -17,8 +17,16 @@
 
     ONE ROW PER DOMAIN, and the domain IS the primary key: a domain has exactly one
     theme, so a surrogate id would allow two rows for one domain and make "which wins?"
-    a question the schema cannot answer. PrincipalDomain.NO_DOMAIN ('') is a legal value
-    and means the MESH DEFAULT — the theme a domain with no row of its own inherits.
+    a question the schema cannot answer. The EMPTY STRING (DomainTheme.MESH_DEFAULT) is a
+    legal value and means the MESH DEFAULT — the theme a domain with no row of its own
+    inherits.
+
+    NOT PrincipalDomain.NO_DOMAIN, which this comment previously claimed was ''. It is
+    the sentinel ' no-domain' (leading space), and that error was load-bearing: the
+    default was written trimmed to 'no-domain' but read back untrimmed, so it resolved
+    for nobody, and a principal whose tenant could NOT be resolved carried the same
+    'no-domain' as its acting domain and so passed the ownership check on that very row.
+    Everything keying this table now goes through DomainTheme.normalizeDomain.
 
     The selection is stored, NOT the rendered CSS: preset + ramp + style are what the
     operator chose, and re-deriving from them means a fix to the colour maths (the AA
@@ -72,5 +80,24 @@
         ALTER TABLE domain_theme DROP CONSTRAINT domain_theme_secondary_hex_chk;
       </sql>
     </rollback>
+  </changeSet>
+
+  <!-- The runtime role. Without this every query on domain_theme fails in PRODUCTION
+       with "permission denied for table domain_theme", while every test passes — the
+       Testcontainers harness connects as the container superuser, not as admin_bff, so
+       a missing GRANT is invisible to it. That is the same blind spot the H2 store had
+       (it ignored GRANTs outright), and the reason the other tables' GRANTs exist.
+
+       DELETE is granted, following fleet_entitlement rather than the audit tables: a
+       theme override is revocable state — clearing one is how a domain goes back to
+       inheriting the mesh default — not an audit trail. -->
+  <changeSet id="340-3-domain-theme-grant" author="hugmesh">
+    <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+      <dbms type="postgresql"/>
+    </preConditions>
+    <comment>GRANT SELECT,INSERT,UPDATE,DELETE on domain_theme to the admin_bff role. PG
+             only; MARK_RAN elsewhere.</comment>
+    <sql>GRANT SELECT, INSERT, UPDATE, DELETE ON domain_theme TO admin_bff</sql>
+    <rollback>REVOKE SELECT, INSERT, UPDATE, DELETE ON domain_theme FROM admin_bff</rollback>
   </changeSet>
 </databaseChangeLog>
