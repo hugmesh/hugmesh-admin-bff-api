@@ -8,6 +8,7 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.time.Instant;
+import java.util.Collection;
 
 /**
  * Reactive (R2DBC) Spring Data store for {@code desktop_sudo_grant} (changeset 140). The active
@@ -61,6 +62,15 @@ public interface DesktopSudoGrantR2dbcRepository
 
     /** ALL active grants (every brand), by subject — the full entitlement working set. */
     Flux<DesktopSudoGrantRow> findByStateOrderBySubject(String state);
+
+    /** A subject's grants in one state (any device) — the Casdoor role-membership floor
+     *  (member iff >=1 active grant remains). */
+    Flux<DesktopSudoGrantRow> findBySubjectAndState(String subject, String state);
+
+    /** Rows still owing IdP propagation (pending / failed) — the claim worker's sweep set,
+     *  oldest mutate first. */
+    Flux<DesktopSudoGrantRow> findByPropagationStateInOrderByGenerationAsc(
+            Collection<String> propagationStates);
 
     /** The current MAX(generation) across ALL grant rows; 0 when empty. */
     String MAX_GENERATION = "SELECT COALESCE(MAX(generation), 0) FROM desktop_sudo_grant";

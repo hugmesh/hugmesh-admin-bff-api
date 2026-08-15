@@ -6,6 +6,7 @@ import reactor.core.publisher.Mono;
 import net.hugmesh.commons.security.PrincipalDomain;
 
 import java.time.Instant;
+import java.util.List;
 
 /**
  * Reactive (R2DBC) store for {@code desktop_sudo_grant} — the SSO-enforced sudo grants.
@@ -119,5 +120,22 @@ public class DesktopSudoGrantRepository {
     /** Record the push-with-ack propagation outcome for a row [FIX-REVOKE]. UNSCOPED. */
     public Mono<Long> updatePropagationState(String id, String propagationState) {
         return repo.updatePropagationState(id, propagationState);
+    }
+
+    // ── claim propagation (the Casdoor desktop-sudo role sync working set) ──────
+
+    /** True iff {@code subject} holds ANY active grant (any device) — the Casdoor
+     *  role-membership floor: a revoke drops the {@code desktop-sudo} membership only when
+     *  this turns false. UNSCOPED. */
+    public Mono<Boolean> hasActiveForSubject(String subject) {
+        return repo.findBySubjectAndState(subject, DesktopSudoGrant.STATE_ACTIVE).hasElements();
+    }
+
+    /** Rows still owing IdP propagation ({@code pending} or a previous {@code failed}) —
+     *  the claim worker's sweep set, oldest mutate first. UNSCOPED. */
+    public Flux<DesktopSudoGrant> pendingPropagation() {
+        return repo.findByPropagationStateInOrderByGenerationAsc(
+                        List.of(DesktopSudoGrant.PROP_PENDING, DesktopSudoGrant.PROP_FAILED))
+                .map(DesktopSudoGrantRow::toDomain);
     }
 }
