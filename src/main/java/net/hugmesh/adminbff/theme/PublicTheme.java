@@ -19,11 +19,15 @@ public record PublicTheme(
         String preset,
         String ramp,
         String style,
+        /* Every selection axis crosses this boundary, decorative ones included: a surface
+         * asking what theme applies to it must get an answer it could re-render from, and
+         * an axis omitted here is one a caller cannot see it is subject to. */
+        String decor,
         String primaryHex,
         String secondaryHex) {
 
     public static PublicTheme of(DomainTheme t) {
-        return new PublicTheme(t.domain(), t.preset(), t.ramp(), t.style(),
+        return new PublicTheme(t.domain(), t.preset(), t.ramp(), t.style(), t.decor(),
                 t.primaryHex(), t.secondaryHex());
     }
 }

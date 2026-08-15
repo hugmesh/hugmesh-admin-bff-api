@@ -18,14 +18,15 @@ public class DomainThemeRepository {
 
     private static final String UPSERT = """
             INSERT INTO domain_theme
-                (domain, preset, ramp, style, primary_hex, secondary_hex, updated_at, updated_by,
-                 rendered_css, rendered_by)
-            VALUES (:domain, :preset, :ramp, :style, :primaryHex, :secondaryHex, now(), :updatedBy,
-                    :renderedCss, :renderedBy)
+                (domain, preset, ramp, style, decor, primary_hex, secondary_hex, updated_at,
+                 updated_by, rendered_css, rendered_by)
+            VALUES (:domain, :preset, :ramp, :style, :decor, :primaryHex, :secondaryHex, now(),
+                    :updatedBy, :renderedCss, :renderedBy)
             ON CONFLICT (domain) DO UPDATE SET
                 preset = EXCLUDED.preset,
                 ramp = EXCLUDED.ramp,
                 style = EXCLUDED.style,
+                decor = EXCLUDED.decor,
                 primary_hex = EXCLUDED.primary_hex,
                 secondary_hex = EXCLUDED.secondary_hex,
                 updated_at = now(),
@@ -35,13 +36,13 @@ public class DomainThemeRepository {
             """;
 
     private static final String SELECT_ALL = """
-            SELECT domain, preset, ramp, style, primary_hex, secondary_hex, updated_by,
+            SELECT domain, preset, ramp, style, decor, primary_hex, secondary_hex, updated_by,
                    rendered_css, rendered_by
             FROM domain_theme ORDER BY domain
             """;
 
     private static final String SELECT_ONE = """
-            SELECT domain, preset, ramp, style, primary_hex, secondary_hex, updated_by,
+            SELECT domain, preset, ramp, style, decor, primary_hex, secondary_hex, updated_by,
                    rendered_css, rendered_by
             FROM domain_theme WHERE domain = :domain
             """;
@@ -73,6 +74,7 @@ public class DomainThemeRepository {
                 .bind("preset", t.preset())
                 .bind("ramp", t.ramp())
                 .bind("style", t.style())
+                .bind("decor", t.decor())
                 .bind("primaryHex", t.primaryHex() == null ? io.r2dbc.spi.Parameters.in(String.class) : io.r2dbc.spi.Parameters.in(t.primaryHex()))
                 .bind("secondaryHex", t.secondaryHex() == null ? io.r2dbc.spi.Parameters.in(String.class) : io.r2dbc.spi.Parameters.in(t.secondaryHex()))
                 .bind("updatedBy", t.updatedBy() == null ? io.r2dbc.spi.Parameters.in(String.class) : io.r2dbc.spi.Parameters.in(t.updatedBy()))
@@ -95,6 +97,7 @@ public class DomainThemeRepository {
                 row.get("preset", String.class),
                 row.get("ramp", String.class),
                 row.get("style", String.class),
+                row.get("decor", String.class),
                 row.get("primary_hex", String.class),
                 row.get("secondary_hex", String.class),
                 row.get("updated_by", String.class),

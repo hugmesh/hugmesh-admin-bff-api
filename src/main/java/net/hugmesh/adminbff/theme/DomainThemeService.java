@@ -126,7 +126,7 @@ public class DomainThemeService {
                         by = existing.get().renderedBy();
                     }
                     return repo.upsert(new DomainTheme(
-                            target, theme.preset(), theme.ramp(), theme.style(),
+                            target, theme.preset(), theme.ramp(), theme.style(), theme.decor(),
                             theme.primaryHex(), theme.secondaryHex(), actor, css, by));
                 });
     }
@@ -194,6 +194,7 @@ public class DomainThemeService {
     /** What a mesh with no rows at all renders: the shipped brand on the dark ramp. */
     static DomainTheme meshFallback() {
         return new DomainTheme(DomainTheme.MESH_DEFAULT, "dark",
-                DomainTheme.DEFAULT_RAMP, DomainTheme.DEFAULT_STYLE, null, null, null);
+                DomainTheme.DEFAULT_RAMP, DomainTheme.DEFAULT_STYLE, DomainTheme.DEFAULT_DECOR,
+                null, null, null);
     }
 }

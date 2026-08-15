@@ -46,6 +46,21 @@ public record DomainThemeRequest(
                 message = "style must be one of soft, sharp, outlined, elevated, flat, glass")
         String style,
 
+        /*
+         * theme.DECOR_VARIANTS — decorative nav-link text. Closed set, and the same
+         * deliberate cross-language duplication as ramp and style: the vocabulary lives in
+         * hugmesh-generator/studio/hugmesh_studio/core/theme.py (DECOR_VARIANTS), adding
+         * one there means adding it here, and the price buys a named 400 instead of a
+         * silently plain-chrome render.
+         *
+         * OMITTED MEANS 'none', not "leave whatever is stored". An admin UI with no decor
+         * control therefore turns decoration OFF when it saves, which is the point: the
+         * Studio could switch it on and nothing could switch it back.
+         */
+        @Pattern(regexp = "^(none|uwu|arrows|terminal|sparkle)?$",
+                message = "decor must be one of none, uwu, arrows, terminal, sparkle")
+        String decor,
+
         /* Optional hand-picked overrides; null/blank means "use the preset's colours". */
         @Pattern(regexp = "^(#[0-9A-Fa-f]{6})?$",
                 message = "primaryHex must be a #rrggbb colour")

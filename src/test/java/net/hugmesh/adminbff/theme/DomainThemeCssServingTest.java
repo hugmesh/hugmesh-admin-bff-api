@@ -58,12 +58,23 @@ class DomainThemeCssServingTest {
     }
 
     private static DomainTheme withCss(String domain, String preset, String rendered) {
-        return new DomainTheme(domain, preset, "dusk", "sharp", null, null, null,
-                rendered, "studio");
+        return decoratedWithCss(domain, preset, "none", rendered);
     }
 
     private static DomainTheme selectionOnly(String domain, String preset) {
-        return new DomainTheme(domain, preset, "dusk", "sharp", null, null, null);
+        return decorated(domain, preset, "none");
+    }
+
+    /** The Studio's push: a full selection INCLUDING the decor axis, plus its render. */
+    private static DomainTheme decoratedWithCss(String domain, String preset, String decor,
+                                                String rendered) {
+        return new DomainTheme(domain, preset, "dusk", "sharp", decor, null, null, null,
+                rendered, "studio");
+    }
+
+    /** What the admin UI sends: a selection with no render, because it cannot derive one. */
+    private static DomainTheme decorated(String domain, String preset, String decor) {
+        return new DomainTheme(domain, preset, "dusk", "sharp", decor, null, null, null);
     }
 
     // ── the cache survives a round trip ─────────────────────────────────
@@ -133,7 +144,7 @@ class DomainThemeCssServingTest {
     void changingOnlyTheRampCountsAsAChangedSelection() {
         // Every axis repaints, not just the preset -- the ramp IS the colour scheme.
         service.set(withCss("brandx", "nord", css("#88c0d0")), ROOT, "studio").block();
-        service.set(new DomainTheme("brandx", "nord", "light", "sharp", null, null, null),
+        service.set(new DomainTheme("brandx", "nord", "light", "sharp", "none", null, null, null),
                 BRANDX, "x-admin").block();
 
         StepVerifier.create(service.resolve("brandx"))
@@ -144,11 +155,91 @@ class DomainThemeCssServingTest {
     @Test
     void changingOnlyAHexOverrideCountsAsAChangedSelection() {
         service.set(withCss("brandx", "nord", css("#88c0d0")), ROOT, "studio").block();
-        service.set(new DomainTheme("brandx", "nord", "dusk", "sharp", "#ff0088", null, null),
+        service.set(new DomainTheme("brandx", "nord", "dusk", "sharp", "none", "#ff0088", null, null),
                 BRANDX, "x-admin").block();
 
         StepVerifier.create(service.resolve("brandx"))
                 .assertNext(t -> assertThat(t.renderedCss()).isNull())
+                .verifyComplete();
+    }
+
+    // ── the decor axis, which is where the rule was actually broken ─────
+
+    /**
+     * THE STUCK-THEME BUG, end to end.
+     *
+     * <p>The Studio pushes a decorated selection and its render. A domain admin then saves
+     * the SAME colours from a web UI that has no decor control at all, so the write carries
+     * decor 'none' and no CSS. While {@code sameSelection} ignored decor that compared
+     * EQUAL, the UwU sheet was kept, and the stored selection could no longer reproduce the
+     * served stylesheet — with no control anywhere able to turn the decoration off.
+     */
+    @Test
+    void aDecorationTheStudioSwitchedOnCanBeSwitchedOffFromTheAdminUi() {
+        service.set(decoratedWithCss("brandx", "nord", "uwu", css("#88c0d0")), ROOT, "studio").block();
+
+        service.set(decorated("brandx", "nord", "none"), BRANDX, "x-admin").block();
+
+        StepVerifier.create(service.resolve("brandx"))
+                .assertNext(t -> {
+                    assertThat(t.decor()).isEqualTo("none");
+                    // The decorated sheet is gone: default chrome until a render for the
+                    // NEW selection arrives. Un-themed beats confidently decorated.
+                    assertThat(t.renderedCss()).isNull();
+                    assertThat(t.renderedBy()).isNull();
+                })
+                .verifyComplete();
+    }
+
+    @Test
+    void changingOnlyTheDecorCountsAsAChangedSelection() {
+        // Decoration is cosmetic but it is still IN the stylesheet, so an axis that moves
+        // the bytes has to be able to invalidate them — same rule as the ramp.
+        service.set(decoratedWithCss("brandx", "nord", "uwu", css("#88c0d0")), ROOT, "studio").block();
+        service.set(decorated("brandx", "nord", "terminal"), BRANDX, "x-admin").block();
+
+        StepVerifier.create(service.resolve("brandx"))
+                .assertNext(t -> {
+                    assertThat(t.decor()).isEqualTo("terminal");
+                    assertThat(t.renderedCss()).isNull();
+                })
+                .verifyComplete();
+    }
+
+    @Test
+    void reSavingTheSameSelectionIncludingItsDecorStillKEEPSTheRender() {
+        // The other direction, so the fix above cannot be "invalidate on every write":
+        // an identical selection, decor and all, must not throw a valid sheet away.
+        service.set(decoratedWithCss("brandx", "nord", "uwu", css("#88c0d0")), ROOT, "studio").block();
+        service.set(decorated("brandx", "nord", "uwu"), BRANDX, "x-admin").block();
+
+        StepVerifier.create(service.resolve("brandx"))
+                .assertNext(t -> {
+                    assertThat(t.renderedCss()).contains("#88c0d0");
+                    assertThat(t.updatedBy()).isEqualTo("x-admin");   // the write did happen
+                })
+                .verifyComplete();
+    }
+
+    @Test
+    void theChosenDecorSurvivesStorageSoTheSelectionCanReproduceTheRender() {
+        service.set(decoratedWithCss("brandx", "nord", "sparkle", css("#88c0d0")), ROOT, "studio").block();
+
+        StepVerifier.create(service.resolve("brandx"))
+                .assertNext(t -> assertThat(t.decor()).isEqualTo("sparkle"))
+                .verifyComplete();
+    }
+
+    @Test
+    void aRowWrittenBeforeTheDecorColumnExistedReadsBackAsUndecorated() {
+        // Changeset 340-5 is NOT NULL DEFAULT 'none', so rows that predate it are a
+        // definite "no decoration" rather than a null the equality check would have to
+        // guess at. Written as raw SQL because the record can no longer omit the axis.
+        db.sql("INSERT INTO domain_theme (domain, preset) VALUES ('legacy', 'nord')")
+                .fetch().rowsUpdated().block();
+
+        StepVerifier.create(repo.findByDomain("legacy"))
+                .assertNext(t -> assertThat(t.decor()).isEqualTo(DomainTheme.DEFAULT_DECOR))
                 .verifyComplete();
     }
 

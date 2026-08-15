@@ -50,7 +50,7 @@ class DomainThemeSurfaceControllerTest {
     @MockitoBean net.hugmesh.authcore.provision.GatewayRevocationClient revocations;
 
     private static DomainTheme row(String domain, String preset) {
-        return new DomainTheme(domain, preset, "dusk", "sharp", null, null, "admin@x");
+        return new DomainTheme(domain, preset, "dusk", "sharp", "none", null, null, "admin@x");
     }
 
     @Test
@@ -73,10 +73,22 @@ class DomainThemeSurfaceControllerTest {
         verify(service).resolve(null);
     }
 
+    @Test
+    void theDecorAxisIsPartOfWhatASurfaceIsToldToRender() {
+        // An axis the public projection omits is one a surface cannot tell it is subject
+        // to — and this projection is the only answer an anonymous caller ever gets.
+        when(service.resolve(eq("brandx"))).thenReturn(Mono.just(
+                new DomainTheme("brandx", "nord", "dusk", "sharp", "uwu", null, null, "admin@x")));
+
+        web.get().uri("/bff/public/theme?domain=brandx")
+                .exchange().expectStatus().isOk()
+                .expectBody().jsonPath("$.decor").isEqualTo("uwu");
+    }
+
     // ── the stylesheet endpoint ─────────────────────────────────────────
 
     private static DomainTheme rendered(String domain, String css) {
-        return new DomainTheme(domain, "nord", "dusk", "sharp", null, null, "admin@x",
+        return new DomainTheme(domain, "nord", "dusk", "sharp", "none", null, null, "admin@x",
                 css, "studio");
     }
 

@@ -133,4 +133,38 @@
       <column name="rendered_by" type="varchar(64)"/>
     </addColumn>
   </changeSet>
+
+  <!--
+    THE DECOR AXIS, and why it belongs in the SELECTION rather than only in the render.
+
+    The Studio grew a fourth orthogonal axis (hugmesh-generator 3bdae246): decorative
+    nav-link text, emitted as the sd-nav-suffix / hover / active tokens. Its default is
+    'none' because what it replaces was a hard-coded ' UwU' on every nav link — not the
+    operator's choice, and announced by screen readers as part of the link text.
+
+    Storing it here is not bookkeeping. While the axis existed only in the renderer, the
+    stored selection could NOT reproduce the served stylesheet: the Studio pushed a decor
+    plus its render, this table kept the render and dropped the decor, and the next save of
+    the SAME preset/ramp/style from the admin UI compared equal (DomainTheme.sameSelection)
+    and so KEPT the decorated sheet. The decoration could then be turned off from nowhere in
+    the product, which inverts the rule 340-4 states: the selection is authoritative and the
+    render is derived from it.
+
+    NOT NULL defaulting to 'none', so every row written before this changeset reads back as
+    undecorated rather than null. A null would make "chose no decoration" and "predates the
+    column" indistinguishable, and the equality check above has to be able to read an old
+    row as a definite 'none' for the first decorated write to invalidate its cache.
+
+    No CHECK constraint, following ramp and style rather than the hex columns: the
+    vocabulary is validated at the boundary (DomainThemeRequest), and an unknown variant
+    renders plain chrome in the one Python implementation rather than failing, so a DB-level
+    reject would be stricter than the thing it guards.
+  -->
+  <changeSet id="340-5-domain-theme-decor" author="hugmesh">
+    <addColumn tableName="domain_theme">
+      <column name="decor" type="varchar(32)" defaultValue="none">
+        <constraints nullable="false"/>
+      </column>
+    </addColumn>
+  </changeSet>
 </databaseChangeLog>

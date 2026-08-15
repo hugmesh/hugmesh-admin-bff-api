@@ -75,7 +75,7 @@ class DomainThemeAdminControllerTest {
     }
 
     private static DomainTheme row(String domain) {
-        return new DomainTheme(domain, "nord", "dusk", "sharp", null, null, "admin@x");
+        return new DomainTheme(domain, "nord", "dusk", "sharp", "none", null, null, "admin@x");
     }
 
     private static final String VALID_BODY =
@@ -234,6 +234,48 @@ class DomainThemeAdminControllerTest {
                         t.ramp().equals(DomainTheme.DEFAULT_RAMP)
                                 && t.style().equals(DomainTheme.DEFAULT_STYLE)),
                 any(PrincipalDomain.class), anyString());
+    }
+
+    // ── the decor axis ──────────────────────────────────────────────────
+
+    @Test
+    void aChosenDecorReachesTheServiceRatherThanBeingDroppedAtTheBoundary() {
+        // It was dropped here for a while, and the loss was invisible: the write succeeded,
+        // the stylesheet stayed decorated, and only the stored selection disagreed.
+        when(service.set(any(DomainTheme.class), any(PrincipalDomain.class), anyString()))
+                .thenReturn(Mono.just(row("brandx")));
+
+        asAdmin().put().uri("/bff/admin/themes/brandx").contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("{\"preset\":\"nord\",\"ramp\":\"dusk\",\"style\":\"sharp\",\"decor\":\"uwu\"}")
+                .exchange().expectStatus().isOk();
+
+        verify(service).set(org.mockito.ArgumentMatchers.argThat(t -> t.decor().equals("uwu")),
+                any(PrincipalDomain.class), anyString());
+    }
+
+    @Test
+    void anOmittedDecorMeansNoneRatherThanWhateverWasStoredBefore() {
+        // This is what lets an admin UI with no decor control turn decoration OFF: the PUT
+        // states a whole selection, so an absent axis is a choice, not a no-op.
+        when(service.set(any(DomainTheme.class), any(PrincipalDomain.class), anyString()))
+                .thenReturn(Mono.just(row("brandx")));
+
+        asAdmin().put().uri("/bff/admin/themes/brandx").contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(VALID_BODY)
+                .exchange().expectStatus().isOk();
+
+        verify(service).set(org.mockito.ArgumentMatchers.argThat(
+                        t -> t.decor().equals(DomainTheme.DEFAULT_DECOR)),
+                any(PrincipalDomain.class), anyString());
+    }
+
+    @Test
+    void anOutOfVocabularyDecorIs400_notASilentlyPlainRender() {
+        asAdmin().put().uri("/bff/admin/themes/brandx").contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("{\"preset\":\"nord\",\"decor\":\"nyan\"}")
+                .exchange().expectStatus().isBadRequest()
+                .expectBody().jsonPath("$.fields.decor").exists();
+        verify(service, never()).set(any(), any(), anyString());
     }
 
     @Test

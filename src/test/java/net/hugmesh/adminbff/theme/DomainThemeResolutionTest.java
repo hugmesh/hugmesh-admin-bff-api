@@ -50,7 +50,7 @@ class DomainThemeResolutionTest {
     }
 
     private static DomainTheme theme(String domain, String preset) {
-        return new DomainTheme(domain, preset, "dusk", "sharp", null, null, null);
+        return new DomainTheme(domain, preset, "dusk", "sharp", "none", null, null, null);
     }
 
     private static final PrincipalDomain ROOT = PrincipalDomain.superadminFor("brandx");
@@ -168,7 +168,7 @@ class DomainThemeResolutionTest {
     @Test
     void theHexCheckConstraintRejectsAMalformedColour() {
         StepVerifier.create(repo.upsert(new DomainTheme(
-                        "brandx", "nord", "dusk", "soft", "not-a-colour", null, "x-admin")))
+                        "brandx", "nord", "dusk", "soft", "none", "not-a-colour", null, "x-admin")))
                 .expectError()
                 .verify();
     }

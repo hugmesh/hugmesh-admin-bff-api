@@ -9061,6 +9061,10 @@
             "pattern" : "^(soft|sharp|outlined|elevated|flat|glass)?$",
             "type" : "string"
           },
+          "decor" : {
+            "pattern" : "^(none|uwu|arrows|terminal|sparkle)?$",
+            "type" : "string"
+          },
           "primaryHex" : {
             "pattern" : "^(#[0-9A-Fa-f]{6})?$",
             "type" : "string"
@@ -9089,6 +9093,9 @@
             "type" : "string"
           },
           "style" : {
+            "type" : "string"
+          },
+          "decor" : {
             "type" : "string"
           },
           "primaryHex" : {
@@ -12150,6 +12157,9 @@
             "type" : "string"
           },
           "style" : {
+            "type" : "string"
+          },
+          "decor" : {
             "type" : "string"
           },
           "primaryHex" : {

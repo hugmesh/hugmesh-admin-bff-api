@@ -74,7 +74,7 @@ class DomainThemeAuthorizationTest {
     private final DomainThemeService service = new DomainThemeService(repo);
 
     private static DomainTheme theme(String domain) {
-        return new DomainTheme(domain, "nord", "dusk", "soft", null, null, null);
+        return new DomainTheme(domain, "nord", "dusk", "soft", "none", null, null, null);
     }
 
     /** A principal whose issuer the registry could not resolve. */
