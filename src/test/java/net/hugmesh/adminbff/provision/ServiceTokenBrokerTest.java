@@ -124,8 +124,9 @@ class ServiceTokenBrokerTest {
     }
 
     @Test
-    void matrixToken_decodesSynapseJson_throughTheBoot4Jackson3Codec() {
-        // Synapse /register returns an access_token directly (one-shot success).
+    void matrixToken_decodesTuwunelJson_throughTheBoot4Jackson3Codec() {
+        // tuwunel's /register (Synapse-compatible shape) returns an access_token
+        // directly (one-shot success).
         ServiceTokenBroker broker = brokerFor(
                 "{\"access_token\":\"syt_abc\",\"user_id\":\"@bob:hs\"}");
 
