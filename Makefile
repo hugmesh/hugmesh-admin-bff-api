@@ -6,7 +6,7 @@
 # wrapper and intentionally does NOT hard-fail when tooling/targets are absent.
 
 # Generator repo carrying the shared DAST harness (run-pentest.sh) + CI template.
-GENERATOR_REPO ?= https://github.com/hugmesh-net/hugmesh-generator.git
+GENERATOR_REPO ?= https://github.com/hugmesh/hugmesh-generator.git
 # Local checkout of the generator, if present alongside this repo (sibling dir).
 GENERATOR_DIR  ?= ../hugmesh-generator
 # DAST target; when unset the DAST half is skipped (no hard fail).
