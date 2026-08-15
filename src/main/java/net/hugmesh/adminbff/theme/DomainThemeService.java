@@ -68,6 +68,34 @@ public class DomainThemeService {
                 : repo.findByDomain(d).switchIfEmpty(fallback);
     }
 
+    /**
+     * A resolved theme plus WHERE it came from.
+     *
+     * @param theme     the theme that applies
+     * @param inherited true when the domain has no row of its own and is falling back
+     */
+    public record Effective(DomainTheme theme, boolean inherited) {}
+
+    /**
+     * Like {@link #resolve} but keeps the distinction an editor needs: a domain that
+     * CHOSE the same theme as the default is not the same as one that has no row at all,
+     * and only the second has nothing to clear. The repository deliberately does not fold
+     * the fallback in for exactly this reason.
+     */
+    public Mono<Effective> effective(String domain) {
+        String d = DomainTheme.normalizeDomain(domain);
+        if (d.equals(DomainTheme.MESH_DEFAULT)) {
+            // The default has nothing above it to inherit FROM; an absent row means it is
+            // still on the shipped fallback, which is likewise nothing to clear.
+            return repo.findByDomain(DomainTheme.MESH_DEFAULT)
+                    .map(t -> new Effective(t, false))
+                    .switchIfEmpty(Mono.just(new Effective(meshFallback(), true)));
+        }
+        return repo.findByDomain(d)
+                .map(t -> new Effective(t, false))
+                .switchIfEmpty(resolve(DomainTheme.MESH_DEFAULT).map(t -> new Effective(t, true)));
+    }
+
     /** Set one domain's theme. Refuses unless the caller may manage that domain. */
     public Mono<DomainTheme> set(DomainTheme theme, PrincipalDomain scope, String actor) {
         String target = theme.domain();
