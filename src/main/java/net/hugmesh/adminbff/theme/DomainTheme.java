@@ -29,7 +29,19 @@ public record DomainTheme(
         String style,
         String primaryHex,
         String secondaryHex,
-        String updatedBy) {
+        String updatedBy,
+        /* The DERIVED stylesheet, pushed by the renderer -- never computed here. Null
+         * means "not rendered yet", which serves empty CSS and therefore the shipped
+         * default chrome. See changeset 340-4 for why this is a cache and not truth.
+         *
+         * NEVER SERIALISED. It is read server-side by the /bff/public/theme.css handler
+         * and nothing else; a list of 38 domains would otherwise ship ~270 KB of
+         * stylesheet to an admin screen that renders none of it. renderedBy stays
+         * visible, because "which renderer produced this" is what makes a stale cache
+         * identifiable. */
+        @com.fasterxml.jackson.annotation.JsonIgnore
+        String renderedCss,
+        String renderedBy) {
 
     public static final String DEFAULT_RAMP = "dark";
     public static final String DEFAULT_STYLE = "soft";
@@ -73,6 +85,28 @@ public record DomainTheme(
         style = (style == null || style.isBlank()) ? DEFAULT_STYLE : style.trim();
         primaryHex = blankToNull(primaryHex);
         secondaryHex = blankToNull(secondaryHex);
+        renderedCss = blankToNull(renderedCss);
+        renderedBy = blankToNull(renderedBy);
+    }
+
+    /** The SELECTION alone, carrying no render — what an admin write is. The cache is
+     *  filled separately by whoever can actually derive it. */
+    public DomainTheme(String domain, String preset, String ramp, String style,
+                       String primaryHex, String secondaryHex, String updatedBy) {
+        this(domain, preset, ramp, style, primaryHex, secondaryHex, updatedBy, null, null);
+    }
+
+    /** Does {@code other} choose the same colours as this? Compares the SELECTION only,
+     *  deliberately ignoring the render and the audit fields — it is the question "is the
+     *  cached stylesheet still valid?", and {@code updatedBy} changing does not repaint
+     *  anything. */
+    public boolean sameSelection(DomainTheme other) {
+        return other != null
+                && preset.equals(other.preset())
+                && ramp.equals(other.ramp())
+                && style.equals(other.style())
+                && java.util.Objects.equals(primaryHex, other.primaryHex())
+                && java.util.Objects.equals(secondaryHex, other.secondaryHex());
     }
 
     private static String blankToNull(String s) {

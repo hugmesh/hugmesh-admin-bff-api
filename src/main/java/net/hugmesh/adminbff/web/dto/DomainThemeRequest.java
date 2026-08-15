@@ -53,5 +53,19 @@ public record DomainThemeRequest(
 
         @Pattern(regexp = "^(#[0-9A-Fa-f]{6})?$",
                 message = "secondaryHex must be a #rrggbb colour")
-        String secondaryHex) {
+        String secondaryHex,
+
+        /*
+         * OPTIONAL, and only the Studio sends it: the already-derived stylesheet for this
+         * selection. The colour maths has one implementation (Python) and this is how its
+         * output reaches the mesh without a second one appearing in Java.
+         *
+         * The admin UI omits it -- it cannot derive -- and the service then keeps the
+         * previous render if the selection is unchanged and drops it if not, because a
+         * stale sheet for a new selection renders the wrong brand while reporting the new
+         * one saved. Size-capped: a token sheet is ~7 KB, so a megabyte of "CSS" is an
+         * abuse of an authenticated endpoint rather than a theme.
+         */
+        @Size(max = 262144, message = "renderedCss is too large")
+        String renderedCss) {
 }

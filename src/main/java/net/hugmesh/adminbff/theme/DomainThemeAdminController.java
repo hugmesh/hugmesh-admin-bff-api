@@ -125,7 +125,8 @@ public class DomainThemeAdminController {
         String t = target(domain);
         return rejectUnknownDomain(t).then(Mono.defer(() -> service.set(
                 new DomainTheme(t, body.preset(), body.ramp(), body.style(),
-                        body.primaryHex(), body.secondaryHex(), actor(auth)),
+                        body.primaryHex(), body.secondaryHex(), actor(auth),
+                        body.renderedCss(), body.renderedCss() == null ? null : actor(auth)),
                 scope(auth), actor(auth))));
     }
 

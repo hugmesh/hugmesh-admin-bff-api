@@ -107,9 +107,28 @@ public class DomainThemeService {
                     HttpStatus.FORBIDDEN,
                     "not permitted to set the theme for domain '" + target + "'"));
         }
-        return repo.upsert(new DomainTheme(
-                target, theme.preset(), theme.ramp(), theme.style(),
-                theme.primaryHex(), theme.secondaryHex(), actor));
+        // THE CACHE-INVALIDATION RULE. A write may or may not carry a render: the Studio
+        // can derive one, the admin UI cannot. So when none is supplied, the previous
+        // render is KEPT only if the selection did not change, and dropped otherwise.
+        //
+        // Dropping is the safe direction. A stale stylesheet for a NEW selection renders
+        // the wrong brand while the admin UI reports the new one saved -- the exact
+        // "my choice was ignored" failure this feature line has already produced twice.
+        // A null render serves empty CSS, i.e. the shipped default chrome, which is
+        // visibly un-themed rather than confidently wrong.
+        return repo.findByDomain(target).map(java.util.Optional::of)
+                .defaultIfEmpty(java.util.Optional.empty())
+                .flatMap(existing -> {
+                    String css = theme.renderedCss();
+                    String by = theme.renderedBy();
+                    if (css == null && existing.isPresent() && theme.sameSelection(existing.get())) {
+                        css = existing.get().renderedCss();
+                        by = existing.get().renderedBy();
+                    }
+                    return repo.upsert(new DomainTheme(
+                            target, theme.preset(), theme.ramp(), theme.style(),
+                            theme.primaryHex(), theme.secondaryHex(), actor, css, by));
+                });
     }
 
     /** Clear a domain's override so it inherits the mesh default again. */

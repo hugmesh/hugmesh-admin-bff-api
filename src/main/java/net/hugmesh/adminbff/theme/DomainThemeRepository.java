@@ -18,8 +18,10 @@ public class DomainThemeRepository {
 
     private static final String UPSERT = """
             INSERT INTO domain_theme
-                (domain, preset, ramp, style, primary_hex, secondary_hex, updated_at, updated_by)
-            VALUES (:domain, :preset, :ramp, :style, :primaryHex, :secondaryHex, now(), :updatedBy)
+                (domain, preset, ramp, style, primary_hex, secondary_hex, updated_at, updated_by,
+                 rendered_css, rendered_by)
+            VALUES (:domain, :preset, :ramp, :style, :primaryHex, :secondaryHex, now(), :updatedBy,
+                    :renderedCss, :renderedBy)
             ON CONFLICT (domain) DO UPDATE SET
                 preset = EXCLUDED.preset,
                 ramp = EXCLUDED.ramp,
@@ -27,16 +29,20 @@ public class DomainThemeRepository {
                 primary_hex = EXCLUDED.primary_hex,
                 secondary_hex = EXCLUDED.secondary_hex,
                 updated_at = now(),
-                updated_by = EXCLUDED.updated_by
+                updated_by = EXCLUDED.updated_by,
+                rendered_css = EXCLUDED.rendered_css,
+                rendered_by = EXCLUDED.rendered_by
             """;
 
     private static final String SELECT_ALL = """
-            SELECT domain, preset, ramp, style, primary_hex, secondary_hex, updated_by
+            SELECT domain, preset, ramp, style, primary_hex, secondary_hex, updated_by,
+                   rendered_css, rendered_by
             FROM domain_theme ORDER BY domain
             """;
 
     private static final String SELECT_ONE = """
-            SELECT domain, preset, ramp, style, primary_hex, secondary_hex, updated_by
+            SELECT domain, preset, ramp, style, primary_hex, secondary_hex, updated_by,
+                   rendered_css, rendered_by
             FROM domain_theme WHERE domain = :domain
             """;
 
@@ -70,6 +76,8 @@ public class DomainThemeRepository {
                 .bind("primaryHex", t.primaryHex() == null ? io.r2dbc.spi.Parameters.in(String.class) : io.r2dbc.spi.Parameters.in(t.primaryHex()))
                 .bind("secondaryHex", t.secondaryHex() == null ? io.r2dbc.spi.Parameters.in(String.class) : io.r2dbc.spi.Parameters.in(t.secondaryHex()))
                 .bind("updatedBy", t.updatedBy() == null ? io.r2dbc.spi.Parameters.in(String.class) : io.r2dbc.spi.Parameters.in(t.updatedBy()))
+                .bind("renderedCss", t.renderedCss() == null ? io.r2dbc.spi.Parameters.in(String.class) : io.r2dbc.spi.Parameters.in(t.renderedCss()))
+                .bind("renderedBy", t.renderedBy() == null ? io.r2dbc.spi.Parameters.in(String.class) : io.r2dbc.spi.Parameters.in(t.renderedBy()))
                 .fetch().rowsUpdated()
                 .then(findByDomain(t.domain()));
     }
@@ -89,6 +97,8 @@ public class DomainThemeRepository {
                 row.get("style", String.class),
                 row.get("primary_hex", String.class),
                 row.get("secondary_hex", String.class),
-                row.get("updated_by", String.class));
+                row.get("updated_by", String.class),
+                row.get("rendered_css", String.class),
+                row.get("rendered_by", String.class));
     }
 }

@@ -100,4 +100,37 @@
     <sql>GRANT SELECT, INSERT, UPDATE, DELETE ON domain_theme TO admin_bff</sql>
     <rollback>REVOKE SELECT, INSERT, UPDATE, DELETE ON domain_theme FROM admin_bff</rollback>
   </changeSet>
+
+  <!--
+    THE RENDERED CSS, AND WHY IT IS A CACHE RATHER THAN THE TRUTH.
+
+    The selection above stays authoritative; this column is derived from it. That
+    distinction is the whole reason the selection is stored at all — a fix to the colour
+    maths (already corrected twice: the sd/hug token-prefix bug, and accent text falling
+    below AA on the lighter ramps) must reach every domain by re-rendering, not by a data
+    migration. Dropping this column loses nothing but a re-render.
+
+    So why store it at all? Because the maths has exactly ONE implementation, in Python
+    (studio/hugmesh_studio/core/theme.py + theme_presets.py), and it must stay that way.
+    The entrypoint hook that ships today already states the rule: it interpolates
+    already-derived token text and does zero colour maths, because "a shell re-derivation
+    would be a second implementation whose drift makes the Studio preview lie". Deriving
+    in Java here would be exactly that second implementation, with the same drift and a
+    worse failure — the admin UI would show one theme and the page would render another.
+
+    So the renderer PUSHES its output and this BFF only serves bytes it was handed. A
+    NULL means "not rendered yet", which serves empty CSS and therefore the shipped
+    default chrome — byte-identical to today's behaviour when SNAP_THEME_CSS is unset.
+  -->
+  <changeSet id="340-4-domain-theme-rendered-css" author="hugmesh">
+    <addColumn tableName="domain_theme">
+      <!-- text, not varchar: a full token sheet is ~7 KB today and the palette/style
+           axes only add to it. A length cap here would truncate a theme into an
+           invalid stylesheet, which fails as a silently half-applied brand. -->
+      <column name="rendered_css" type="text"/>
+      <!-- WHICH renderer produced it, so a stale cache is identifiable rather than
+           merely suspected when the maths changes. -->
+      <column name="rendered_by" type="varchar(64)"/>
+    </addColumn>
+  </changeSet>
 </databaseChangeLog>
