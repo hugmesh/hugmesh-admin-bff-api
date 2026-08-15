@@ -6,6 +6,7 @@ import org.springframework.boot.data.r2dbc.test.autoconfigure.DataR2dbcTest;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.HttpStatusCode;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 import net.hugmesh.adminbff.support.TestDatabaseConfig;
@@ -90,7 +91,7 @@ class BackupServiceTest {
         StepVerifier.create(service.startRestore(id, null, "the-WRONG-pw", SUPER))
                 .expectErrorSatisfies(e -> {
                     assertThat(e).isInstanceOf(ApiException.class);
-                    assertThat(((ApiException) e).status()).isEqualTo(HttpStatus.FORBIDDEN);
+                    assertThat(((ApiException) e).status()).isEqualTo(HttpStatusCode.valueOf(403));
                     assertThat(e.getMessage()).isEqualTo("incorrect decryption password");
                 })
                 .verify();
@@ -102,7 +103,7 @@ class BackupServiceTest {
                         "USB", "no-such-usb", false, null, SUPER))
                 .expectErrorSatisfies(e -> {
                     assertThat(e).isInstanceOf(ApiException.class);
-                    assertThat(((ApiException) e).status()).isEqualTo(HttpStatus.NOT_FOUND);
+                    assertThat(((ApiException) e).status()).isEqualTo(HttpStatusCode.valueOf(404));
                 })
                 .verify();
     }
@@ -112,7 +113,7 @@ class BackupServiceTest {
         StepVerifier.create(service.startBackup("admin@x", List.of("config"),
                         "USB", "usb-ro", false, null, SUPER))
                 .expectErrorSatisfies(e ->
-                        assertThat(((ApiException) e).status()).isEqualTo(HttpStatus.UNPROCESSABLE_CONTENT))
+                        assertThat(((ApiException) e).status()).isEqualTo(HttpStatusCode.valueOf(422)))
                 .verify();
     }
 
@@ -128,7 +129,7 @@ class BackupServiceTest {
         StepVerifier.create(service.startBackup("admin@x", List.of("nope"),
                         "CLUSTER", null, false, null, SUPER))
                 .expectErrorSatisfies(e ->
-                        assertThat(((ApiException) e).status()).isEqualTo(HttpStatus.BAD_REQUEST))
+                        assertThat(((ApiException) e).status()).isEqualTo(HttpStatusCode.valueOf(400)))
                 .verify();
     }
 
@@ -137,7 +138,7 @@ class BackupServiceTest {
         StepVerifier.create(service.startBackup("admin@x", List.of("etcd"),
                         "CLUSTER", null, true, null, SUPER))
                 .expectErrorSatisfies(e ->
-                        assertThat(((ApiException) e).status()).isEqualTo(HttpStatus.BAD_REQUEST))
+                        assertThat(((ApiException) e).status()).isEqualTo(HttpStatusCode.valueOf(400)))
                 .verify();
     }
 }

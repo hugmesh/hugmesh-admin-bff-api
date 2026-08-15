@@ -221,7 +221,7 @@ class RadioDeviceControllerTest {
                 "serial transport must not carry host/port (mixed transport shape)")));
         asSuperadmin().post().uri("/bff/admin/device-radios/dev-1/radios")
                 .contentType(MediaType.APPLICATION_JSON).bodyValue(SERIAL_BODY)
-                .exchange().expectStatus().isEqualTo(org.springframework.http.HttpStatus.UNPROCESSABLE_ENTITY)
+                .exchange().expectStatus().isEqualTo(422)
                 .expectBody().jsonPath("$.error").value(
                         org.hamcrest.Matchers.containsString("mixed transport shape"));
     }
