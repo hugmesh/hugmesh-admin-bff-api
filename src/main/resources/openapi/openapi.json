@@ -551,6 +551,95 @@
         }
       }
     },
+    "/bff/admin/themes/{domain}" : {
+      "get" : {
+        "tags" : [ "domain-theme-admin-controller" ],
+        "summary" : "Get a domain's theme",
+        "operationId" : "domainThemeAdminGet",
+        "parameters" : [ {
+          "name" : "domain",
+          "in" : "path",
+          "required" : true,
+          "schema" : {
+            "maxLength" : 255,
+            "minLength" : 0,
+            "type" : "string"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "type" : "object",
+                  "additionalProperties" : {
+                    "type" : "object"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "put" : {
+        "tags" : [ "domain-theme-admin-controller" ],
+        "summary" : "Set a domain's theme",
+        "operationId" : "domainThemeAdminSet",
+        "parameters" : [ {
+          "name" : "domain",
+          "in" : "path",
+          "required" : true,
+          "schema" : {
+            "maxLength" : 255,
+            "minLength" : 0,
+            "type" : "string"
+          }
+        } ],
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/DomainThemeRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/DomainTheme"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete" : {
+        "tags" : [ "domain-theme-admin-controller" ],
+        "summary" : "Clear a domain's theme",
+        "operationId" : "domainThemeAdminClear",
+        "parameters" : [ {
+          "name" : "domain",
+          "in" : "path",
+          "required" : true,
+          "schema" : {
+            "maxLength" : 255,
+            "minLength" : 0,
+            "type" : "string"
+          }
+        } ],
+        "responses" : {
+          "204" : {
+            "description" : "No Content"
+          }
+        }
+      }
+    },
     "/bff/admin/oidc-providers/{provider}/roles" : {
       "put" : {
         "tags" : [ "oidc-provider-roles-controller" ],
@@ -5717,6 +5806,64 @@
         }
       }
     },
+    "/bff/public/theme" : {
+      "get" : {
+        "tags" : [ "domain-theme-surface-controller" ],
+        "summary" : "Resolve a domain's theme",
+        "operationId" : "domainThemeResolve",
+        "parameters" : [ {
+          "name" : "domain",
+          "in" : "query",
+          "required" : false,
+          "schema" : {
+            "maxLength" : 255,
+            "minLength" : 0,
+            "type" : "string"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/PublicTheme"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bff/public/theme.css" : {
+      "get" : {
+        "tags" : [ "domain-theme-surface-controller" ],
+        "summary" : "A domain's theme as CSS",
+        "operationId" : "domainThemeCss",
+        "parameters" : [ {
+          "name" : "domain",
+          "in" : "query",
+          "required" : false,
+          "schema" : {
+            "maxLength" : 255,
+            "minLength" : 0,
+            "type" : "string"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "text/css" : {
+                "schema" : {
+                  "type" : "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/bff/public/appeal-contact" : {
       "get" : {
         "tags" : [ "appeal-contact-controller" ],
@@ -6577,6 +6724,28 @@
         "tags" : [ "admin-controller" ],
         "summary" : "Usage",
         "operationId" : "adminUsage",
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "type" : "object",
+                  "additionalProperties" : {
+                    "type" : "object"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bff/admin/themes" : {
+      "get" : {
+        "tags" : [ "domain-theme-admin-controller" ],
+        "summary" : "List themes",
+        "operationId" : "domainThemeAdminList",
         "responses" : {
           "200" : {
             "description" : "OK",
@@ -8871,6 +9040,68 @@
           "updatedAt" : {
             "type" : "string",
             "format" : "date-time"
+          }
+        }
+      },
+      "DomainThemeRequest" : {
+        "required" : [ "preset" ],
+        "type" : "object",
+        "properties" : {
+          "preset" : {
+            "maxLength" : 64,
+            "minLength" : 0,
+            "pattern" : "^[a-z0-9][a-z0-9-]*$",
+            "type" : "string"
+          },
+          "ramp" : {
+            "pattern" : "^(dark|light|dawn|morning|afternoon|dusk|evening|midnight)?$",
+            "type" : "string"
+          },
+          "style" : {
+            "pattern" : "^(soft|sharp|outlined|elevated|flat|glass)?$",
+            "type" : "string"
+          },
+          "primaryHex" : {
+            "pattern" : "^(#[0-9A-Fa-f]{6})?$",
+            "type" : "string"
+          },
+          "secondaryHex" : {
+            "pattern" : "^(#[0-9A-Fa-f]{6})?$",
+            "type" : "string"
+          },
+          "renderedCss" : {
+            "maxLength" : 262144,
+            "minLength" : 0,
+            "type" : "string"
+          }
+        }
+      },
+      "DomainTheme" : {
+        "type" : "object",
+        "properties" : {
+          "domain" : {
+            "type" : "string"
+          },
+          "preset" : {
+            "type" : "string"
+          },
+          "ramp" : {
+            "type" : "string"
+          },
+          "style" : {
+            "type" : "string"
+          },
+          "primaryHex" : {
+            "type" : "string"
+          },
+          "secondaryHex" : {
+            "type" : "string"
+          },
+          "updatedBy" : {
+            "type" : "string"
+          },
+          "renderedBy" : {
+            "type" : "string"
           }
         }
       },
@@ -11902,6 +12133,29 @@
             "type" : "string"
           },
           "kind" : {
+            "type" : "string"
+          }
+        }
+      },
+      "PublicTheme" : {
+        "type" : "object",
+        "properties" : {
+          "domain" : {
+            "type" : "string"
+          },
+          "preset" : {
+            "type" : "string"
+          },
+          "ramp" : {
+            "type" : "string"
+          },
+          "style" : {
+            "type" : "string"
+          },
+          "primaryHex" : {
+            "type" : "string"
+          },
+          "secondaryHex" : {
             "type" : "string"
           }
         }
