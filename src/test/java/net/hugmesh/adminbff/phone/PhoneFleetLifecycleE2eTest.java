@@ -5,8 +5,6 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.support.BeanDefinitionRegistry;
-import org.springframework.beans.factory.support.BeanDefinitionRegistryPostProcessor;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webtestclient.autoconfigure.AutoConfigureWebTestClient;
 import org.springframework.context.annotation.Import;
@@ -18,6 +16,7 @@ import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.reactive.server.WebTestClient;
 import net.hugmesh.adminbff.support.AdminBffPostgresTestSupport;
+import net.hugmesh.adminbff.support.ExcludeTestSourcedControllers;
 import net.hugmesh.adminbff.testsupport.TestIssuer;
 import net.hugmesh.authcore.casdoor.MfaStepUpService;
 
@@ -69,32 +68,18 @@ import static reactor.core.publisher.Mono.just;
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @AutoConfigureWebTestClient(timeout = "PT30S")
 @ActiveProfiles("test")
-@Import(PhoneFleetLifecycleE2eTest.ExcludeTestProbeControllers.class)
+// ExcludeTestSourcedControllers withdraws the TOP-LEVEL package-private @RestController probe
+// stand-ins in the config test sources that component-scan sweeps into a full-context boot —
+// they collide with the real controllers (Ambiguous mapping). It selects by CODE SOURCE rather
+// than by a hand-maintained class-name list, which is what let InternalProbes slip through before.
+//
+// It does NOT rescue this test's ingest route. WebFlux PathPattern specificity puts the literal
+// /bff/internal/device-registry/phone-ingest ahead of InternalProbes' /bff/internal/** catch-all,
+// so the real handler wins either way — which is why this suite was green before the migration
+// with InternalProbes mounted. The import is here for the ambiguous-mapping collision and for
+// spec hygiene, nothing more.
+@Import(ExcludeTestSourcedControllers.class)
 class PhoneFleetLifecycleE2eTest extends AdminBffPostgresTestSupport {
-
-    /**
-     * Removes the two TOP-LEVEL package-private {@code @RestController} probe stand-ins
-     * ({@code Probes} / {@code Guarded} in the {@code config} test sources) that component
-     * scanning sweeps into a full-context boot — they collide with the real controllers and fail
-     * handler-mapping init with an "Ambiguous mapping". Mirrors the identical helper in {@code
-     * RawApiDenyMatrixTest} / {@code OpenApiSpecDumpTest} (copied because those are package-private
-     * to other test packages).
-     */
-    static class ExcludeTestProbeControllers implements BeanDefinitionRegistryPostProcessor {
-        private static final java.util.Set<String> TEST_PROBE_TYPES = java.util.Set.of(
-                "net.hugmesh.adminbff.config.Probes",
-                "net.hugmesh.adminbff.config.Guarded");
-
-        @Override
-        public void postProcessBeanDefinitionRegistry(BeanDefinitionRegistry registry) {
-            for (String name : registry.getBeanDefinitionNames()) {
-                String beanClass = registry.getBeanDefinition(name).getBeanClassName();
-                if (beanClass != null && TEST_PROBE_TYPES.contains(beanClass)) {
-                    registry.removeBeanDefinition(name);
-                }
-            }
-        }
-    }
 
     // ── two brands: brandA -> doma (the fleet under test), brandB -> domb (cross-domain) ──
     private static TestIssuer brandA;

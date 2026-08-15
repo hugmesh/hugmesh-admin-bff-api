@@ -13,8 +13,6 @@ import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
-import org.springframework.beans.factory.support.BeanDefinitionRegistry;
-import org.springframework.beans.factory.support.BeanDefinitionRegistryPostProcessor;
 import org.springframework.test.web.reactive.server.WebTestClient;
 import net.hugmesh.adminbff.announcement.AnnouncementRowRepository;
 import net.hugmesh.adminbff.device.DeviceRowRepository;
@@ -23,6 +21,7 @@ import net.hugmesh.adminbff.egressvpn.VpnConfigRowRepository;
 import net.hugmesh.adminbff.routeaccess.RouteAccessRowRepository;
 import net.hugmesh.adminbff.suspension.AccessSuspensionRowRepository;
 import net.hugmesh.adminbff.support.AdminBffPostgresTestSupport;
+import net.hugmesh.adminbff.support.ExcludeTestSourcedControllers;
 import net.hugmesh.adminbff.testsupport.TestIssuer;
 
 import com.nimbusds.jose.JWSAlgorithm;
@@ -98,38 +97,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 @AutoConfigureWebTestClient(timeout = "PT30S")
 @ActiveProfiles("test")
 // PostgresTestSupport = the Testcontainers Postgres store the repo's full-context tests share.
-// ExcludeTestProbeControllers removes the two TOP-LEVEL package-private @RestController
-// probe stand-ins (Probes / Guarded in the config test sources) that component-scan would
-// otherwise sweep in, colliding with the real controllers (Ambiguous mapping). Reused
-// the OpenApiSpecDumpTest pattern so this full-context boot mounts ONLY the production
-// surface under test.
-@Import(RawApiDenyMatrixTest.ExcludeTestProbeControllers.class)
+// ExcludeTestSourcedControllers withdraws the TOP-LEVEL package-private @RestController probe
+// stand-ins in the config test sources that component-scan would otherwise sweep in, colliding
+// with the real controllers (e.g. Probes#admin() vs AdminController#allowlist(), both
+// GET /bff/admin/allowlist -> "Ambiguous mapping"). It selects by CODE SOURCE rather than by a
+// hand-maintained class-name list, so this full-context boot mounts ONLY the production surface
+// under test even as probes are added.
+@Import(ExcludeTestSourcedControllers.class)
 class RawApiDenyMatrixTest extends AdminBffPostgresTestSupport {
-
-    /**
-     * Removes the two TOP-LEVEL package-private {@code @RestController} probe stand-ins
-     * ({@code Probes} / {@code Guarded} in the {@code config} test sources) that component
-     * scanning sweeps in — they collide with the real controllers (e.g.
-     * {@code Probes#admin()} vs {@code AdminController#allowlist()}, both
-     * {@code GET /bff/admin/allowlist}) and fail handler-mapping init with an "Ambiguous
-     * mapping". Mirrors {@code OpenApiSpecDumpTest.ExcludeTestProbeControllers}; copied here
-     * because that one is package-private to a different test package.
-     */
-    static class ExcludeTestProbeControllers implements BeanDefinitionRegistryPostProcessor {
-        private static final java.util.Set<String> TEST_PROBE_TYPES = java.util.Set.of(
-                "net.hugmesh.adminbff.config.Probes",
-                "net.hugmesh.adminbff.config.Guarded");
-
-        @Override
-        public void postProcessBeanDefinitionRegistry(BeanDefinitionRegistry registry) {
-            for (String name : registry.getBeanDefinitionNames()) {
-                String beanClass = registry.getBeanDefinition(name).getBeanClassName();
-                if (beanClass != null && TEST_PROBE_TYPES.contains(beanClass)) {
-                    registry.removeBeanDefinition(name);
-                }
-            }
-        }
-    }
 
     // Two trusted brands + one untrusted (foreign) issuer. The foreign issuer is NEVER
     // listed in app.tenancy.issuers, so a token it mints fail-closes to 401.
