@@ -36,16 +36,48 @@ public class TestDatabaseConfig {
 
     private static final AtomicInteger DB_SEQ = new AtomicInteger();
 
+    /**
+     * A named subclass, not an anonymous one: {@code PostgreSQLContainer<SELF>} is
+     * self-referential, so {@code new PostgreSQLContainer<>(...) { ... }} does not compile.
+     */
+    private static final class SharedPostgres extends PostgreSQLContainer<SharedPostgres> {
+        SharedPostgres() {
+            super("postgres:16-alpine");
+        }
+
+        @Override
+        protected void configure() {
+            super.configure();
+            setCommand("postgres", "-c", "fsync=off", "-c", "max_connections=400");
+        }
+    }
+
     /** Singleton container, reused JVM-wide (per-class container churn races on a
      *  busy Docker host; a single shared db would leak rows across classes — so we
      *  keep one container and a fresh db per context). */
     private static final PostgreSQLContainer<?> POSTGRES;
 
     static {
-        POSTGRES = new PostgreSQLContainer<>("postgres:16-alpine");
+        // max_connections is raised from Postgres's default 100 because ONE container serves
+        // EVERY Spring context in the JVM, and Spring's TestContext cache keeps those contexts
+        // (and their R2DBC pools) alive simultaneously — the pools add up against a single
+        // server. At the default the suite died with "FATAL: sorry, too many clients already"
+        // in whichever context happened to initialise last, which reads like a Liquibase or
+        // application failure and is really just the ceiling.
+        //
+        // This surfaced only once the desktop_sudo_grant FK cleanup landed: before it, classes
+        // aborted early on DataIntegrityViolation and never got far enough to hold their pools
+        // open at the same time. Fixing one bug let the suite run far enough to meet the next.
+        // It MUST be set by overriding configure(): PostgreSQLContainer.configure() calls
+        // setCommand() itself (to pass fsync=off) and runs during start(), so a plain
+        // .withCommand(...) is silently overwritten and the setting never reaches Postgres —
+        // which is exactly what happened on the first attempt at this fix. fsync=off is
+        // re-stated here because taking over the command drops the container's own default.
+        POSTGRES = new SharedPostgres();
         POSTGRES.start();
         // The production changelog GRANTs table privileges to the per-app runtime role
-        // `adminbff_app` (provisioned out-of-band in prod via per-app SCRAM roles, not by the
+        // `adminbff_app` — the role the app actually connects as, created by this service's own
+        // DB bootstrap (generator specs/cluster/manifests/admin-bff-db/initdb/10-roles.sh), not by the
         // changelog). Create it once on the container — roles are cluster-global in Postgres —
         // so the GRANT changesets apply cleanly. (H2 silently ignored these GRANTs, masking it.)
         try (Connection c = DriverManager.getConnection(
@@ -110,4 +142,5 @@ public class TestDatabaseConfig {
     public DatabaseClient databaseClient(ConnectionFactory connectionFactory, SpringLiquibase liquibase) {
         return DatabaseClient.create(connectionFactory);
     }
+
 }
