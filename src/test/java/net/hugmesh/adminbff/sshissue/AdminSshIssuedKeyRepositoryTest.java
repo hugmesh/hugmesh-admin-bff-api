@@ -16,6 +16,8 @@ import org.springframework.test.context.ActiveProfiles;
 import reactor.test.StepVerifier;
 import net.hugmesh.commons.security.DomainRegistry;
 import net.hugmesh.commons.security.PrincipalDomain;
+import net.hugmesh.adminbff.support.DeviceRegistryCleanup;
+import net.hugmesh.adminbff.support.DeviceRegistryCleanupConfig;
 import net.hugmesh.adminbff.support.TestDatabaseConfig;
 
 import java.time.Instant;
@@ -35,11 +37,13 @@ import static org.assertj.core.api.Assertions.assertThat;
  * structurally (no such column).
  */
 @DataR2dbcTest
-@Import(TestDatabaseConfig.class)
+@Import({TestDatabaseConfig.class, DeviceRegistryCleanupConfig.class})
 @ActiveProfiles("test")
 class AdminSshIssuedKeyRepositoryTest {
 
     @Autowired DatabaseClient db;
+
+    @Autowired DeviceRegistryCleanup deviceRegistryCleanup;
 
     private static final String DEV_X = "dev-x-1";
     private static final String DEV_Y = "dev-y-1";
@@ -50,7 +54,7 @@ class AdminSshIssuedKeyRepositoryTest {
     void seed() {
         db.sql("DELETE FROM admin_ssh_issued_key").fetch().rowsUpdated().block();
         db.sql("DELETE FROM device_ssh_license").fetch().rowsUpdated().block();
-        db.sql("DELETE FROM device_registry").fetch().rowsUpdated().block();
+        deviceRegistryCleanup.clearDeviceRegistry().block();
         insertDevice(DEV_X, "fp-x", "brandx");
         insertDevice(DEV_Y, "fp-y", "brandy");
         licX = insertLicense(DEV_X, "brandx", "SHA256:aaa");
@@ -64,7 +68,7 @@ class AdminSshIssuedKeyRepositoryTest {
         // class (whose device_registry cleanup does not clear these child tables).
         db.sql("DELETE FROM admin_ssh_issued_key").fetch().rowsUpdated().block();
         db.sql("DELETE FROM device_ssh_license").fetch().rowsUpdated().block();
-        db.sql("DELETE FROM device_registry").fetch().rowsUpdated().block();
+        deviceRegistryCleanup.clearDeviceRegistry().block();
     }
 
     private void insertDevice(String id, String fp, String domain) {

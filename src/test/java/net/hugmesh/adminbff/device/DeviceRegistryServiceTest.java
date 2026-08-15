@@ -7,6 +7,8 @@ import org.springframework.context.annotation.Import;
 import org.springframework.r2dbc.core.DatabaseClient;
 import org.springframework.test.context.ActiveProfiles;
 import net.hugmesh.commons.security.DomainRegistry;
+import net.hugmesh.adminbff.support.DeviceRegistryCleanup;
+import net.hugmesh.adminbff.support.DeviceRegistryCleanupConfig;
 import net.hugmesh.adminbff.support.TestDatabaseConfig;
 
 import java.time.Instant;
@@ -20,16 +22,18 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * guard + idempotency. Mirrors {@code DomainLockRepositoryTest} wiring.
  */
 @DataR2dbcTest
-@Import(TestDatabaseConfig.class)
+@Import({TestDatabaseConfig.class, DeviceRegistryCleanupConfig.class})
 @ActiveProfiles("test")
 class DeviceRegistryServiceTest {
 
     @Autowired DatabaseClient db;
 
+    @Autowired DeviceRegistryCleanup deviceRegistryCleanup;
+
     @org.junit.jupiter.api.BeforeEach
     void clear() {
         db.sql("DELETE FROM device_ssh_license").fetch().rowsUpdated().block();
-        db.sql("DELETE FROM device_registry").fetch().rowsUpdated().block();
+        deviceRegistryCleanup.clearDeviceRegistry().block();
     }
 
     /** A genuinely multi-issuer registry (two brands) — the normal register path. */

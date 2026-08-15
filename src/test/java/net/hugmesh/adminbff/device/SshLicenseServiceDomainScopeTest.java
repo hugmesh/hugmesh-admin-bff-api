@@ -12,6 +12,8 @@ import org.springframework.security.oauth2.server.resource.authentication.JwtAut
 import org.springframework.test.context.ActiveProfiles;
 import net.hugmesh.commons.security.DomainRegistry;
 import net.hugmesh.commons.security.PrincipalDomain;
+import net.hugmesh.adminbff.support.DeviceRegistryCleanup;
+import net.hugmesh.adminbff.support.DeviceRegistryCleanupConfig;
 import net.hugmesh.adminbff.support.TestDatabaseConfig;
 
 import java.time.Instant;
@@ -36,16 +38,16 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * </ul>
  */
 @DataR2dbcTest
-@Import(TestDatabaseConfig.class)
+@Import({TestDatabaseConfig.class, DeviceRegistryCleanupConfig.class})
 @ActiveProfiles("test")
 class SshLicenseServiceDomainScopeTest {
 
     @Autowired DatabaseClient db;
+    @Autowired DeviceRegistryCleanup deviceRegistryCleanup;
 
     @org.junit.jupiter.api.BeforeEach
     void clear() {
-        db.sql("DELETE FROM device_ssh_license").fetch().rowsUpdated().block();
-        db.sql("DELETE FROM device_registry").fetch().rowsUpdated().block();
+        deviceRegistryCleanup.clearDeviceRegistry().block();
     }
 
     private static final DomainRegistry REGISTRY = new DomainRegistry("",

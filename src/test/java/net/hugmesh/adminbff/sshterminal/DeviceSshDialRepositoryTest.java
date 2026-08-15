@@ -8,6 +8,8 @@ import org.springframework.context.annotation.Import;
 import org.springframework.r2dbc.core.DatabaseClient;
 import org.springframework.test.context.ActiveProfiles;
 import reactor.test.StepVerifier;
+import net.hugmesh.adminbff.support.DeviceRegistryCleanup;
+import net.hugmesh.adminbff.support.DeviceRegistryCleanupConfig;
 import net.hugmesh.adminbff.support.TestDatabaseConfig;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -23,16 +25,18 @@ import static org.assertj.core.api.Assertions.assertThat;
  * bad vocabulary).
  */
 @DataR2dbcTest
-@Import(TestDatabaseConfig.class)
+@Import({TestDatabaseConfig.class, DeviceRegistryCleanupConfig.class})
 @ActiveProfiles("test")
 class DeviceSshDialRepositoryTest {
 
     @Autowired DatabaseClient db;
 
+    @Autowired DeviceRegistryCleanup deviceRegistryCleanup;
+
     @BeforeEach
     void clean() {
         db.sql("DELETE FROM device_ssh_dial").fetch().rowsUpdated().block();
-        db.sql("DELETE FROM device_registry").fetch().rowsUpdated().block();
+        deviceRegistryCleanup.clearDeviceRegistry().block();
     }
 
     private DeviceSshDialRepository repo() {

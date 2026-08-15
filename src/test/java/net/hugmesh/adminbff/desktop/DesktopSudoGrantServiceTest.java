@@ -11,6 +11,8 @@ import reactor.test.StepVerifier;
 import net.hugmesh.adminbff.device.DeviceRegistryRepository;
 import net.hugmesh.adminbff.device.SshLicenseRepository;
 import net.hugmesh.commons.security.PrincipalDomain;
+import net.hugmesh.adminbff.support.DeviceRegistryCleanup;
+import net.hugmesh.adminbff.support.DeviceRegistryCleanupConfig;
 import net.hugmesh.adminbff.support.TestDatabaseConfig;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -21,21 +23,19 @@ import static org.assertj.core.api.Assertions.assertThat;
  * grant, and the entitlement read (the IdP claim source). USER + MULTIUSER + CROSS-USER.
  */
 @DataR2dbcTest
-@Import(TestDatabaseConfig.class)
+@Import({TestDatabaseConfig.class, DeviceRegistryCleanupConfig.class})
 @ActiveProfiles("test")
 class DesktopSudoGrantServiceTest {
 
     @Autowired DatabaseClient db;
+    @Autowired DeviceRegistryCleanup deviceRegistryCleanup;
 
     private static final String DEV_ADMIN_OWNED = "dev-a";
     private static final String DEV_SUPER_OWNED = "dev-s";
 
     @BeforeEach
     void seed() {
-        db.sql("DELETE FROM desktop_sudo_grant").fetch().rowsUpdated().block();
-        db.sql("DELETE FROM desktop_install_request").fetch().rowsUpdated().block();
-        db.sql("DELETE FROM device_ssh_license").fetch().rowsUpdated().block();
-        db.sql("DELETE FROM device_registry").fetch().rowsUpdated().block();
+        deviceRegistryCleanup.clearDeviceRegistry().block();
         insertDevice(DEV_ADMIN_OWNED, "fp-a", "brandx", "ADMIN");
         insertDevice(DEV_SUPER_OWNED, "fp-s", "brandx", "SUPERADMIN");
     }
@@ -51,8 +51,34 @@ class DesktopSudoGrantServiceTest {
     }
 
     private DesktopSudoGrantService service() {
+        // The ships-dark default seam — rows honestly stay 'pending' (no IdP write).
+        return service(new NoopDesktopSudoClaimSync());
+    }
+
+    private DesktopSudoGrantService service(DesktopSudoClaimSync claimSync) {
         return new DesktopSudoGrantService(new DesktopSudoGrantRepository(net.hugmesh.adminbff.testutil.R2dbcRepos.of(db, net.hugmesh.adminbff.desktop.DesktopSudoGrantR2dbcRepository.class)),
-                new DeviceRegistryRepository(net.hugmesh.adminbff.testutil.R2dbcRepos.of(db, net.hugmesh.adminbff.device.DeviceRowRepository.class)), new SshLicenseRepository(net.hugmesh.adminbff.testutil.R2dbcRepos.of(db, net.hugmesh.adminbff.device.SshLicenseRowRepository.class)));
+                new DeviceRegistryRepository(net.hugmesh.adminbff.testutil.R2dbcRepos.of(db, net.hugmesh.adminbff.device.DeviceRowRepository.class)), new SshLicenseRepository(net.hugmesh.adminbff.testutil.R2dbcRepos.of(db, net.hugmesh.adminbff.device.SshLicenseRowRepository.class)),
+                claimSync);
+    }
+
+    /** A scripted claim-sync seam: records every pushed row and returns the scripted outcome. */
+    private static final class ScriptedClaimSync implements DesktopSudoClaimSync {
+        final java.util.List<DesktopSudoGrant> pushed = new java.util.ArrayList<>();
+        private final java.util.function.Function<DesktopSudoGrant, reactor.core.publisher.Mono<String>> outcome;
+        ScriptedClaimSync(java.util.function.Function<DesktopSudoGrant, reactor.core.publisher.Mono<String>> outcome) {
+            this.outcome = outcome;
+        }
+        @Override public reactor.core.publisher.Mono<String> propagate(DesktopSudoGrant grant) {
+            pushed.add(grant);
+            return outcome.apply(grant);
+        }
+        @Override public boolean isReal() { return true; }
+    }
+
+    /** The persisted {@code propagation_state} for one grant row. */
+    private String propagationStateInDb(String id) {
+        return db.sql("SELECT propagation_state FROM desktop_sudo_grant WHERE id = :id")
+                .bind("id", id).map(r -> r.get(0, String.class)).one().block();
     }
 
     /** Seed an ACTIVE DEVICE ssh-license for the operator on a device (mirrors the
@@ -219,6 +245,102 @@ class DesktopSudoGrantServiceTest {
         DesktopSudoGrant g = service().grant("alice", DEV_ADMIN_OWNED, "root", superadmin()).block();
         assertThat(g).isNotNull();
         assertThat(g.isActive()).isTrue();
+    }
+
+    // ── IdP claim propagation (the Casdoor desktop-sudo role sync seam) ──────────
+
+    @Test
+    void grant_pushesActiveRowThroughClaimSync_andStampsApplied() {
+        grantDeviceLicense("root", DEV_ADMIN_OWNED, "brandx");
+        ScriptedClaimSync sync = new ScriptedClaimSync(
+                g -> reactor.core.publisher.Mono.just(DesktopSudoGrant.PROP_APPLIED));
+        DesktopSudoGrant g = service(sync).grant("alice", DEV_ADMIN_OWNED, "root", superadmin()).block();
+        // The seam saw the fresh ACTIVE row (the add-membership direction) …
+        assertThat(sync.pushed).hasSize(1);
+        assertThat(sync.pushed.get(0).subject()).isEqualTo("alice");
+        assertThat(sync.pushed.get(0).isActive()).isTrue();
+        // … and the applied outcome is stamped on the row (returned AND persisted).
+        assertThat(g.propagationState()).isEqualTo(DesktopSudoGrant.PROP_APPLIED);
+        assertThat(propagationStateInDb(g.id())).isEqualTo(DesktopSudoGrant.PROP_APPLIED);
+    }
+
+    @Test
+    void grant_leverOff_noopSync_leavesRowHonestlyPending() {
+        // The ships-dark default (app.desktop.sudo.claim-sync.enabled=false -> Noop): no IdP
+        // write happens, so the row must NOT claim propagation — it stays 'pending'.
+        grantDeviceLicense("root", DEV_ADMIN_OWNED, "brandx");
+        DesktopSudoGrant g = service(new NoopDesktopSudoClaimSync())
+                .grant("alice", DEV_ADMIN_OWNED, "root", superadmin()).block();
+        assertThat(g.propagationState()).isEqualTo(DesktopSudoGrant.PROP_PENDING);
+        assertThat(propagationStateInDb(g.id())).isEqualTo(DesktopSudoGrant.PROP_PENDING);
+    }
+
+    @Test
+    void grant_syncFailure_stillGrants_rowStampedFailedForRetry() {
+        // A Casdoor failure NEVER fails the grant — the row is authoritative; 'failed' is
+        // stamped so the reconciler sweep retries it.
+        grantDeviceLicense("root", DEV_ADMIN_OWNED, "brandx");
+        ScriptedClaimSync sync = new ScriptedClaimSync(
+                g -> reactor.core.publisher.Mono.just(DesktopSudoGrant.PROP_FAILED));
+        DesktopSudoGrant g = service(sync).grant("alice", DEV_ADMIN_OWNED, "root", superadmin()).block();
+        assertThat(g).isNotNull();
+        assertThat(g.isActive()).isTrue();
+        assertThat(propagationStateInDb(g.id())).isEqualTo(DesktopSudoGrant.PROP_FAILED);
+    }
+
+    @Test
+    void grant_seamContractViolation_errorIsSwallowed_grantStillSucceeds() {
+        // propagate() NEVER errors by contract — but if a seam violates it, the mutate must
+        // still succeed (best-effort push) and the row stays 'pending' for the sweep.
+        grantDeviceLicense("root", DEV_ADMIN_OWNED, "brandx");
+        ScriptedClaimSync sync = new ScriptedClaimSync(
+                g -> reactor.core.publisher.Mono.error(new IllegalStateException("boom")));
+        DesktopSudoGrant g = service(sync).grant("alice", DEV_ADMIN_OWNED, "root", superadmin()).block();
+        assertThat(g).isNotNull();
+        assertThat(g.isActive()).isTrue();
+        assertThat(propagationStateInDb(g.id())).isEqualTo(DesktopSudoGrant.PROP_PENDING);
+    }
+
+    @Test
+    void grant_noOpOnExistingActive_doesNotRePush() {
+        grantDeviceLicense("root", DEV_ADMIN_OWNED, "brandx");
+        ScriptedClaimSync sync = new ScriptedClaimSync(
+                g -> reactor.core.publisher.Mono.just(DesktopSudoGrant.PROP_APPLIED));
+        DesktopSudoGrantService s = service(sync);
+        s.grant("alice", DEV_ADMIN_OWNED, "root", superadmin()).block();
+        s.grant("alice", DEV_ADMIN_OWNED, "root", superadmin()).block();
+        // only the INSERT pushed; the idempotent no-op grant did not re-dial the IdP.
+        assertThat(sync.pushed).hasSize(1);
+    }
+
+    @Test
+    void revoke_pushesRevokedRow_pendingToApplied() {
+        grantDeviceLicense("root", DEV_ADMIN_OWNED, "brandx");
+        ScriptedClaimSync sync = new ScriptedClaimSync(
+                g -> reactor.core.publisher.Mono.just(DesktopSudoGrant.PROP_APPLIED));
+        DesktopSudoGrantService s = service(sync);
+        DesktopSudoGrant g = s.grant("alice", DEV_ADMIN_OWNED, "root", superadmin()).block();
+        assertThat(s.revoke(g.id(), "root", superadmin()).block()).isEqualTo(1L);
+        // The seam saw the POST-CAS row (state=revoked — the remove-membership direction) …
+        assertThat(sync.pushed).hasSize(2);
+        DesktopSudoGrant seen = sync.pushed.get(1);
+        assertThat(seen.id()).isEqualTo(g.id());
+        assertThat(seen.isActive()).isFalse();
+        // … and the CAS-armed 'pending' was driven to 'applied'.
+        assertThat(propagationStateInDb(g.id())).isEqualTo(DesktopSudoGrant.PROP_APPLIED);
+    }
+
+    @Test
+    void revoke_casLoser_doesNotPush() {
+        grantDeviceLicense("root", DEV_ADMIN_OWNED, "brandx");
+        ScriptedClaimSync sync = new ScriptedClaimSync(
+                g -> reactor.core.publisher.Mono.just(DesktopSudoGrant.PROP_APPLIED));
+        DesktopSudoGrantService s = service(sync);
+        DesktopSudoGrant g = s.grant("alice", DEV_ADMIN_OWNED, "root", superadmin()).block();
+        assertThat(s.revoke(g.id(), "root", superadmin()).block()).isEqualTo(1L);
+        // Second revoke loses the CAS (rows=0) — no second removal push.
+        assertThat(s.revoke(g.id(), "root", superadmin()).block()).isEqualTo(0L);
+        assertThat(sync.pushed).hasSize(2); // grant + first revoke only
     }
 
     /** A NON-superadmin scope homed at {@code domain} (scoped() == true), built from a JWT. */

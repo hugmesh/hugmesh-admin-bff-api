@@ -15,6 +15,8 @@ import net.hugmesh.adminbff.device.DeviceRegistryRepository;
 import net.hugmesh.adminbff.device.DeviceRegistryService;
 import net.hugmesh.commons.security.DomainRegistry;
 import net.hugmesh.commons.security.PrincipalDomain;
+import net.hugmesh.adminbff.support.DeviceRegistryCleanup;
+import net.hugmesh.adminbff.support.DeviceRegistryCleanupConfig;
 import net.hugmesh.adminbff.support.TestDatabaseConfig;
 
 import java.time.Instant;
@@ -42,17 +44,19 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * {@link PrincipalDomain}).
  */
 @DataR2dbcTest
-@Import(TestDatabaseConfig.class)
+@Import({TestDatabaseConfig.class, DeviceRegistryCleanupConfig.class})
 @ActiveProfiles("test")
 class NodeStorageServiceTest {
 
     @Autowired DatabaseClient db;
 
+    @Autowired DeviceRegistryCleanup deviceRegistryCleanup;
+
     @org.junit.jupiter.api.BeforeEach
     void clear() {
         db.sql("DELETE FROM storage_service_assignment").fetch().rowsUpdated().block();
         db.sql("DELETE FROM node_storage_pool").fetch().rowsUpdated().block();
-        db.sql("DELETE FROM device_registry").fetch().rowsUpdated().block();
+        deviceRegistryCleanup.clearDeviceRegistry().block();
     }
 
     private static final DomainRegistry REGISTRY = new DomainRegistry("",

@@ -15,6 +15,8 @@ import net.hugmesh.adminbff.device.DeviceRegistryRepository;
 import net.hugmesh.adminbff.device.DeviceRegistryService;
 import net.hugmesh.commons.security.DomainRegistry;
 import net.hugmesh.commons.security.PrincipalDomain;
+import net.hugmesh.adminbff.support.DeviceRegistryCleanup;
+import net.hugmesh.adminbff.support.DeviceRegistryCleanupConfig;
 import net.hugmesh.adminbff.support.TestDatabaseConfig;
 
 import java.time.Instant;
@@ -43,16 +45,18 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * {@link PrincipalDomain}).
  */
 @DataR2dbcTest
-@Import(TestDatabaseConfig.class)
+@Import({TestDatabaseConfig.class, DeviceRegistryCleanupConfig.class})
 @ActiveProfiles("test")
 class NodeRadioServiceTest {
 
     @Autowired DatabaseClient db;
 
+    @Autowired DeviceRegistryCleanup deviceRegistryCleanup;
+
     @org.junit.jupiter.api.BeforeEach
     void clear() {
         db.sql("DELETE FROM node_radio_device").fetch().rowsUpdated().block();
-        db.sql("DELETE FROM device_registry").fetch().rowsUpdated().block();
+        deviceRegistryCleanup.clearDeviceRegistry().block();
     }
 
     @org.junit.jupiter.api.AfterEach
@@ -62,7 +66,7 @@ class NodeRadioServiceTest {
         // device_registry cleanup does not clear this child table). Mirrors
         // AdminSshIssuedKeyRepositoryTest's teardown idiom.
         db.sql("DELETE FROM node_radio_device").fetch().rowsUpdated().block();
-        db.sql("DELETE FROM device_registry").fetch().rowsUpdated().block();
+        deviceRegistryCleanup.clearDeviceRegistry().block();
     }
 
     private static final DomainRegistry REGISTRY = new DomainRegistry("",

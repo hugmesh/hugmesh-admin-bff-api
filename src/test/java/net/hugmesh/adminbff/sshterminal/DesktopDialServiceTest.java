@@ -11,6 +11,8 @@ import org.springframework.test.context.ActiveProfiles;
 import reactor.test.StepVerifier;
 import net.hugmesh.adminbff.desktop.terminal.DeviceTerminalDialProperties;
 import net.hugmesh.commons.security.PrincipalDomain;
+import net.hugmesh.adminbff.support.DeviceRegistryCleanup;
+import net.hugmesh.adminbff.support.DeviceRegistryCleanupConfig;
 import net.hugmesh.adminbff.support.TestDatabaseConfig;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -22,16 +24,18 @@ import static org.assertj.core.api.Assertions.assertThat;
  * isolation (ALLOW vs DENY). The verifying pinned test-connect is held-until-live.
  */
 @DataR2dbcTest
-@Import(TestDatabaseConfig.class)
+@Import({TestDatabaseConfig.class, DeviceRegistryCleanupConfig.class})
 @ActiveProfiles("test")
 class DesktopDialServiceTest {
 
     @Autowired DatabaseClient db;
 
+    @Autowired DeviceRegistryCleanup deviceRegistryCleanup;
+
     @BeforeEach
     void clean() {
         db.sql("DELETE FROM device_ssh_dial").fetch().rowsUpdated().block();
-        db.sql("DELETE FROM device_registry").fetch().rowsUpdated().block();
+        deviceRegistryCleanup.clearDeviceRegistry().block();
     }
 
     private void seedDevice(String id, String domain) {
