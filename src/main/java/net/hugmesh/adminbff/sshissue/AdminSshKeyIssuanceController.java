@@ -33,6 +33,7 @@ import net.hugmesh.authcore.config.SessionCookieWebFilter;
 import net.hugmesh.commons.security.DomainRegistry;
 import net.hugmesh.commons.security.PrincipalDomain;
 import net.hugmesh.commons.web.ApiException;
+import net.hugmesh.adminbff.web.StepUpRequiredException;
 
 import java.util.Arrays;
 import java.util.LinkedHashMap;
@@ -188,9 +189,8 @@ public class AdminSshKeyIssuanceController {
                                                                 String stepUpToken, String sessionToken,
                                                                 String id, Authentication auth) {
         if (!stepUp.isSatisfied(actor, stepUpToken, mfaFresh)) {
-            return Mono.error(ApiException.forbidden(
-                    "revoke requires step-up re-authentication (present "
-                    + SshKeyIssueStepUpGate.STEP_UP_HEADER + ")"));
+            return Mono.error(StepUpRequiredException.forRetryHeader(
+                    SshKeyIssueStepUpGate.STEP_UP_HEADER, "revoke"));
         }
         Mono<Void> consume = mfaFresh ? mfaStepUp.consume(sessionToken) : Mono.empty();
         return consume.then(service.revoke(actor, id, scope(auth))
@@ -207,9 +207,8 @@ public class AdminSshKeyIssuanceController {
                                                                                String deviceId,
                                                                                Authentication auth) {
         if (!stepUp.isSatisfied(actor, stepUpToken, mfaFresh)) {
-            return Mono.error(ApiException.forbidden(
-                    "issue requires step-up re-authentication (present "
-                    + SshKeyIssueStepUpGate.STEP_UP_HEADER + ")"));
+            return Mono.error(StepUpRequiredException.forRetryHeader(
+                    SshKeyIssueStepUpGate.STEP_UP_HEADER, "issue"));
         }
         Mono<Void> consume = mfaFresh ? mfaStepUp.consume(sessionToken) : Mono.empty();
         return consume.then(service.issue(actor, deviceId, scope(auth))
@@ -227,9 +226,8 @@ public class AdminSshKeyIssuanceController {
                                                                                   String sessionToken,
                                                                                   String id) {
         if (!stepUp.isSatisfied(actor, stepUpToken, mfaFresh)) {
-            return Mono.error(ApiException.forbidden(
-                    "private-key download requires step-up re-authentication (present "
-                    + SshKeyIssueStepUpGate.STEP_UP_HEADER + ")"));
+            return Mono.error(StepUpRequiredException.forRetryHeader(
+                    SshKeyIssueStepUpGate.STEP_UP_HEADER, "private-key download"));
         }
         Mono<Void> consume = mfaFresh ? mfaStepUp.consume(sessionToken) : Mono.empty();
         return consume.then(service.downloadPrivateKey(actor, id)

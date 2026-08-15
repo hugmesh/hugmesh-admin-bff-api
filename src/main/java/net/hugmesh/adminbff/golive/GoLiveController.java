@@ -26,6 +26,7 @@ import reactor.core.publisher.Mono;
 import net.hugmesh.authcore.casdoor.MfaStepUpService;
 import net.hugmesh.authcore.config.SessionCookieWebFilter;
 import net.hugmesh.commons.web.ApiException;
+import net.hugmesh.adminbff.web.StepUpRequiredException;
 import net.hugmesh.adminbff.web.dto.RecordGoLiveIntentRequest;
 
 import java.util.LinkedHashMap;
@@ -202,9 +203,8 @@ public class GoLiveController {
             boolean mfaFresh, String actor, String stepUpToken, String sessionToken,
             RecordGoLiveIntentRequest body) {
         if (!stepUp.isSatisfied(actor, stepUpToken, mfaFresh)) {
-            return Mono.error(ApiException.forbidden(
-                    "recording a go-live intent requires step-up re-authentication (present "
-                    + GoLiveStepUpGate.STEP_UP_HEADER + ")"));
+            return Mono.error(StepUpRequiredException.forRetryHeader(
+                    GoLiveStepUpGate.STEP_UP_HEADER, "recording a go-live intent"));
         }
         Mono<Void> consume = mfaFresh ? mfaStepUp.consume(sessionToken) : Mono.empty();
         return consume.then(service.record(actor, body)
@@ -223,9 +223,8 @@ public class GoLiveController {
     private Mono<ResponseEntity<Map<String, Object>>> withdrawIfStepUpSatisfied(
             boolean mfaFresh, String actor, String stepUpToken, String sessionToken, String id) {
         if (!stepUp.isSatisfied(actor, stepUpToken, mfaFresh)) {
-            return Mono.error(ApiException.forbidden(
-                    "withdrawing a go-live intent requires step-up re-authentication (present "
-                    + GoLiveStepUpGate.STEP_UP_HEADER + ")"));
+            return Mono.error(StepUpRequiredException.forRetryHeader(
+                    GoLiveStepUpGate.STEP_UP_HEADER, "withdrawing a go-live intent"));
         }
         Mono<Void> consume = mfaFresh ? mfaStepUp.consume(sessionToken) : Mono.empty();
         return consume.then(service.withdraw(actor, id)

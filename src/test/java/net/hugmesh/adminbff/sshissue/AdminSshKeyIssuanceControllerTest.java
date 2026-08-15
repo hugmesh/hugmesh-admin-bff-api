@@ -17,6 +17,7 @@ import reactor.core.publisher.Mono;
 import net.hugmesh.adminbff.config.SecurityConfig;
 import net.hugmesh.commons.security.DomainRegistry;
 import net.hugmesh.adminbff.web.ApiExceptionHandler;
+import net.hugmesh.adminbff.web.StepUpRequiredException;
 import net.hugmesh.adminbff.web.ValidationExceptionHandler;
 
 import java.nio.charset.StandardCharsets;
@@ -337,6 +338,84 @@ class AdminSshKeyIssuanceControllerTest {
                 .exchange().expectStatus().isOk()
                 .expectBody().jsonPath("$.revoked").isEqualTo(true);
         verify(mfaStepUp).consume(eq("bff_sess1"));
+    }
+
+    // ── STRUCTURED STEP-UP SIGNAL on the real wire (gate #1 of 3: SshKeyIssue) ─────────
+    // Before the signal existed the browser could only sniff the free-text message, so a reword
+    // silently killed the inline MFA dialog. These prove the header IS on a step-up 403, is
+    // ABSENT on the ordinary 403s this same controller emits, and that the legacy phrase — the
+    // old-UI fallback — is still there verbatim.
+
+    @Test
+    void issue_missingStepUp_carriesTheStructuredSignal_namingSshKeyIssueFlavour() {
+        when(stepUp.isSatisfied(any(), any())).thenReturn(false);
+        asSuperadmin().post().uri("/bff/admin/ssh-issue/issue?deviceId=dev-1")
+                .exchange().expectStatus().isForbidden()
+                .expectHeader().valueEquals(StepUpRequiredException.SIGNAL_HEADER,
+                        SshKeyIssueStepUpGate.STEP_UP_HEADER)
+                // The old-UI fallback phrase is pinned as a HARD-CODED literal on purpose: an
+                // assertion written against StepUpRequiredException.LEGACY_PHRASE would follow a
+                // reword of that constant and silently stop protecting old clients.
+                .expectBody().jsonPath("$.error").isEqualTo(
+                        "issue requires step-up re-authentication (present X-SshKeyIssue-StepUp)");
+        verify(service, never()).issue(any(), any(), any());
+    }
+
+    @Test
+    void download_missingStepUp_carriesTheStructuredSignal() {
+        when(stepUp.isSatisfied(any(), any())).thenReturn(false);
+        asSuperadmin().get().uri("/bff/admin/ssh-issue/issued/ik-1/private-key")
+                .exchange().expectStatus().isForbidden()
+                .expectHeader().valueEquals(StepUpRequiredException.SIGNAL_HEADER,
+                        SshKeyIssueStepUpGate.STEP_UP_HEADER);
+    }
+
+    @Test
+    void revoke_missingStepUp_carriesTheStructuredSignal() {
+        when(stepUp.isSatisfied(any(), any())).thenReturn(false);
+        asSuperadmin().delete().uri("/bff/admin/ssh-issue/issued/ik-1")
+                .exchange().expectStatus().isForbidden()
+                .expectHeader().valueEquals(StepUpRequiredException.SIGNAL_HEADER,
+                        SshKeyIssueStepUpGate.STEP_UP_HEADER);
+    }
+
+    @Test
+    void ordinaryLicenseDeny403_hasNoStepUpSignal_soNoMfaPromptPops() {
+        // THE negative. Step-up IS satisfied; the service refuses for an unrelated reason
+        // (SshIssueDeniedException -> ApiException.forbidden). A browser must show the error, not
+        // an MFA dialog.
+        when(stepUp.isSatisfied(any(), eq(TOKEN))).thenReturn(true);
+        when(service.issue(any(), eq("dev-sa"), any()))
+                .thenReturn(Mono.error(new AdminSshKeyIssuanceService.SshIssueDeniedException(
+                        "no active SSH license for this device")));
+        asSuperadmin().post().uri("/bff/admin/ssh-issue/issue?deviceId=dev-sa")
+                .header(STEP_UP, TOKEN).exchange().expectStatus().isForbidden()
+                .expectHeader().doesNotExist(StepUpRequiredException.SIGNAL_HEADER);
+    }
+
+    @Test
+    void roleFloor403_hasNoStepUpSignal() {
+        // A second negative flavour: Spring Security's own 403 (@PreAuthorize), which never goes
+        // through ApiExceptionHandler at all.
+        asAdmin().post().uri("/bff/admin/ssh-issue/issue?deviceId=dev-1")
+                .header(STEP_UP, TOKEN).exchange().expectStatus().isForbidden()
+                .expectHeader().doesNotExist(StepUpRequiredException.SIGNAL_HEADER);
+    }
+
+    @Test
+    void nonStepUpErrorStatuses_neverCarryTheSignal() {
+        // 400 (missing deviceId), 503 (dark), 410 (single-use burned) — all reached WITH step-up
+        // satisfied, so none may look like a step-up prompt to the client.
+        when(stepUp.isSatisfied(any(), any())).thenReturn(true);
+        asSuperadmin().post().uri("/bff/admin/ssh-issue/issue")
+                .header(STEP_UP, TOKEN).exchange().expectStatus().isBadRequest()
+                .expectHeader().doesNotExist(StepUpRequiredException.SIGNAL_HEADER);
+
+        when(service.downloadPrivateKey(any(), eq("ik-1")))
+                .thenReturn(Mono.error(new AdminSshKeyIssuanceService.SshIssueGoneException("gone")));
+        asSuperadmin().get().uri("/bff/admin/ssh-issue/issued/ik-1/private-key")
+                .header(STEP_UP, TOKEN).exchange().expectStatus().isEqualTo(410)
+                .expectHeader().doesNotExist(StepUpRequiredException.SIGNAL_HEADER);
     }
 
     @SuppressWarnings("unused")

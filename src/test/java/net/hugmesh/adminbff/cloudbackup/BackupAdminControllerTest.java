@@ -17,6 +17,7 @@ import net.hugmesh.adminbff.config.SecurityConfig;
 import net.hugmesh.commons.security.DomainRegistry;
 import net.hugmesh.commons.security.PrincipalDomain;
 import net.hugmesh.adminbff.web.ApiExceptionHandler;
+import net.hugmesh.adminbff.web.StepUpRequiredException;
 import net.hugmesh.adminbff.web.ValidationExceptionHandler;
 
 import java.time.Instant;
@@ -217,6 +218,45 @@ class BackupAdminControllerTest {
                 .expectBody().jsonPath("$.error").value(
                         org.hamcrest.Matchers.containsString("requires step-up"));
         verify(service, never()).restore(anyString(), anyString(), any());
+    }
+
+    // ── STRUCTURED STEP-UP SIGNAL on the real wire (gate #2 of 3: Backup) ──────────────
+    // Cloud-backup is the ONE gate whose wording predates the canonical template, so it also
+    // proves the verbatim-message escape hatch still emits the signal AND keeps its exact text.
+
+    @Test
+    void restore_withoutStepUp_carriesTheStructuredSignal_namingBackupFlavour() {
+        when(stepUp.isSatisfied(anyString(), any())).thenReturn(false);
+        asAdmin().post().uri("/bff/admin/cloud-backups/set-1/restore")
+                .exchange().expectStatus().isForbidden()
+                .expectHeader().valueEquals(StepUpRequiredException.SIGNAL_HEADER,
+                        BackupStepUpGate.STEP_UP_HEADER)
+                // the operator-visible wording is UNCHANGED, byte for byte
+                .expectBody().jsonPath("$.error").isEqualTo(
+                        "restore requires step-up: present a valid step-up token in the "
+                                + "X-Backup-StepUp header");
+        verify(service, never()).restore(anyString(), anyString(), any());
+    }
+
+    @Test
+    void restore_notFound404_hasNoStepUpSignal_soNoMfaPromptPops() {
+        // THE negative: step-up IS satisfied, the failure is an unrelated 404 through the SAME
+        // renderer. A browser must show the error, not an MFA dialog.
+        when(stepUp.isSatisfied(anyString(), any())).thenReturn(true);
+        when(service.restore(anyString(), anyString(), any()))
+                .thenReturn(Mono.error(new IllegalArgumentException("no such backup set")));
+        asAdmin().post().uri("/bff/admin/cloud-backups/set-1/restore")
+                .header(BackupStepUpGate.STEP_UP_HEADER, "tok")
+                .exchange().expectStatus().isNotFound()
+                .expectHeader().doesNotExist(StepUpRequiredException.SIGNAL_HEADER);
+    }
+
+    @Test
+    void nonPrivilegedRoleDeny403_hasNoStepUpSignal() {
+        // USER on a plain read: Spring Security's own 403, no ApiException involved.
+        asUser().get().uri("/bff/admin/cloud-backups")
+                .exchange().expectStatus().isForbidden()
+                .expectHeader().doesNotExist(StepUpRequiredException.SIGNAL_HEADER);
     }
 
     @Test

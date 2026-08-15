@@ -20,6 +20,7 @@ import net.hugmesh.authcore.config.SessionCookieWebFilter;
 import net.hugmesh.commons.security.DomainRegistry;
 import net.hugmesh.commons.security.PrincipalDomain;
 import net.hugmesh.commons.web.ApiException;
+import net.hugmesh.adminbff.web.StepUpRequiredException;
 import net.hugmesh.adminbff.web.dto.BackupDestinationRequest;
 import net.hugmesh.adminbff.web.dto.CreateBackupRequest;
 
@@ -171,8 +172,13 @@ public class BackupAdminController {
             String sessionToken, boolean mfaFresh, PrincipalDomain scope) {
         if (!stepUp.isSatisfied(subject, stepUpToken, mfaFresh)) {
             log.warn("[cloud-backup] DENY restore without step-up: set={} by={}", id, subject);
-            return Mono.error(ApiException.forbidden(
-                    "restore requires step-up: present a valid step-up token in the "
+            // The ONE gate whose wording predates the canonical template — kept VERBATIM (no
+            // operator-visible reword), composed from StepUpRequiredException.LEGACY_PHRASE so
+            // the single-occurrence invariant on that literal still holds.
+            return Mono.error(StepUpRequiredException.withMessage(
+                    BackupStepUpGate.STEP_UP_HEADER,
+                    "restore " + StepUpRequiredException.LEGACY_PHRASE
+                            + ": present a valid step-up token in the "
                             + BackupStepUpGate.STEP_UP_HEADER + " header"));
         }
         Mono<Void> consume = mfaFresh ? mfaStepUp.consume(sessionToken) : Mono.empty();

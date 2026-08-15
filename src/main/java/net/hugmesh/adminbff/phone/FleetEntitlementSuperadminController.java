@@ -22,6 +22,7 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Mono;
+import net.hugmesh.adminbff.web.StepUpRequiredException;
 import net.hugmesh.adminbff.web.dto.FleetEntitlementRequest;
 import net.hugmesh.authcore.casdoor.MfaStepUpService;
 import net.hugmesh.authcore.config.SessionCookieWebFilter;
@@ -128,9 +129,8 @@ public class FleetEntitlementSuperadminController {
         return mfaStepUp.isFresh(sessionToken)
                 .flatMap(mfaFresh -> {
                     if (!stepUp.isSatisfied(actor, stepUpToken, mfaFresh)) {
-                        return Mono.error(ApiException.forbidden(
-                                verb + " requires step-up re-authentication (present "
-                                + PhoneLockStepUpGate.STEP_UP_HEADER + ")"));
+                        return Mono.error(StepUpRequiredException.forRetryHeader(
+                                PhoneLockStepUpGate.STEP_UP_HEADER, verb));
                     }
                     log.info("[fleet-entitlement] {} by {}", verb, actor);
                     Mono<Void> consume = mfaFresh ? mfaStepUp.consume(sessionToken) : Mono.empty();

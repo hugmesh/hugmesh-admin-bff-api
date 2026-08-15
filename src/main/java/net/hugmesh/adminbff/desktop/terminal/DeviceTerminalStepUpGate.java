@@ -1,6 +1,7 @@
 package net.hugmesh.adminbff.desktop.terminal;
 
 import org.springframework.stereotype.Service;
+import net.hugmesh.adminbff.workload.AbstractStepUpGate;
 import net.hugmesh.adminbff.workload.WorkloadStepUpService;
 
 /**
@@ -10,9 +11,9 @@ import net.hugmesh.adminbff.workload.WorkloadStepUpService;
  * the role + own-domain + device-ssh-license checks — the same posture the platform takes for the
  * workload-console DANGEROUS tier, the SSH key-issuance leg, and the image-gen trigger/keys-download.
  *
- * <p><b>ONE header, ONE trust surface for terminal + install.</b> Clone of
- * {@link net.hugmesh.adminbff.sshissue.SshKeyIssueStepUpGate} /
- * {@link net.hugmesh.adminbff.imagegen.ImageGenStepUpGate}: rather than mint a parallel token
+ * <p><b>ONE header, ONE trust surface for terminal + install.</b> Its satisfy legs live in
+ * {@link net.hugmesh.adminbff.workload.AbstractStepUpGate} (shared by all eight gates, so
+ * a change to the legs cannot reach only some of them): rather than mint a parallel token
  * broker, this gate delegates to the existing {@link WorkloadStepUpService} (validate
  * {@code subject + token}). It deliberately REUSES the EXISTING
  * {@link DeviceSshTerminalWebSocketHandler#STEP_UP_HEADER} ({@code X-Device-Terminal-StepUp}) the
@@ -26,57 +27,28 @@ import net.hugmesh.adminbff.workload.WorkloadStepUpService;
  * ADMIN, so without an ADMIN-reachable mint an ADMIN could never satisfy step-up. The mint itself is
  * unchanged (leader-pinned + active-ssh-license precondition); only the CALLER widened.
  *
- * <p>TODO (Casdoor-MFA leg): also accept the validated JWT's {@code amr/acr -> MFA_SATISFIED}
- * authority (or an opaque {@code mfa_satisfied} session) as the satisfying signal once the
- * Casdoor-MFA schema band 150-159 lands. This is the single seam to wire that authority.
+ * <p>DONE (was a TODO for the Casdoor-MFA leg): a fresh MFA stamp on the opaque
+ * {@code bff_} session IS accepted as a co-equal satisfying signal, via the 3-arg
+ * {@code isSatisfied(subject, stepUpToken, mfaFresh)}. The old wording named a mechanism that
+ * never existed — no code derives {@code MFA_SATISFIED} from {@code amr}/{@code acr}; it comes
+ * from the BFF-written {@code mfa_satisfied_at} claim (see {@code Roles.isMfaSatisfied}).
  */
 @Service
-public class DeviceTerminalStepUpGate {
+public class DeviceTerminalStepUpGate extends AbstractStepUpGate {
 
-    /**
-     * The header the remote-install controller reads the presented step-up token from — the SAME
-     * constant the live WS handler defines, so terminal + install share ONE step-up trust surface.
-     */
+    /** The header the controller reads the presented step-up token from. */
     public static final String STEP_UP_HEADER = DeviceSshTerminalWebSocketHandler.STEP_UP_HEADER;
 
-    private final WorkloadStepUpService stepUp;
-
     public DeviceTerminalStepUpGate(WorkloadStepUpService stepUp) {
-        this.stepUp = stepUp;
+        super(stepUp);
     }
 
     /**
-     * True iff {@code subject} presents a currently-valid step-up token. Fail-closed: a null/blank
-     * subject or token is NOT satisfied (so a missing/blank header is a clean 403 even for an
-     * otherwise-authorized ADMIN).
+     * Consume the workload step-up token for {@code subject} (single use). Kept as public API
+     * because {@code DeviceSshTerminalWebSocketHandler} and {@code DesktopDialAdminController}
+     * consume the token leg explicitly at the commit point.
      */
-    public boolean isSatisfied(String subject, String stepUpToken) {
-        if (subject == null || subject.isBlank() || stepUpToken == null || stepUpToken.isBlank()) {
-            return false;
-        }
-        return stepUp.validate(subject, stepUpToken);
-    }
-
-    /**
-     * A5 UNIFIED step-up: satisfied if EITHER a valid {@link WorkloadStepUpService} token OR
-     * a FRESH Casdoor-MFA stamp on the caller's opaque session ({@code mfaFresh}, computed by
-     * {@link net.hugmesh.authcore.casdoor.MfaStepUpService}). The two legs are CO-EQUAL.
-     * Terminal + remote-install are DEVICE ops — the MFA leg satisfies the step-up
-     * re-confirmation, but the device_ssh_license precondition for actually dialing the device
-     * still lives DOWNSTREAM in the dial/remote-install service (the SSH-license registry), so
-     * the MFA leg (which is license-INDEPENDENT) does NOT bypass the device license. {@code
-     * mfaFresh} is gated on {@code app.casdoor.mfa.enabled} (false by default) AND the freshness
-     * window.
-     */
-    public boolean isSatisfied(String subject, String stepUpToken, boolean mfaFresh) {
-        return mfaFresh || isSatisfied(subject, stepUpToken);
-    }
-
-    /** Consume (single-use) the step-up token for {@code subject} after a successful authorized
-     *  action so it cannot be replayed — mirrors the WS handler's {@code consume} on a real open. */
     public void consume(String subject) {
-        if (subject != null && !subject.isBlank()) {
-            stepUp.consume(subject);
-        }
+        consumeToken(subject);
     }
 }

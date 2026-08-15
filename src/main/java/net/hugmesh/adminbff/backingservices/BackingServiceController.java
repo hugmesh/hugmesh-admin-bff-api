@@ -24,6 +24,7 @@ import reactor.core.publisher.Mono;
 import net.hugmesh.authcore.casdoor.MfaStepUpService;
 import net.hugmesh.authcore.config.SessionCookieWebFilter;
 import net.hugmesh.commons.web.ApiException;
+import net.hugmesh.adminbff.web.StepUpRequiredException;
 import net.hugmesh.adminbff.web.dto.SetBackingServiceModeRequest;
 
 import java.util.LinkedHashMap;
@@ -138,9 +139,8 @@ public class BackingServiceController {
             boolean mfaFresh, String actor, String stepUpToken, String sessionToken, String id,
             SetBackingServiceModeRequest body) {
         if (!stepUp.isSatisfied(actor, stepUpToken, mfaFresh)) {
-            return Mono.error(ApiException.forbidden(
-                    "changing a backing-service mode requires step-up re-authentication (present "
-                    + BackingServiceStepUpGate.STEP_UP_HEADER + ")"));
+            return Mono.error(StepUpRequiredException.forRetryHeader(
+                    BackingServiceStepUpGate.STEP_UP_HEADER, "changing a backing-service mode"));
         }
         Mono<Void> consume = mfaFresh ? mfaStepUp.consume(sessionToken) : Mono.empty();
         return consume.then(service.recordMode(actor, id, body)

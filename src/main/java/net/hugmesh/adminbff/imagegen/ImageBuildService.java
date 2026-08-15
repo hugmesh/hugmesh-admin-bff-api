@@ -17,6 +17,7 @@ import net.hugmesh.adminbff.sshterminal.DeviceSshDialRepository;
 import net.hugmesh.adminbff.sshterminal.ImageBuild;
 import net.hugmesh.adminbff.sshterminal.ImageBuildRepository;
 import net.hugmesh.commons.web.ApiException;
+import net.hugmesh.adminbff.web.StepUpRequiredException;
 import net.hugmesh.adminbff.web.dto.BatchImageSpec;
 import net.hugmesh.adminbff.web.dto.BatchTriggerImageBuildRequest;
 import net.hugmesh.adminbff.web.dto.ImageBuildIngestRequest;
@@ -280,9 +281,8 @@ public class ImageBuildService {
         //    launch with bounded concurrency (Noop/dark unless imagegen.launch.enabled=true).
         return mfaStepUp.isFresh(sessionToken).flatMap(mfaFresh -> {
             if (!stepUp.isSatisfied(subject, stepUpToken, mfaFresh)) {
-                return Mono.error(ApiException.forbidden(
-                        "image build requires step-up re-authentication (present "
-                        + ImageGenStepUpGate.STEP_UP_HEADER + ")"));
+                return Mono.error(StepUpRequiredException.forRetryHeader(
+                        ImageGenStepUpGate.STEP_UP_HEADER, "image build"));
             }
             Mono<Void> consume = mfaFresh ? mfaStepUp.consume(sessionToken) : Mono.empty();
             return consume
@@ -392,9 +392,8 @@ public class ImageBuildService {
                                                            TriggerImageBuildRequest req,
                                                            String buildDomain) {
         if (!stepUp.isSatisfied(subject, stepUpToken, mfaFresh)) {
-            return Mono.error(ApiException.forbidden(
-                    "image build requires step-up re-authentication (present "
-                    + ImageGenStepUpGate.STEP_UP_HEADER + ")"));
+            return Mono.error(StepUpRequiredException.forRetryHeader(
+                    ImageGenStepUpGate.STEP_UP_HEADER, "image build"));
         }
         ImageBuild queued = new ImageBuild(
                 null, null, subject, req.targetUser(), buildDomain,
@@ -411,9 +410,8 @@ public class ImageBuildService {
                                                           String stepUpToken, String sessionToken,
                                                           Authentication auth, String buildId) {
         if (!stepUp.isSatisfied(subject, stepUpToken, mfaFresh)) {
-            return Flux.error(ApiException.forbidden(
-                    "keys download requires step-up re-authentication (present "
-                    + ImageGenStepUpGate.STEP_UP_HEADER + ")"));
+            return Flux.error(StepUpRequiredException.forRetryHeader(
+                    ImageGenStepUpGate.STEP_UP_HEADER, "keys download"));
         }
         Mono<Void> consume = mfaFresh ? mfaStepUp.consume(sessionToken) : Mono.empty();
         return consume.thenMany(scopedBuild(auth, buildId).flatMapMany(this::streamKeys));
