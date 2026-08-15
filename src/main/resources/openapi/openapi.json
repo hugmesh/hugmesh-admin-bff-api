@@ -736,6 +736,38 @@
         }
       }
     },
+    "/bff/admin/egress-vpn/report" : {
+      "put" : {
+        "tags" : [ "egress-vpn-controller" ],
+        "summary" : "Report node state",
+        "operationId" : "egressVpnReport",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/VpnReportRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "type" : "object",
+                  "additionalProperties" : {
+                    "type" : "object"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/bff/admin/domains/{clusterDomain}" : {
       "get" : {
         "tags" : [ "domain-registry-controller" ],
@@ -9138,6 +9170,22 @@
             "additionalProperties" : {
               "type" : "object"
             }
+          }
+        }
+      },
+      "VpnReportRequest" : {
+        "required" : [ "node", "state" ],
+        "type" : "object",
+        "properties" : {
+          "node" : {
+            "maxLength" : 128,
+            "minLength" : 0,
+            "type" : "string"
+          },
+          "state" : {
+            "maxLength" : 16,
+            "minLength" : 0,
+            "type" : "string"
           }
         }
       },
