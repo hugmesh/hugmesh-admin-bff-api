@@ -13,8 +13,6 @@ import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
-import org.springframework.beans.factory.support.BeanDefinitionRegistry;
-import org.springframework.beans.factory.support.BeanDefinitionRegistryPostProcessor;
 import org.springframework.test.web.reactive.server.WebTestClient;
 import net.hugmesh.adminbff.announcement.AnnouncementRowRepository;
 import net.hugmesh.adminbff.routeaccess.RouteAccessRepository;
@@ -22,6 +20,7 @@ import net.hugmesh.adminbff.routeaccess.RouteAccessRowRepository;
 import net.hugmesh.adminbff.routeaccess.RouteRule;
 import net.hugmesh.adminbff.suspension.AccessSuspensionRowRepository;
 import net.hugmesh.adminbff.support.AdminBffPostgresTestSupport;
+import net.hugmesh.adminbff.support.ExcludeTestSourcedControllers;
 import net.hugmesh.adminbff.testsupport.TestIssuer;
 import net.hugmesh.authcore.account.AllowlistRepository;
 import net.hugmesh.authcore.account.NamespaceGrantRepository;
@@ -78,35 +77,22 @@ import static org.assertj.core.api.Assertions.assertThat;
  * is unchanged. A silently fail-open scope guard that lets a cross-brand delete
  * through would cause the post-request row count to drop, failing the assertion.
  *
- * <p>Wiring: the same {@link RawApiDenyMatrixTest.ExcludeTestProbeControllers}
- * post-processor (reproduced inline) removes the test-package probe controllers
- * ({@code Probes} / {@code Guarded}) that a component scan would sweep in and collide
- * with the real controllers.
+ * <p>Wiring: {@link ExcludeTestSourcedControllers} withdraws the TOP-LEVEL package-private
+ * probe controllers declared alongside the config slice tests, which a component scan would
+ * otherwise sweep into this full-context boot — they collide with the real controllers
+ * ("Ambiguous mapping"). It selects by CODE SOURCE, so a probe added later is covered without
+ * editing anything here.
+ *
+ * <p>This class previously carried its own two-name copy of that list. Migrating it was hygiene
+ * — one definition of "test-sourced" across all four full-context tests — not a fix for a defect
+ * it suffered from: this matrix never requests a {@code /bff/internal} path, so the third probe
+ * ({@code InternalProbes}) missing from the old list changed nothing here.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @AutoConfigureWebTestClient(timeout = "PT30S")
 @ActiveProfiles("test")
-@Import(CrossTenantIsolationTest.ExcludeTestProbeControllers.class)
+@Import(ExcludeTestSourcedControllers.class)
 class CrossTenantIsolationTest extends AdminBffPostgresTestSupport {
-
-    // ── Removes test-package probe controllers that component-scan would pull in ──
-    // Mirrors ExcludeTestProbeControllers in RawApiDenyMatrixTest and
-    // OpenApiSpecDumpTest — kept inline to avoid a cross-package access dep.
-    static class ExcludeTestProbeControllers implements BeanDefinitionRegistryPostProcessor {
-        private static final java.util.Set<String> PROBE_TYPES = java.util.Set.of(
-                "net.hugmesh.adminbff.config.Probes",
-                "net.hugmesh.adminbff.config.Guarded");
-
-        @Override
-        public void postProcessBeanDefinitionRegistry(BeanDefinitionRegistry registry) {
-            for (String name : registry.getBeanDefinitionNames()) {
-                String bc = registry.getBeanDefinition(name).getBeanClassName();
-                if (bc != null && PROBE_TYPES.contains(bc)) {
-                    registry.removeBeanDefinition(name);
-                }
-            }
-        }
-    }
 
     // ── Two trusted brands + one untrusted issuer ────────────────────────────────
 
