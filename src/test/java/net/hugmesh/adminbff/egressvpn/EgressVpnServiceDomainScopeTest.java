@@ -16,6 +16,8 @@ import net.hugmesh.adminbff.device.DeviceRegistryRepository;
 import net.hugmesh.adminbff.device.DeviceRegistryService;
 import net.hugmesh.commons.security.DomainRegistry;
 import net.hugmesh.commons.security.PrincipalDomain;
+import net.hugmesh.adminbff.support.DeviceRegistryCleanup;
+import net.hugmesh.adminbff.support.DeviceRegistryCleanupConfig;
 import net.hugmesh.adminbff.support.TestDatabaseConfig;
 
 import java.time.Instant;
@@ -40,17 +42,18 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * </ul>
  */
 @DataR2dbcTest
-@Import(TestDatabaseConfig.class)
+@Import({TestDatabaseConfig.class, DeviceRegistryCleanupConfig.class})
 @ActiveProfiles("test")
 class EgressVpnServiceDomainScopeTest {
 
     @Autowired DatabaseClient db;
+    @Autowired DeviceRegistryCleanup deviceRegistryCleanup;
 
     @BeforeEach
     void clear() {
         db.sql("DELETE FROM vpn_node_assignment").fetch().rowsUpdated().block();
         db.sql("DELETE FROM vpn_config").fetch().rowsUpdated().block();
-        db.sql("DELETE FROM device_registry").fetch().rowsUpdated().block();
+        deviceRegistryCleanup.clearDeviceRegistry().block();
     }
 
     private static final DomainRegistry REGISTRY = new DomainRegistry("",
@@ -77,7 +80,8 @@ class EgressVpnServiceDomainScopeTest {
     private DeviceRegistryRepository deviceRepo() { return new DeviceRegistryRepository(net.hugmesh.adminbff.testutil.R2dbcRepos.of(db, net.hugmesh.adminbff.device.DeviceRowRepository.class)); }
 
     private EgressVpnService svc() {
-        return new EgressVpnService(configRepo(), asgRepo(), deviceRepo(), REGISTRY);
+        return new EgressVpnService(configRepo(), asgRepo(), deviceRepo(), REGISTRY,
+                new NoopVpnConfigSecretWriter(), new NoopVpnEgressLabeler());
     }
 
     private Device register(String fp, String domain, String ownerType) {

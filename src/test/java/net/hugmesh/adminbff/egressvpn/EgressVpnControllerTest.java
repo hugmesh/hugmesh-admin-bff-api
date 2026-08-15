@@ -177,6 +177,50 @@ class EgressVpnControllerTest {
                 .exchange().expectStatus().isForbidden();
     }
 
+    // ── Per-node propagation report (same auth story as the export consumer) ────
+
+    private static final String REPORT_BODY = "{\"node\":\"fp-1\",\"state\":\"applied\"}";
+
+    @Test
+    void report_asSuperadmin_isAllowed_andAcksMinimally() {
+        when(vpn.reportNodeState(eq("fp-1"), eq("applied"))).thenReturn(Mono.just(2L));
+        asSuperadmin().put().uri("/bff/admin/egress-vpn/report")
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(REPORT_BODY)
+                .exchange().expectStatus().isOk()
+                .expectBody().jsonPath("$.accepted").isEqualTo(true)
+                .jsonPath("$.updated").isEqualTo(2);
+        verify(vpn).reportNodeState(eq("fp-1"), eq("applied"));
+    }
+
+    @Test
+    void report_asAdmin_isForbidden_andNeverTransitions() {
+        asAdmin().put().uri("/bff/admin/egress-vpn/report")
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(REPORT_BODY)
+                .exchange().expectStatus().isForbidden();
+        verify(vpn, never()).reportNodeState(anyString(), anyString());
+    }
+
+    @Test
+    void report_asUser_isForbidden() {
+        asUser().put().uri("/bff/admin/egress-vpn/report")
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(REPORT_BODY)
+                .exchange().expectStatus().isForbidden();
+        verify(vpn, never()).reportNodeState(anyString(), anyString());
+    }
+
+    @Test
+    void report_outOfVocabularyState_is422() {
+        when(vpn.reportNodeState(eq("fp-1"), eq("exfiltrated")))
+                .thenReturn(Mono.error(new IllegalArgumentException(
+                        "propagation state must be applied|failed|degraded, not 'exfiltrated'")));
+        asSuperadmin().put().uri("/bff/admin/egress-vpn/report")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("{\"node\":\"fp-1\",\"state\":\"exfiltrated\"}")
+                .exchange().expectStatus().isEqualTo(422)
+                .expectBody().jsonPath("$.error").isEqualTo(
+                        "propagation state must be applied|failed|degraded, not 'exfiltrated'");
+    }
+
     @Test
     void list_asSuperadmin_isAllowed() {
         when(vpn.listConfigs(any())).thenReturn(Flux.just(configSample()));
@@ -248,7 +292,7 @@ class EgressVpnControllerTest {
                 .thenReturn(Mono.error(new IllegalArgumentException("unrecognised VPN config")));
         asSuperadmin().post().uri("/bff/admin/egress-vpn/configs")
                 .contentType(MediaType.APPLICATION_JSON).bodyValue(IMPORT_BODY)
-                .exchange().expectStatus().isEqualTo(org.springframework.http.HttpStatus.UNPROCESSABLE_ENTITY)
+                .exchange().expectStatus().isEqualTo(422)
                 .expectBody().jsonPath("$.error").isEqualTo("unrecognised VPN config");
     }
 }

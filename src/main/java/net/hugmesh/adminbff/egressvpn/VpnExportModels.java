@@ -6,7 +6,7 @@ import java.util.List;
  * The wire shapes of the signed PER-NODE egress-VPN export — CLONES
  * {@link net.hugmesh.adminbff.device.ExportModels} (the device-license-registry
  * export). The export is what the node-level reconcile agent compiles into the
- * {@code hugmesh-egress-vpn} OpenRC service's {@code active.conf} + the assigned
+ * {@code snapdragon-egress-vpn} OpenRC service's {@code active.conf} + the assigned
  * service set; the BFF never reconciles the node — it emits the compiled, signed set the
  * agent verifies against the BAKED key-USB public half and applies (or fail-closes,
  * keeping its last-good cache, on an unsigned/tampered/rolled-back payload).

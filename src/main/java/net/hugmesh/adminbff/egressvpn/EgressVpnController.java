@@ -18,6 +18,7 @@ import net.hugmesh.commons.security.PrincipalDomain;
 import net.hugmesh.commons.web.ApiException;
 import net.hugmesh.adminbff.web.dto.AssignVpnRequest;
 import net.hugmesh.adminbff.web.dto.ImportVpnConfigRequest;
+import net.hugmesh.adminbff.web.dto.VpnReportRequest;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -177,5 +178,27 @@ public class EgressVpnController {
     public Mono<VpnExportModels.SignedVpnExport> export(
             @RequestParam(value = "node") @NotBlank @Size(max = 128) String node) {
         return export.exportNode(node);
+    }
+
+    // ── Per-node propagation report (SUPERADMIN | internal mTLS) ────────────────
+    /**
+     * The report-back half of the {@code /export} loop: the node-level reconcile agent PUTs
+     * its per-node {@code applied}/{@code failed}/{@code degraded} outcome after converging
+     * on a fetched export, and the rows that fed that node's export transition out of
+     * {@code pending} (so the admin UI stops showing an assignment as forever-pending). SAME
+     * auth story as the export it follows: SUPERADMIN-gated AND served only over the
+     * in-cluster mTLS transport in the deployment. Fail-closed: an unknown fp is an accepted
+     * no-op ({@code updated:0} — a probe learns nothing); a bad state is a 422.
+     */
+    @PreAuthorize("hasRole('SUPERADMIN')")
+    @Operation(summary = "Report node state", operationId = "egressVpnReport")
+    @PutMapping("/report")
+    public Mono<ResponseEntity<Map<String, Object>>> report(@Valid @RequestBody VpnReportRequest b) {
+        return vpn.reportNodeState(b.node(), b.state())
+                .map(n -> ResponseEntity.ok(Map.<String, Object>of(
+                        "accepted", Boolean.TRUE,
+                        "updated", n)))
+                .onErrorResume(IllegalArgumentException.class,
+                        e -> Mono.error(ApiException.unprocessable(e.getMessage())));
     }
 }

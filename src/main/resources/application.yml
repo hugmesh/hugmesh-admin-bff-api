@@ -917,6 +917,37 @@ app:
 # permitAll under the dev/test profile (so `gen:fetch` can curl the spec without
 # a token) and ROLE_ADMIN otherwise (prod) — so leaving them enabled here is
 # safe in every environment. Mirrors the hugmesh.games BFF springdoc block.
+  # EGRESS-VPN control-plane effectors — the two K8s legs of /bff/admin/egress-vpn.
+  #
+  # SHIPS DARK: both levers default false (every dev/test/CI run and every deployment until
+  # the generator's egress-vpn optional service is selected AND the node-side Secret mount /
+  # split-tunnel legs exist). With them off the Noop seams are the beans: an imported config's
+  # bytes are parse-validated then DROPPED (the node keeps its key-USB-provisioned config) and
+  # no workload/pod is ever labelled — no cluster is dialed. The fabric8 KubernetesClient is
+  # built LAZILY (per write/sweep) so a missing in-cluster context never fails BFF boot.
+  egress-vpn:
+    # The runtime Secret-delivery leg of an import: persist the posted .conf/.ovpn bytes as
+    # the K8s Secret the node reconcile agent reads (${VPN_SECRET_DIR}/<secretRef>; Secret
+    # name = data key = the row's secret_ref, default egress-vpn-<domain>-<name>). The DB
+    # keeps ONLY secret_ref + metadata either way.
+    secret-delivery:
+      enabled: "${EGRESS_VPN_SECRET_DELIVERY_ENABLED:false}"
+      namespace: "${EGRESS_VPN_SECRET_NAMESPACE:hugmesh-backend}"
+    # The pod-labeling leg: stamp snapdragon.systems/vpn-egress=true (the OPT-IN label the
+    # egress-vpn-interaction NetworkPolicy + the node split-tunnel key off) onto the
+    # deployments/statefulsets + pods named by the ACTIVE assignments, and sweep drift on a
+    # cadence (new/replaced pods re-labelled within one tick; un-assigned ones un-labelled —
+    # fail-closed: an unlabelled pod just stays on the Squid-proxy/default-deny path).
+    labeler:
+      enabled: "${EGRESS_VPN_LABELER_ENABLED:false}"
+      namespace: "${EGRESS_VPN_LABELER_NAMESPACE:hugmesh-backend}"
+      # The public-service set an ALL-SERVICES (null-slug) assignment expands to — the v1
+      # public trio from the generator's EGRESS-VPN doc.
+      domain-service-slugs: "${EGRESS_VPN_LABELER_DOMAIN_SERVICE_SLUGS:akkoma,tuwunel,coturn}"
+      # Sweep cadence (fixedDelay, ms) + boot grace before the first tick (ms).
+      interval-ms: "${EGRESS_VPN_LABELER_INTERVAL_MS:30000}"
+      initial-delay-ms: "${EGRESS_VPN_LABELER_INITIAL_DELAY_MS:25000}"
+
 springdoc:
   # Force JSON as the default produced media type. Without this, springdoc emits
   # `*/*` for endpoints with no explicit `produces`, which ng-openapi-gen maps to a
