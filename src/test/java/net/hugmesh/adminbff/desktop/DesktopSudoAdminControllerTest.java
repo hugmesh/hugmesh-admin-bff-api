@@ -105,7 +105,7 @@ class DesktopSudoAdminControllerTest {
                         "cannot grant desktop sudo on a SUPERADMIN-owned device")));
         asAdmin().post().uri("/bff/admin/desktop/sudo/grant")
                 .contentType(MediaType.APPLICATION_JSON).bodyValue(GRANT_BODY)
-                .exchange().expectStatus().isEqualTo(org.springframework.http.HttpStatus.UNPROCESSABLE_ENTITY)
+                .exchange().expectStatus().isEqualTo(422)
                 .expectBody().jsonPath("$.error").value(
                         org.hamcrest.Matchers.containsString("SUPERADMIN-owned"));
     }
@@ -132,7 +132,7 @@ class DesktopSudoAdminControllerTest {
                 .thenReturn(Mono.error(new IllegalArgumentException("device is not in your domain")));
         asAdmin().post().uri("/bff/admin/desktop/sudo/grant")
                 .contentType(MediaType.APPLICATION_JSON).bodyValue(GRANT_BODY)
-                .exchange().expectStatus().isEqualTo(org.springframework.http.HttpStatus.UNPROCESSABLE_ENTITY)
+                .exchange().expectStatus().isEqualTo(422)
                 .expectBody().jsonPath("$.error").value(
                         org.hamcrest.Matchers.containsString("not in your domain"));
     }

@@ -257,7 +257,7 @@ class ServiceTokenBrokerTest {
                 "/oauth/token", java.util.List.of(
                         json(HttpStatus.BAD_REQUEST, "{\"error\":\"invalid_grant\"}"),
                         json(HttpStatus.OK, "{\"access_token\":\"app-tok\"}")),
-                "/api/v1/accounts", java.util.List.of(json(HttpStatus.UNPROCESSABLE_ENTITY,
+                "/api/v1/accounts", java.util.List.of(json(HttpStatus.UNPROCESSABLE_CONTENT,
                         "{\"error\":\"Validation failed: Username has already been taken\"}"))), hits);
 
         StepVerifier.create(broker.mastodonToken("bob", "bob"))

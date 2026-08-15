@@ -2,6 +2,7 @@ package net.hugmesh.adminbff.servicecatalog.scaffold;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.HttpStatusCode;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 import net.hugmesh.commons.web.ApiException;
@@ -40,7 +41,7 @@ class ScaffoldServiceTest {
         StepVerifier.create(mono)
                 .expectErrorSatisfies(e -> {
                     assertThat(e).isInstanceOf(ApiException.class);
-                    assertThat(((ApiException) e).status()).isEqualTo(HttpStatus.BAD_REQUEST);
+                    assertThat(((ApiException) e).status()).isEqualTo(HttpStatusCode.valueOf(400));
                     assertThat(e.getMessage()).contains(messageFragment);
                 })
                 .verify();
@@ -95,7 +96,7 @@ class ScaffoldServiceTest {
         StepVerifier.create(service.archive("acme.test", "nope"))
                 .expectErrorSatisfies(e -> {
                     assertThat(e).isInstanceOf(ApiException.class);
-                    assertThat(((ApiException) e).status()).isEqualTo(HttpStatus.NOT_FOUND);
+                    assertThat(((ApiException) e).status()).isEqualTo(HttpStatusCode.valueOf(404));
                 })
                 .verify();
         verify(renderer, never()).render(any(), any(), anyBoolean(), any());

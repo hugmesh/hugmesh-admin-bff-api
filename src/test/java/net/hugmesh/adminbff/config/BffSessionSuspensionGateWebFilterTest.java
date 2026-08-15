@@ -2,6 +2,7 @@ package net.hugmesh.adminbff.config;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.HttpStatusCode;
 import org.springframework.mock.http.server.reactive.MockServerHttpRequest;
 import org.springframework.mock.web.server.MockServerWebExchange;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -78,7 +79,7 @@ class BffSessionSuspensionGateWebFilterTest {
 
         run(filter, ex, countingChain(chainCalled), bffAuth("casdoor:alice"));
 
-        assertThat(ex.getResponse().getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+        assertThat(ex.getResponse().getStatusCode()).isEqualTo(HttpStatusCode.valueOf(403));
         assertThat(ex.getResponse().getHeaders().getFirst("X-Bff-Denied")).isEqualTo("account-suspended");
         assertThat(chainCalled).as("downstream must not run for a suspended session").isFalse();
     }
@@ -94,7 +95,7 @@ class BffSessionSuspensionGateWebFilterTest {
 
         run(filter, ex, countingChain(chainCalled), bffAuth("casdoor:bob"));
 
-        assertThat(ex.getResponse().getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+        assertThat(ex.getResponse().getStatusCode()).isEqualTo(HttpStatusCode.valueOf(403));
         assertThat(chainCalled).isFalse();
     }
 

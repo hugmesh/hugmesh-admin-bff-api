@@ -6,6 +6,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.r2dbc.test.autoconfigure.DataR2dbcTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.HttpStatusCode;
 import org.springframework.r2dbc.core.DatabaseClient;
 import org.springframework.test.context.ActiveProfiles;
 import net.hugmesh.adminbff.support.TestDatabaseConfig;
@@ -107,7 +108,7 @@ class PhoneManagementServiceTest {
         Throwable ex = org.assertj.core.api.Assertions.catchThrowable(
                 () -> service.lock("phone-byod", "attempt", "sa").block());
         assertThat(ex).isInstanceOf(ApiException.class);
-        assertThat(((ApiException) ex).status()).isEqualTo(HttpStatus.CONFLICT);
+        assertThat(((ApiException) ex).status()).isEqualTo(HttpStatusCode.valueOf(409));
         assertThat(ex).hasMessageContaining("is not a managed device");
 
         // The state is completely untouched — no lock, no generation bump, no partial write.
@@ -153,7 +154,7 @@ class PhoneManagementServiceTest {
                 () -> service.unlock("nope", "sa").block())) {
             assertThatThrownBy(call::run)
                     .isInstanceOf(ApiException.class)
-                    .satisfies(e -> assertThat(((ApiException) e).status()).isEqualTo(HttpStatus.NOT_FOUND));
+                    .satisfies(e -> assertThat(((ApiException) e).status()).isEqualTo(HttpStatusCode.valueOf(404)));
         }
     }
 
@@ -216,7 +217,7 @@ class PhoneManagementServiceTest {
         PhoneManagementService service = service(repo());
         assertThatThrownBy(() -> service.setOwner("nope", ALICE, ACME, "sa").block())
                 .isInstanceOf(ApiException.class)
-                .satisfies(e -> assertThat(((ApiException) e).status()).isEqualTo(HttpStatus.NOT_FOUND));
+                .satisfies(e -> assertThat(((ApiException) e).status()).isEqualTo(HttpStatusCode.valueOf(404)));
     }
 
     @Test
@@ -249,11 +250,11 @@ class PhoneManagementServiceTest {
         // Another owner — a clean 404 (indistinguishable from unknown; no enumeration).
         assertThatThrownBy(() -> service.lockOwned("phone-x", "r", "bob-op", BOB, ACME).block())
                 .isInstanceOf(ApiException.class)
-                .satisfies(e -> assertThat(((ApiException) e).status()).isEqualTo(HttpStatus.NOT_FOUND));
+                .satisfies(e -> assertThat(((ApiException) e).status()).isEqualTo(HttpStatusCode.valueOf(404)));
         // Same owner, wrong domain — also 404 (proves the domain predicate, not just owner).
         assertThatThrownBy(() -> service.lockOwned("phone-x", "r", "alice-op", ALICE, BETA).block())
                 .isInstanceOf(ApiException.class)
-                .satisfies(e -> assertThat(((ApiException) e).status()).isEqualTo(HttpStatus.NOT_FOUND));
+                .satisfies(e -> assertThat(((ApiException) e).status()).isEqualTo(HttpStatusCode.valueOf(404)));
 
         // The device stayed unlocked throughout — no cross-owner lock ever took.
         assertThat(repo.findByDeviceId("phone-x").block().lockState()).isEqualTo("unlocked");
@@ -268,7 +269,7 @@ class PhoneManagementServiceTest {
 
         assertThatThrownBy(() -> service.lockOwned("phone-byod", "r", "alice-op", ALICE, ACME).block())
                 .isInstanceOf(ApiException.class)
-                .satisfies(e -> assertThat(((ApiException) e).status()).isEqualTo(HttpStatus.CONFLICT))
+                .satisfies(e -> assertThat(((ApiException) e).status()).isEqualTo(HttpStatusCode.valueOf(409)))
                 .hasMessageContaining("is not a managed device");
         assertThat(repo.findByDeviceId("phone-byod").block().lockState()).isEqualTo("unlocked");
     }
@@ -284,7 +285,7 @@ class PhoneManagementServiceTest {
 
         assertThatThrownBy(() -> service.unlockOwned("phone-u", "bob-op", BOB, ACME).block())
                 .isInstanceOf(ApiException.class)
-                .satisfies(e -> assertThat(((ApiException) e).status()).isEqualTo(HttpStatus.NOT_FOUND));
+                .satisfies(e -> assertThat(((ApiException) e).status()).isEqualTo(HttpStatusCode.valueOf(404)));
         // The cross-owner unlock never landed — still locked.
         assertThat(repo.findByDeviceId("phone-u").block().lockState()).isEqualTo("locked");
     }

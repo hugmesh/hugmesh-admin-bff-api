@@ -3,6 +3,7 @@ package net.hugmesh.adminbff.servicecatalog.federation;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.HttpStatusCode;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 import net.hugmesh.adminbff.servicecatalog.FederateOutcome;
@@ -97,7 +98,7 @@ class ServiceCatalogFederationServiceTest {
         StepVerifier.create(service.federate(deployment(), req("file:///etc/passwd", null, null)))
                 .expectErrorSatisfies(e -> {
                     assertThat(e).isInstanceOf(ApiException.class);
-                    assertThat(((ApiException) e).status()).isEqualTo(HttpStatus.BAD_REQUEST);
+                    assertThat(((ApiException) e).status()).isEqualTo(HttpStatusCode.valueOf(400));
                     assertThat(e.getMessage()).contains("remoteEntryUrl invalid");
                 })
                 .verify();

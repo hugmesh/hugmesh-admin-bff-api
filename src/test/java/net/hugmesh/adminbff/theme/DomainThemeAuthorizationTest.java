@@ -4,6 +4,7 @@ import net.hugmesh.commons.security.PrincipalDomain;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.HttpStatusCode;
 import org.springframework.web.server.ResponseStatusException;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -114,7 +115,7 @@ class DomainThemeAuthorizationTest {
             // row every domain inherits. It must 403 and leave the store untouched.
             StepVerifier.create(service.set(theme("no-domain"), unresolvable(), "attacker"))
                     .expectErrorSatisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode())
-                            .isEqualTo(HttpStatus.FORBIDDEN))
+                            .isEqualTo(HttpStatusCode.valueOf(403)))
                     .verify();
             assertThat(repo.rows).isEmpty();
         }

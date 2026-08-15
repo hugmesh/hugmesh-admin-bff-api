@@ -3,6 +3,7 @@ package net.hugmesh.adminbff.internalapi;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.HttpStatusCode;
 import org.springframework.web.server.ResponseStatusException;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -167,7 +168,7 @@ class InternalAccountControllerTest {
                 .verifyErrorSatisfies(e -> {
                     assertThat(e).isInstanceOf(ResponseStatusException.class);
                     ResponseStatusException rse = (ResponseStatusException) e;
-                    assertThat(rse.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+                    assertThat(rse.getStatusCode()).isEqualTo(HttpStatusCode.valueOf(409));
                     assertThat(rse.getReason()).contains("collideone");
                 });
     }
@@ -340,7 +341,7 @@ class InternalAccountControllerTest {
 
         when(accounts.account("missing")).thenReturn(Mono.empty());
         StepVerifier.create(controller.account("missing"))
-                .verifyErrorSatisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND));
+                .verifyErrorSatisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode()).isEqualTo(HttpStatusCode.valueOf(404)));
     }
 
     @Test
@@ -354,7 +355,7 @@ class InternalAccountControllerTest {
 
         when(accounts.account("missing")).thenReturn(Mono.empty());
         StepVerifier.create(controller.complete("missing"))
-                .verifyErrorSatisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND));
+                .verifyErrorSatisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode()).isEqualTo(HttpStatusCode.valueOf(404)));
     }
 
     @Test
@@ -370,7 +371,7 @@ class InternalAccountControllerTest {
                 .verifyComplete();
 
         StepVerifier.create(controller.allowlist("steam", "x"))
-                .verifyErrorSatisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST));
+                .verifyErrorSatisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode()).isEqualTo(HttpStatusCode.valueOf(400)));
     }
 
     @Test
@@ -383,14 +384,14 @@ class InternalAccountControllerTest {
 
         when(accounts.account("missing")).thenReturn(Mono.empty());
         StepVerifier.create(controller.createSession(new InternalAccountController.CreateSessionRequest("missing")))
-                .verifyErrorSatisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND));
+                .verifyErrorSatisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode()).isEqualTo(HttpStatusCode.valueOf(404)));
     }
 
     @Test
     void deleteSession_isIdempotent204() {
         when(accounts.deleteSession("bff_abc")).thenReturn(Mono.just("bff_abc"));
         StepVerifier.create(controller.deleteSession("bff_abc"))
-                .assertNext(r -> assertThat(r.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT))
+                .assertNext(r -> assertThat(r.getStatusCode()).isEqualTo(HttpStatusCode.valueOf(204)))
                 .verifyComplete();
         verify(accounts).deleteSession("bff_abc");
     }
@@ -437,7 +438,7 @@ class InternalAccountControllerTest {
 
         when(accounts.account("missing")).thenReturn(Mono.empty());
         StepVerifier.create(controller.namespaces("missing"))
-                .verifyErrorSatisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND));
+                .verifyErrorSatisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode()).isEqualTo(HttpStatusCode.valueOf(404)));
     }
 
     // ──────────────────────────── custody/stamp (band-180) ────────────────────────────
@@ -476,7 +477,7 @@ class InternalAccountControllerTest {
         StepVerifier.create(controller.stampCustody(new InternalAccountController.StampCustodyRequest(
                         "bff_nope", "ENC-ACCESS", "ENC-REFRESH", 900)))
                 .verifyErrorSatisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode())
-                        .isEqualTo(HttpStatus.NOT_FOUND));
+                        .isEqualTo(HttpStatusCode.valueOf(404)));
     }
 
     // ──────────────────────────── session/exchange (band-180) ────────────────────────────
@@ -488,7 +489,7 @@ class InternalAccountControllerTest {
                 accounts, suspensions, mfaStepUp, INERT_CIPHER, oidc, 60L, localparts, casdoorSubs, accountIssuers);
         StepVerifier.create(inert.exchange(new InternalAccountController.ExchangeRequest("bff_x")))
                 .verifyErrorSatisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode())
-                        .isEqualTo(HttpStatus.SERVICE_UNAVAILABLE));
+                        .isEqualTo(HttpStatusCode.valueOf(503)));
         verify(accounts, never()).sessionRow(any());
     }
 
@@ -499,7 +500,7 @@ class InternalAccountControllerTest {
                 accounts, suspensions, mfaStepUp, null, oidc, 60L, localparts, casdoorSubs, accountIssuers);
         StepVerifier.create(noCipher.exchange(new InternalAccountController.ExchangeRequest("bff_x")))
                 .verifyErrorSatisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode())
-                        .isEqualTo(HttpStatus.SERVICE_UNAVAILABLE));
+                        .isEqualTo(HttpStatusCode.valueOf(503)));
     }
 
     @Test
@@ -507,7 +508,7 @@ class InternalAccountControllerTest {
         when(accounts.sessionRow("bff_missing")).thenReturn(Mono.empty());
         StepVerifier.create(controller.exchange(new InternalAccountController.ExchangeRequest("bff_missing")))
                 .verifyErrorSatisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode())
-                        .isEqualTo(HttpStatus.NOT_FOUND));
+                        .isEqualTo(HttpStatusCode.valueOf(404)));
     }
 
     @Test
@@ -547,7 +548,7 @@ class InternalAccountControllerTest {
                         LocalDateTime.now().plusHours(2))));
         StepVerifier.create(controller.exchange(new InternalAccountController.ExchangeRequest("bff_tampered")))
                 .verifyErrorSatisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode())
-                        .isEqualTo(HttpStatus.UNAUTHORIZED));
+                        .isEqualTo(HttpStatusCode.valueOf(401)));
     }
 
     @Test
@@ -572,7 +573,7 @@ class InternalAccountControllerTest {
     void introspect_noHeader_401() {
         StepVerifier.create(controller.introspect(null))
                 .verifyErrorSatisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode())
-                        .isEqualTo(HttpStatus.UNAUTHORIZED));
+                        .isEqualTo(HttpStatusCode.valueOf(401)));
     }
 
     @Test
@@ -580,7 +581,7 @@ class InternalAccountControllerTest {
         when(accounts.sessionOf("Bearer bff_unknown")).thenReturn(Mono.empty());
         StepVerifier.create(controller.introspect("Bearer bff_unknown"))
                 .verifyErrorSatisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode())
-                        .isEqualTo(HttpStatus.UNAUTHORIZED));
+                        .isEqualTo(HttpStatusCode.valueOf(401)));
     }
 
     @Test
@@ -767,7 +768,7 @@ class InternalAccountControllerTest {
                 .thenReturn(Mono.just(new AccountStatus(AccountStatus.BANNED, null, "banned")));
         StepVerifier.create(controller.exchange(new InternalAccountController.ExchangeRequest("bff_banned")))
                 .verifyErrorSatisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode())
-                        .isEqualTo(HttpStatus.FORBIDDEN));
+                        .isEqualTo(HttpStatusCode.valueOf(403)));
         verify(accounts, never()).sessionRow(any());
     }
 
@@ -778,7 +779,7 @@ class InternalAccountControllerTest {
                 .thenReturn(Mono.just(new AccountStatus(AccountStatus.SUSPENDED, null, "abuse")));
         StepVerifier.create(controller.exchange(new InternalAccountController.ExchangeRequest("bff_sus")))
                 .verifyErrorSatisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode())
-                        .isEqualTo(HttpStatus.FORBIDDEN));
+                        .isEqualTo(HttpStatusCode.valueOf(403)));
         verify(accounts, never()).sessionRow(any());
     }
 

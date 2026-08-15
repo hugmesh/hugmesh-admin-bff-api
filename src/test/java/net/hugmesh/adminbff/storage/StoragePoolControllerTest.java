@@ -221,7 +221,7 @@ class StoragePoolControllerTest {
                         "over-subscription: pool pool-1 reserved=10000 committed=7000 requested=5000")));
         asSuperadmin().post().uri("/bff/admin/device-storage-pools/pools/pool-1/assignments")
                 .contentType(MediaType.APPLICATION_JSON).bodyValue(ASSIGN_BODY)
-                .exchange().expectStatus().isEqualTo(org.springframework.http.HttpStatus.UNPROCESSABLE_ENTITY)
+                .exchange().expectStatus().isEqualTo(422)
                 .expectBody().jsonPath("$.error").value(
                         org.hamcrest.Matchers.containsString("over-subscription"));
     }

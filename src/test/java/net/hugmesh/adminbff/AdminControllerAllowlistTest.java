@@ -141,7 +141,7 @@ class AdminControllerAllowlistTest {
         // allowlist/Casdoor write.
         asAdmin().post().uri("/bff/admin/allowlist").contentType(MediaType.APPLICATION_JSON)
                 .bodyValue("{\"email\":\"admin@gmail.com\"}")
-                .exchange().expectStatus().isEqualTo(org.springframework.http.HttpStatus.UNPROCESSABLE_CONTENT)
+                .exchange().expectStatus().isEqualTo(422)
                 .expectBody()
                 .jsonPath("$.reason").isEqualTo("reserved")
                 .jsonPath("$.candidate").isEqualTo("admin");
@@ -153,7 +153,7 @@ class AdminControllerAllowlistTest {
         // rejected too — the handle is used verbatim as the Casdoor username.
         asAdmin().post().uri("/bff/admin/allowlist").contentType(MediaType.APPLICATION_JSON)
                 .bodyValue("{\"discord\":\"vault\"}")
-                .exchange().expectStatus().isEqualTo(org.springframework.http.HttpStatus.UNPROCESSABLE_CONTENT)
+                .exchange().expectStatus().isEqualTo(422)
                 .expectBody().jsonPath("$.reason").isEqualTo("reserved");
     }
 
@@ -174,7 +174,7 @@ class AdminControllerAllowlistTest {
     void invite_422WhenDiscordHandleIsACanonicalRev7To9Label(String reserved) {
         asAdmin().post().uri("/bff/admin/allowlist").contentType(MediaType.APPLICATION_JSON)
                 .bodyValue("{\"discord\":\"" + reserved + "\"}")
-                .exchange().expectStatus().isEqualTo(org.springframework.http.HttpStatus.UNPROCESSABLE_CONTENT)
+                .exchange().expectStatus().isEqualTo(422)
                 .expectBody()
                 .jsonPath("$.reason").isEqualTo("reserved")
                 .jsonPath("$.candidate").isEqualTo(reserved);

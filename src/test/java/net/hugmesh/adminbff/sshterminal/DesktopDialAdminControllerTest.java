@@ -183,7 +183,7 @@ class DesktopDialAdminControllerTest {
         when(service.activate(eq("dev-1"), eq("super-1"))).thenReturn(Mono.error(
                 new DesktopDialService.DialUnpinnedException("no pinned host_key_fp")));
         asSuperadmin("super-1").post().uri(BASE + "/dev-1/activate").header(STEP_UP, TOKEN)
-                .exchange().expectStatus().isEqualTo(org.springframework.http.HttpStatus.UNPROCESSABLE_ENTITY);
+                .exchange().expectStatus().isEqualTo(422);
     }
 
     @Test

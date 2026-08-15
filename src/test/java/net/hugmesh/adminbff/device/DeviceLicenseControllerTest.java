@@ -370,7 +370,7 @@ class DeviceLicenseControllerTest {
                         + "superadmin reach is mesh-membership, not a license")));
         asSuperadmin().post().uri("/bff/admin/device-licenses/dev-1/grant")
                 .contentType(MediaType.APPLICATION_JSON).bodyValue(GRANT_BODY)
-                .exchange().expectStatus().isEqualTo(org.springframework.http.HttpStatus.UNPROCESSABLE_ENTITY)
+                .exchange().expectStatus().isEqualTo(422)
                 .expectBody().jsonPath("$.error").value(
                         org.hamcrest.Matchers.containsString("SUPERADMIN-owned"));
     }
@@ -384,7 +384,7 @@ class DeviceLicenseControllerTest {
                         "DOMAIN-license target must be a real residency domain, not 'default'/blank")));
         asSuperadmin().post().uri("/bff/admin/device-licenses/domains/default/grant")
                 .contentType(MediaType.APPLICATION_JSON).bodyValue(GRANT_BODY)
-                .exchange().expectStatus().isEqualTo(org.springframework.http.HttpStatus.UNPROCESSABLE_ENTITY)
+                .exchange().expectStatus().isEqualTo(422)
                 .expectBody().jsonPath("$.error").value(
                         org.hamcrest.Matchers.containsString("default"));
     }
