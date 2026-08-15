@@ -1,6 +1,5 @@
 package net.hugmesh.adminbff.theme;
 
-import net.hugmesh.commons.security.PrincipalDomain;
 import org.springframework.data.r2dbc.core.R2dbcEntityTemplate;
 import org.springframework.stereotype.Repository;
 import reactor.core.publisher.Flux;
@@ -57,7 +56,7 @@ public class DomainThemeRepository {
      *  "this domain has no override" indistinguishable from "it chose the default". */
     public Mono<DomainTheme> findByDomain(String domain) {
         return template.getDatabaseClient().sql(SELECT_ONE)
-                .bind("domain", domain == null ? PrincipalDomain.NO_DOMAIN : domain)
+                .bind("domain", DomainTheme.normalizeDomain(domain))
                 .map(DomainThemeRepository::map)
                 .one();
     }
@@ -78,7 +77,7 @@ public class DomainThemeRepository {
     public Mono<Void> delete(String domain) {
         return template.getDatabaseClient()
                 .sql("DELETE FROM domain_theme WHERE domain = :domain")
-                .bind("domain", domain == null ? PrincipalDomain.NO_DOMAIN : domain)
+                .bind("domain", DomainTheme.normalizeDomain(domain))
                 .fetch().rowsUpdated().then();
     }
 
