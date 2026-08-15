@@ -85,10 +85,10 @@
         <preConditions onFail="MARK_RAN" onError="MARK_RAN">
             <dbms type="postgresql"/>
         </preConditions>
-        <comment>GRANT SELECT,INSERT,UPDATE,DELETE on mfa_factor to admin_bff (a user may
+        <comment>GRANT SELECT,INSERT,UPDATE,DELETE on mfa_factor to adminbff_app (a user may
                  remove their own factor — DELETE is intentional here, step-up gated).</comment>
-        <sql>GRANT SELECT, INSERT, UPDATE, DELETE ON mfa_factor TO admin_bff</sql>
-        <rollback>REVOKE SELECT, INSERT, UPDATE, DELETE ON mfa_factor FROM admin_bff</rollback>
+        <sql>GRANT SELECT, INSERT, UPDATE, DELETE ON mfa_factor TO adminbff_app</sql>
+        <rollback>REVOKE SELECT, INSERT, UPDATE, DELETE ON mfa_factor FROM adminbff_app</rollback>
     </changeSet>
 
     <!-- ════════════════════════════ mfa_recovery_code ══════════════════════════════ -->
@@ -133,10 +133,10 @@
         <preConditions onFail="MARK_RAN" onError="MARK_RAN">
             <dbms type="postgresql"/>
         </preConditions>
-        <comment>GRANT SELECT,INSERT,UPDATE,DELETE on mfa_recovery_code to admin_bff (consume
+        <comment>GRANT SELECT,INSERT,UPDATE,DELETE on mfa_recovery_code to adminbff_app (consume
                  = UPDATE used=true; regenerate = DELETE old set then INSERT).</comment>
-        <sql>GRANT SELECT, INSERT, UPDATE, DELETE ON mfa_recovery_code TO admin_bff</sql>
-        <rollback>REVOKE SELECT, INSERT, UPDATE, DELETE ON mfa_recovery_code FROM admin_bff</rollback>
+        <sql>GRANT SELECT, INSERT, UPDATE, DELETE ON mfa_recovery_code TO adminbff_app</sql>
+        <rollback>REVOKE SELECT, INSERT, UPDATE, DELETE ON mfa_recovery_code FROM adminbff_app</rollback>
     </changeSet>
 
     <!-- ═══════════════════════════ webauthn_credential ═════════════════════════════ -->
@@ -206,10 +206,10 @@
         <preConditions onFail="MARK_RAN" onError="MARK_RAN">
             <dbms type="postgresql"/>
         </preConditions>
-        <comment>GRANT SELECT,INSERT,UPDATE,DELETE on webauthn_credential to admin_bff
+        <comment>GRANT SELECT,INSERT,UPDATE,DELETE on webauthn_credential to adminbff_app
                  (register = INSERT; assertion = UPDATE sign_count; remove = DELETE, step-up gated).</comment>
-        <sql>GRANT SELECT, INSERT, UPDATE, DELETE ON webauthn_credential TO admin_bff</sql>
-        <rollback>REVOKE SELECT, INSERT, UPDATE, DELETE ON webauthn_credential FROM admin_bff</rollback>
+        <sql>GRANT SELECT, INSERT, UPDATE, DELETE ON webauthn_credential TO adminbff_app</sql>
+        <rollback>REVOKE SELECT, INSERT, UPDATE, DELETE ON webauthn_credential FROM adminbff_app</rollback>
     </changeSet>
 
 </databaseChangeLog>

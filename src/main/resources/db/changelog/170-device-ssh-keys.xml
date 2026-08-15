@@ -161,10 +161,10 @@
         <preConditions onFail="MARK_RAN" onError="MARK_RAN">
             <dbms type="postgresql"/>
         </preConditions>
-        <comment>GRANT SELECT,INSERT,UPDATE on device_ssh_dial to the admin_bff role (seed
+        <comment>GRANT SELECT,INSERT,UPDATE on device_ssh_dial to the adminbff_app role (seed
                  INSERTs, rotation/status are UPDATEs; rows are reaped via the FK cascade,
                  not app DELETE).</comment>
-        <sql>GRANT SELECT, INSERT, UPDATE ON device_ssh_dial TO admin_bff</sql>
-        <rollback>REVOKE SELECT, INSERT, UPDATE ON device_ssh_dial FROM admin_bff</rollback>
+        <sql>GRANT SELECT, INSERT, UPDATE ON device_ssh_dial TO adminbff_app</sql>
+        <rollback>REVOKE SELECT, INSERT, UPDATE ON device_ssh_dial FROM adminbff_app</rollback>
     </changeSet>
 </databaseChangeLog>

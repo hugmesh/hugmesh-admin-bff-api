@@ -184,23 +184,23 @@
     </changeSet>
 
     <changeSet id="062-notification-grant" author="hugmesh">
-        <!-- PostgreSQL-only runtime grant (the H2 test store has no admin_bff role, so
+        <!-- PostgreSQL-only runtime grant (the H2 test store has no adminbff_app role, so
              GRANT would error there). dbms precondition skips it off-Postgres. -->
         <preConditions onFail="MARK_RAN" onError="MARK_RAN">
             <dbms type="postgresql"/>
         </preConditions>
-        <comment>GRANT on the notification spine tables to the admin_bff role.</comment>
+        <comment>GRANT on the notification spine tables to the adminbff_app role.</comment>
         <sql>
-            GRANT SELECT, INSERT, UPDATE ON notification_outbox   TO admin_bff;
-            GRANT SELECT, INSERT, UPDATE ON notification_delivery TO admin_bff;
-            GRANT SELECT, INSERT, UPDATE ON notification_cursor   TO admin_bff;
-            GRANT SELECT, INSERT, UPDATE ON announcement_suppressed TO admin_bff
+            GRANT SELECT, INSERT, UPDATE ON notification_outbox   TO adminbff_app;
+            GRANT SELECT, INSERT, UPDATE ON notification_delivery TO adminbff_app;
+            GRANT SELECT, INSERT, UPDATE ON notification_cursor   TO adminbff_app;
+            GRANT SELECT, INSERT, UPDATE ON announcement_suppressed TO adminbff_app
         </sql>
         <rollback>
-            REVOKE SELECT, INSERT, UPDATE ON notification_outbox   FROM admin_bff;
-            REVOKE SELECT, INSERT, UPDATE ON notification_delivery FROM admin_bff;
-            REVOKE SELECT, INSERT, UPDATE ON notification_cursor   FROM admin_bff;
-            REVOKE SELECT, INSERT, UPDATE ON announcement_suppressed FROM admin_bff
+            REVOKE SELECT, INSERT, UPDATE ON notification_outbox   FROM adminbff_app;
+            REVOKE SELECT, INSERT, UPDATE ON notification_delivery FROM adminbff_app;
+            REVOKE SELECT, INSERT, UPDATE ON notification_cursor   FROM adminbff_app;
+            REVOKE SELECT, INSERT, UPDATE ON announcement_suppressed FROM adminbff_app
         </rollback>
     </changeSet>
 

@@ -111,16 +111,16 @@
     </changeSet>
 
     <changeSet id="100-service-curation-grant" author="hugmesh">
-        <!-- PostgreSQL-only runtime grant. The H2 test store has no admin_bff role, so
+        <!-- PostgreSQL-only runtime grant. The H2 test store has no adminbff_app role, so
              GRANT would error there; the dbms precondition skips this changeSet entirely
              off-Postgres (onFail=MARK_RAN records it as run) so the H2 changelog
              continues. No DELETE — a withdrawal is a CAS offered->withdrawn. -->
         <preConditions onFail="MARK_RAN" onError="MARK_RAN">
             <dbms type="postgresql"/>
         </preConditions>
-        <comment>GRANT SELECT,INSERT,UPDATE on service_curation to the admin_bff role
+        <comment>GRANT SELECT,INSERT,UPDATE on service_curation to the adminbff_app role
                  (no DELETE — withdraw is a CAS update, the row is the audit).</comment>
-        <sql>GRANT SELECT, INSERT, UPDATE ON service_curation TO admin_bff</sql>
-        <rollback>REVOKE SELECT, INSERT, UPDATE ON service_curation FROM admin_bff</rollback>
+        <sql>GRANT SELECT, INSERT, UPDATE ON service_curation TO adminbff_app</sql>
+        <rollback>REVOKE SELECT, INSERT, UPDATE ON service_curation FROM adminbff_app</rollback>
     </changeSet>
 </databaseChangeLog>

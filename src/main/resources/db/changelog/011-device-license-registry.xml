@@ -133,10 +133,10 @@
         <preConditions onFail="MARK_RAN" onError="MARK_RAN">
             <dbms type="postgresql"/>
         </preConditions>
-        <comment>GRANT SELECT,INSERT,UPDATE,DELETE on device_registry to the admin_bff
+        <comment>GRANT SELECT,INSERT,UPDATE,DELETE on device_registry to the adminbff_app
                  role (SUPERADMIN may de-register a stale node).</comment>
-        <sql>GRANT SELECT, INSERT, UPDATE, DELETE ON device_registry TO admin_bff</sql>
-        <rollback>REVOKE SELECT, INSERT, UPDATE, DELETE ON device_registry FROM admin_bff</rollback>
+        <sql>GRANT SELECT, INSERT, UPDATE, DELETE ON device_registry TO adminbff_app</sql>
+        <rollback>REVOKE SELECT, INSERT, UPDATE, DELETE ON device_registry FROM adminbff_app</rollback>
     </changeSet>
 
     <!-- ════════════════════════ device_ssh_license ══════════════════════════════ -->
@@ -305,9 +305,9 @@
         <preConditions onFail="MARK_RAN" onError="MARK_RAN">
             <dbms type="postgresql"/>
         </preConditions>
-        <comment>GRANT SELECT,INSERT,UPDATE on device_ssh_license to the admin_bff role
+        <comment>GRANT SELECT,INSERT,UPDATE on device_ssh_license to the adminbff_app role
                  (revoke is a CAS UPDATE — the row is never DELETEd = the audit trail).</comment>
-        <sql>GRANT SELECT, INSERT, UPDATE ON device_ssh_license TO admin_bff</sql>
-        <rollback>REVOKE SELECT, INSERT, UPDATE ON device_ssh_license FROM admin_bff</rollback>
+        <sql>GRANT SELECT, INSERT, UPDATE ON device_ssh_license TO adminbff_app</sql>
+        <rollback>REVOKE SELECT, INSERT, UPDATE ON device_ssh_license FROM adminbff_app</rollback>
     </changeSet>
 </databaseChangeLog>

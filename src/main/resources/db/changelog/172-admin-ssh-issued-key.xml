@@ -176,10 +176,10 @@
         <preConditions onFail="MARK_RAN" onError="MARK_RAN">
             <dbms type="postgresql"/>
         </preConditions>
-        <comment>GRANT SELECT,INSERT,UPDATE on admin_ssh_issued_key to the admin_bff role (issue
+        <comment>GRANT SELECT,INSERT,UPDATE on admin_ssh_issued_key to the adminbff_app role (issue
                  = INSERT; downloaded_at stamp + revoke CAS = UPDATE). NEVER DELETE — the row is
                  the issuance audit trail.</comment>
-        <sql>GRANT SELECT, INSERT, UPDATE ON admin_ssh_issued_key TO admin_bff</sql>
-        <rollback>REVOKE SELECT, INSERT, UPDATE ON admin_ssh_issued_key FROM admin_bff</rollback>
+        <sql>GRANT SELECT, INSERT, UPDATE ON admin_ssh_issued_key TO adminbff_app</sql>
+        <rollback>REVOKE SELECT, INSERT, UPDATE ON admin_ssh_issued_key FROM adminbff_app</rollback>
     </changeSet>
 </databaseChangeLog>

@@ -136,9 +136,9 @@
         <preConditions onFail="MARK_RAN" onError="MARK_RAN">
             <dbms type="postgresql"/>
         </preConditions>
-        <comment>GRANT SELECT,INSERT,UPDATE on domain_capability to admin_bff (a row is
+        <comment>GRANT SELECT,INSERT,UPDATE on domain_capability to adminbff_app (a row is
                  never DELETEd — upsert only, exactly like workload_console_config).</comment>
-        <sql>GRANT SELECT, INSERT, UPDATE ON domain_capability TO admin_bff</sql>
-        <rollback>REVOKE SELECT, INSERT, UPDATE ON domain_capability FROM admin_bff</rollback>
+        <sql>GRANT SELECT, INSERT, UPDATE ON domain_capability TO adminbff_app</sql>
+        <rollback>REVOKE SELECT, INSERT, UPDATE ON domain_capability FROM adminbff_app</rollback>
     </changeSet>
 </databaseChangeLog>

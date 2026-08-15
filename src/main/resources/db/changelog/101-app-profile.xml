@@ -61,16 +61,16 @@
     </changeSet>
 
     <changeSet id="101-app-profile-grant" author="hugmesh">
-        <!-- PostgreSQL-only runtime grant. The H2 test store has no admin_bff role, so
+        <!-- PostgreSQL-only runtime grant. The H2 test store has no adminbff_app role, so
              GRANT would error there; the dbms precondition skips this changeSet entirely
              off-Postgres (onFail=MARK_RAN records it as run) so the H2 changelog
              continues. On a real Postgres deployment the grant applies. -->
         <preConditions onFail="MARK_RAN" onError="MARK_RAN">
             <dbms type="postgresql"/>
         </preConditions>
-        <comment>GRANT SELECT,INSERT,UPDATE,DELETE on app_profile to the admin_bff role
+        <comment>GRANT SELECT,INSERT,UPDATE,DELETE on app_profile to the adminbff_app role
                  (a profile is a reusable template — superadmin may remove an unused one).</comment>
-        <sql>GRANT SELECT, INSERT, UPDATE, DELETE ON app_profile TO admin_bff</sql>
-        <rollback>REVOKE SELECT, INSERT, UPDATE, DELETE ON app_profile FROM admin_bff</rollback>
+        <sql>GRANT SELECT, INSERT, UPDATE, DELETE ON app_profile TO adminbff_app</sql>
+        <rollback>REVOKE SELECT, INSERT, UPDATE, DELETE ON app_profile FROM adminbff_app</rollback>
     </changeSet>
 </databaseChangeLog>

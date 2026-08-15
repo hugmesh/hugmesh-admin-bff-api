@@ -45,15 +45,15 @@ public class TestDatabaseConfig {
         POSTGRES = new PostgreSQLContainer<>("postgres:16-alpine");
         POSTGRES.start();
         // The production changelog GRANTs table privileges to the per-app runtime role
-        // `admin_bff` (provisioned out-of-band in prod via per-app SCRAM roles, not by the
+        // `adminbff_app` (provisioned out-of-band in prod via per-app SCRAM roles, not by the
         // changelog). Create it once on the container — roles are cluster-global in Postgres —
         // so the GRANT changesets apply cleanly. (H2 silently ignored these GRANTs, masking it.)
         try (Connection c = DriverManager.getConnection(
                 POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
              Statement s = c.createStatement()) {
-            s.execute("CREATE ROLE admin_bff");
+            s.execute("CREATE ROLE adminbff_app");
         } catch (Exception e) {
-            throw new IllegalStateException("failed to create the admin_bff role on the test Postgres", e);
+            throw new IllegalStateException("failed to create the adminbff_app role on the test Postgres", e);
         }
     }
 

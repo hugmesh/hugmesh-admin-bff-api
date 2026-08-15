@@ -146,10 +146,10 @@
         <preConditions onFail="MARK_RAN" onError="MARK_RAN">
             <dbms type="postgresql"/>
         </preConditions>
-        <comment>GRANT SELECT,INSERT,UPDATE on go_live_intent to admin_bff. NEVER DELETE —
+        <comment>GRANT SELECT,INSERT,UPDATE on go_live_intent to adminbff_app. NEVER DELETE —
                  withdraw is a CAS recorded-&gt;withdrawn (audit rows are never deleted).</comment>
-        <sql>GRANT SELECT, INSERT, UPDATE ON go_live_intent TO admin_bff</sql>
-        <rollback>REVOKE SELECT, INSERT, UPDATE ON go_live_intent FROM admin_bff</rollback>
+        <sql>GRANT SELECT, INSERT, UPDATE ON go_live_intent TO adminbff_app</sql>
+        <rollback>REVOKE SELECT, INSERT, UPDATE ON go_live_intent FROM adminbff_app</rollback>
     </changeSet>
 
 </databaseChangeLog>

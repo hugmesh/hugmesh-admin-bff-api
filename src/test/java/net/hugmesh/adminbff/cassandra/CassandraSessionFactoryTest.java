@@ -93,7 +93,7 @@ class CassandraSessionFactoryTest {
     void authOn_withUsername_appliesCredentials_noError() {
         // The secure path is wired: harden applies .withAuthCredentials and returns
         // the (same, hardened) builder. No live cluster is dialed (no .build()).
-        CassandraSessionFactory f = factory(true, "admin_bff", "s3cret-from-env", false, "", "");
+        CassandraSessionFactory f = factory(true, "adminbff_app", "s3cret-from-env", false, "", "");
         CqlSessionBuilder builder = CqlSession.builder();
         CqlSessionBuilder result = f.harden(builder);
         assertThat(result).isSameAs(builder);   // hardened in place, no throw
@@ -134,7 +134,7 @@ class CassandraSessionFactoryTest {
     @Test
     void authAndSslBothOn_bothApplied_noError(@TempDir Path dir) throws Exception {
         Path store = writeEmptyPkcs12(dir.resolve("cassandra-truststore.p12"), "changeit");
-        CassandraSessionFactory f = factory(true, "admin_bff", "pw-from-env",
+        CassandraSessionFactory f = factory(true, "adminbff_app", "pw-from-env",
                 true, store.toString(), "changeit");
         assertThat(f.authEnabled()).isTrue();
         assertThat(f.sslEnabled()).isTrue();
