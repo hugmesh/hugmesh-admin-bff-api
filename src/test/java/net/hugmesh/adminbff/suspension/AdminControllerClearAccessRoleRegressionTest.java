@@ -105,6 +105,7 @@ class AdminControllerClearAccessRoleRegressionTest extends AdminBffPostgresTestS
                 REGISTRY,
                 mock(FederationApiClient.class),
                 mock(GatewayRevocationClient.class),
+                mock(net.hugmesh.adminbff.capability.DomainCapabilityService.class),
                 mock(CasdoorAdminClient.class));
     }
 

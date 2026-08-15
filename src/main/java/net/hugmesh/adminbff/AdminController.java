@@ -18,6 +18,8 @@ import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import net.hugmesh.adminbff.capability.DomainCapability;
+import net.hugmesh.adminbff.capability.DomainCapabilityService;
 import net.hugmesh.adminbff.domainlock.DomainLockService;
 import net.hugmesh.adminbff.federation.FederationApiClient;
 import net.hugmesh.adminbff.federation.ModerationDecisionDto;
@@ -96,6 +98,9 @@ public class AdminController {
      *  appeals console's decide action). The caller's JWT is bearer-forwarded so
      *  federation-api applies its OWN ADMIN gate + per-domain scope downstream. */
     private final FederationApiClient federation;
+    /** The two-tier domain capability gate. Consulted ONLY by {@link #grantRole}, and only
+     *  for the external-client roles — see {@link DomainCapability#EXTERNAL_CLIENT_GRANT}. */
+    private final DomainCapabilityService capabilities;
 
     public AdminController(AccountStore store, RouteAccessService routeAccess,
                            UrlRegistryService urlRegistry, IsoRepository isoRepo, UsageService usage,
@@ -105,6 +110,7 @@ public class AdminController {
                            DomainRegistry domainRegistry,
                            FederationApiClient federation,
                            GatewayRevocationClient revocations,
+                           DomainCapabilityService capabilities,
                            @Nullable CasdoorAdminClient casdoor) {
         this.store = store;
         this.routeAccess = routeAccess;
@@ -117,6 +123,7 @@ public class AdminController {
         this.domainRegistry = domainRegistry;
         this.federation = federation;
         this.revocations = revocations;
+        this.capabilities = capabilities;
         this.casdoor = casdoor;
     }
 
@@ -750,10 +757,26 @@ public class AdminController {
             + "ROLE_MATRIX_EXTERNAL_CLIENT|ROLE_MASTODON_EXTERNAL_CLIENT|ROLE_FLEET_ADMIN";
 
     /**
+     * The two roles gated by {@link DomainCapability#EXTERNAL_CLIENT_GRANT}. Granting one
+     * of these lets a user connect a THIRD-PARTY Matrix/Mastodon app to their account —
+     * an outbound-surface decision the platform owner (SUPERADMIN) may want to withhold
+     * from a brand entirely, which is what the capability gate expresses.
+     */
+    private static final List<String> EXTERNAL_CLIENT_ROLES =
+            List.of("ROLE_MATRIX_EXTERNAL_CLIENT", "ROLE_MASTODON_EXTERNAL_CLIENT");
+
+    /**
      * Grant {@code roleName} to {@code user} in Casdoor (direct add-to-role call,
      * bypassing the suspension reconcile loop). The {@code user} parameter is the
      * Casdoor username within the configured organization. Returns 503 when the
      * Casdoor admin client is not enabled.
+     *
+     * <p>The two EXTERNAL-CLIENT roles additionally require the
+     * {@link DomainCapability#EXTERNAL_CLIENT_GRANT} capability to be ACTIVE for the
+     * caller's brand (SUPERADMIN granted it AND the brand's admin enabled it AND the
+     * platform-wide kill is off) — 403 otherwise. This is the ONLY assignment path for
+     * those roles, so gating here is what makes the superadmin switch real rather than
+     * decorative.
      */
     @PreAuthorize("hasRole('ADMIN')")
     @Operation(summary = "Grant role", operationId = "adminGrantRole")
@@ -770,6 +793,45 @@ public class AdminController {
             return Mono.just(ResponseEntity.status(503).<Map<String, Object>>body(
                     Map.of("error", "Casdoor admin client not enabled (casdoor.admin.enabled=false)")));
         }
+        return externalClientGate(roleName, auth)
+                .flatMap(denial -> denial.isEmpty()
+                        ? doGrantRole(roleName, user, auth)
+                        : Mono.just(ResponseEntity.status(HttpStatus.FORBIDDEN).body(denial)));
+    }
+
+    /**
+     * The capability pre-check for {@link #grantRole}. Emits an EMPTY map ("proceed") for
+     * any non-external-client role, and for an external-client role whose capability is
+     * active for the caller's brand; otherwise emits the 403 body.
+     *
+     * <p>The role check comes FIRST so the tenant resolution + gate read cost nothing on
+     * the (overwhelmingly common) non-external-client grant path.
+     *
+     * <p>SUPERADMIN is exempt, consistently with every other per-brand predicate in this
+     * service: the grantee can live in ANY brand, so there is no single brand whose gate
+     * row would be the right one to consult — and a superadmin can flip the gate itself in
+     * any case, so enforcing it against their incidental home brand would add a confusing
+     * detour, not a control.
+     */
+    private Mono<Map<String, Object>> externalClientGate(String roleName, Authentication auth) {
+        if (!EXTERNAL_CLIENT_ROLES.contains(roleName)) {
+            return Mono.just(Map.of());
+        }
+        PrincipalDomain scope = scope(auth);
+        if (scope.superadmin()) {
+            return Mono.just(Map.of());
+        }
+        return capabilities.isActive(scope.domain(), DomainCapability.EXTERNAL_CLIENT_GRANT)
+                .map(active -> active ? Map.<String, Object>of() : Map.<String, Object>of(
+                        "error", "external-client grants are not enabled for this domain",
+                        "capability", DomainCapability.EXTERNAL_CLIENT_GRANT,
+                        "domain", scope.domain(),
+                        "role", roleName));
+    }
+
+    /** The unconditional Casdoor write half of {@link #grantRole}, past every gate. */
+    private Mono<ResponseEntity<Map<String, Object>>> doGrantRole(
+            String roleName, String user, Authentication auth) {
         return casdoor.addUserToRole(roleName, casdoor.organization() + "/" + user)
                 // Invalidate the grantee's live custody JWT so the NEW role is picked up
                 // on the next (re-minted) token rather than only after the natural TTL

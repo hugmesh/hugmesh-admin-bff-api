@@ -37,9 +37,28 @@ public record DomainCapability(
      *  can never equal a real issuer-derived domain. */
     public static final String GLOBAL_DOMAIN = " global";
 
-    /** The first (and so far only) capability key this table hosts: gates a user
-     *  registering a mesh radio under their own name. */
+    /** The first capability key this table hosts: gates a user registering a mesh radio
+     *  under their own name. */
     public static final String USER_MESH_DEVICES = "user-mesh-devices";
+
+    /**
+     * Gates whether a domain's ADMIN may grant a USER the external-client roles
+     * ({@code ROLE_MATRIX_EXTERNAL_CLIENT} / {@code ROLE_MASTODON_EXTERNAL_CLIENT}) — the
+     * capability that lets a user point a third-party Matrix/Mastodon app at their
+     * account instead of only the in-mesh web clients.
+     *
+     * <p>Enforced in {@code AdminController#grantRole}, which is the ONLY path that can
+     * assign those two roles. That placement is deliberate: putting the check on a
+     * bespoke external-client endpoint instead would leave the generic
+     * {@code POST /bff/admin/roles/ROLE_MATRIX_EXTERNAL_CLIENT/{user}} as an unguarded
+     * way around the switch, i.e. a superadmin control that only appears to control
+     * anything.
+     *
+     * <p>Same two-tier shape as every other key here — SUPERADMIN grants the domain,
+     * the domain's ADMIN opts in, and the {@link #GLOBAL_DOMAIN} row is the platform-wide
+     * kill. Ships DARK: with no rows written, external-client grants are refused.
+     */
+    public static final String EXTERNAL_CLIENT_GRANT = "external-client-grant";
 
     /** Both per-row keys on: the SUPERADMIN grant AND the domain ADMIN opt-in. Only
      *  meaningful for a PER-DOMAIN row — the GLOBAL row's {@code enabled} is unused by

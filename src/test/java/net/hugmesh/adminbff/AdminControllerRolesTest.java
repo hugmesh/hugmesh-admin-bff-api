@@ -29,6 +29,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.longThat;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.reactive.server.SecurityMockServerConfigurers.mockJwt;
@@ -67,6 +68,7 @@ class AdminControllerRolesTest {
     @MockitoBean CasdoorAdminClient casdoor;
     @MockitoBean net.hugmesh.authcore.provision.GatewayRevocationClient revocations;
     @MockitoBean UsernameGate usernameGate;
+    @MockitoBean net.hugmesh.adminbff.capability.DomainCapabilityService domainCapabilities;
     @MockitoBean ReactiveJwtDecoder jwtDecoder;
 
     private WebTestClient asAdmin() {
@@ -78,11 +80,19 @@ class AdminControllerRolesTest {
         return web.mutateWith(mockJwt().authorities(new SimpleGrantedAuthority("ROLE_USER")));
     }
 
+    /**
+     * The {@code roles} JWT CLAIM matters here, not just the Spring authorities:
+     * {@code PrincipalDomain.resolve} derives {@code superadmin()} via
+     * {@code Roles.isSuperadmin(Jwt)}, which reads the raw claim. Without it the
+     * external-client gate would treat a superadmin as a scoped admin.
+     */
     private WebTestClient asSuperadmin() {
-        return web.mutateWith(mockJwt().authorities(
-                new SimpleGrantedAuthority("ROLE_USER"),
-                new SimpleGrantedAuthority("ROLE_ADMIN"),
-                new SimpleGrantedAuthority("ROLE_SUPERADMIN")));
+        return web.mutateWith(mockJwt()
+                .jwt(j -> j.claim("roles", java.util.List.of("superadmin")))
+                .authorities(
+                        new SimpleGrantedAuthority("ROLE_USER"),
+                        new SimpleGrantedAuthority("ROLE_ADMIN"),
+                        new SimpleGrantedAuthority("ROLE_SUPERADMIN")));
     }
 
     @Test
@@ -202,5 +212,91 @@ class AdminControllerRolesTest {
     void revokeRole_invalidRoleName_isBadRequest() {
         asAdmin().delete().uri("/bff/admin/roles/ROLE_API_API/alice")
                 .exchange().expectStatus().isBadRequest();
+    }
+
+    // ══════════ external-client capability gate (DomainCapability.EXTERNAL_CLIENT_GRANT) ══════════
+    //
+    // grantRole is the ONLY assignment path for the two ROLE_*_EXTERNAL_CLIENT roles, so
+    // this is where the superadmin switch has to bite. If the gate lived on a bespoke
+    // external-client endpoint instead, POSTing the generic /roles/... path would walk
+    // straight around it and the superadmin control would be decorative.
+
+    /** Arm the Casdoor write path so a test that reaches it succeeds. */
+    private void casdoorWritesSucceed() {
+        when(casdoor.organization()).thenReturn("hugmesh");
+        when(casdoor.addUserToRole(anyString(), anyString())).thenReturn(Mono.empty());
+        when(revocations.revokeSubject(anyString(), anyString(), anyLong())).thenReturn(Mono.empty());
+        when(usage.record(anyString(), anyList(), anyString())).thenReturn(Mono.empty());
+    }
+
+    @Test
+    void grantExternalClientRole_capabilityInactive_isForbidden_andNeverWritesCasdoor() {
+        when(domainCapabilities.isActive(anyString(),
+                eq(net.hugmesh.adminbff.capability.DomainCapability.EXTERNAL_CLIENT_GRANT)))
+                .thenReturn(Mono.just(false));
+
+        asAdmin().post().uri("/bff/admin/roles/ROLE_MATRIX_EXTERNAL_CLIENT/alice")
+                .exchange()
+                .expectStatus().isForbidden()
+                .expectBody()
+                .jsonPath("$.capability").isEqualTo("external-client-grant")
+                .jsonPath("$.role").isEqualTo("ROLE_MATRIX_EXTERNAL_CLIENT");
+
+        verify(casdoor, never()).addUserToRole(anyString(), anyString());
+    }
+
+    @Test
+    void grantExternalClientRole_capabilityActive_isAllowed() {
+        casdoorWritesSucceed();
+        when(domainCapabilities.isActive(anyString(),
+                eq(net.hugmesh.adminbff.capability.DomainCapability.EXTERNAL_CLIENT_GRANT)))
+                .thenReturn(Mono.just(true));
+
+        asAdmin().post().uri("/bff/admin/roles/ROLE_MASTODON_EXTERNAL_CLIENT/alice")
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody().jsonPath("$.granted").isEqualTo("ROLE_MASTODON_EXTERNAL_CLIENT");
+
+        verify(casdoor).addUserToRole("ROLE_MASTODON_EXTERNAL_CLIENT", "hugmesh/alice");
+    }
+
+    @Test
+    void grantNonExternalClientRole_neverConsultsTheCapabilityGate() {
+        // The gate is scoped to exactly two roles; every other grantable role must be
+        // unaffected (and must not pay for a gate read).
+        casdoorWritesSucceed();
+
+        asAdmin().post().uri("/bff/admin/roles/ROLE_MATRIX/alice")
+                .exchange().expectStatus().isOk();
+
+        verify(domainCapabilities, never()).isActive(anyString(), anyString());
+    }
+
+    @Test
+    void grantExternalClientRole_asSuperadmin_bypassesTheGate() {
+        // A superadmin owns the switch itself; the grantee can be in any brand, so there
+        // is no single gate row that would be the right one to read.
+        casdoorWritesSucceed();
+
+        asSuperadmin().post().uri("/bff/admin/roles/ROLE_MATRIX_EXTERNAL_CLIENT/alice")
+                .exchange().expectStatus().isOk();
+
+        verify(domainCapabilities, never()).isActive(anyString(), anyString());
+    }
+
+    @Test
+    void revokeExternalClientRole_isNeverGated() {
+        // Taking a capability AWAY must never be blocked by the capability being off —
+        // otherwise flipping the switch would strand every already-granted user.
+        when(casdoor.organization()).thenReturn("hugmesh");
+        when(casdoor.removeUserFromRole(anyString(), anyString())).thenReturn(Mono.empty());
+        when(revocations.revokeSubject(anyString(), anyString(), anyLong())).thenReturn(Mono.empty());
+        when(usage.record(anyString(), anyList(), anyString())).thenReturn(Mono.empty());
+
+        asAdmin().delete().uri("/bff/admin/roles/ROLE_MATRIX_EXTERNAL_CLIENT/alice")
+                .exchange().expectStatus().isOk();
+
+        verify(casdoor).removeUserFromRole("ROLE_MATRIX_EXTERNAL_CLIENT", "hugmesh/alice");
+        verify(domainCapabilities, never()).isActive(anyString(), anyString());
     }
 }

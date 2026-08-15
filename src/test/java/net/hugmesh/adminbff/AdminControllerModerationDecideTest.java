@@ -80,6 +80,7 @@ class AdminControllerModerationDecideTest {
     @MockitoBean CasdoorAdminClient casdoor;
     @MockitoBean net.hugmesh.authcore.provision.GatewayRevocationClient revocations;
     @MockitoBean UsernameGate usernameGate;
+    @MockitoBean net.hugmesh.adminbff.capability.DomainCapabilityService domainCapabilities;
     @MockitoBean ReactiveJwtDecoder jwtDecoder;
 
     // ── Helper mutators ────────────────────────────────────────────────────────

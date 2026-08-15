@@ -64,6 +64,7 @@ class AdminControllerAllowlistTest {
     @MockitoBean net.hugmesh.adminbff.federation.FederationApiClient federation;
     @MockitoBean ReactiveJwtDecoder jwtDecoder;
     @MockitoBean net.hugmesh.authcore.provision.GatewayRevocationClient revocations;
+    @MockitoBean net.hugmesh.adminbff.capability.DomainCapabilityService domainCapabilities;
 
     @TestConfiguration
     static class Cfg {

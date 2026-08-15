@@ -64,6 +64,7 @@ class AdminControllerRouteAccessTest {
     @MockitoBean CasdoorAdminClient casdoor;    // real Casdoor write client (mocked here)
     @MockitoBean net.hugmesh.authcore.provision.GatewayRevocationClient revocations;
     @MockitoBean UsernameGate usernameGate;     // username-derivation gate (mocked here)
+    @MockitoBean net.hugmesh.adminbff.capability.DomainCapabilityService domainCapabilities; // external-client gate (mocked here)
     @MockitoBean ReactiveJwtDecoder jwtDecoder; // satisfies oauth2 resource server wiring
 
     private WebTestClient asSuperadmin() {
