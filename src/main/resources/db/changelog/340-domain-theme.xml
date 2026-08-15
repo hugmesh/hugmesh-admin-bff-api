@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.20.xsd">
+
+  <!--
+    PER-DOMAIN THEMES (operator ask 2026-08-14: "let themes be set different for
+    different domains by the studio and by the superadmin or admin of a domain in the
+    web ui").
+
+    The mesh already themes ONE way for everyone: the Studio composes a token CSS and it
+    is threaded to every UI as SNAP_THEME_CSS. That cannot express "this domain looks
+    different", so the SELECTION has to become data the mesh owns rather than an env var
+    baked at container start.
+
+    ONE ROW PER DOMAIN, and the domain IS the primary key: a domain has exactly one
+    theme, so a surrogate id would allow two rows for one domain and make "which wins?"
+    a question the schema cannot answer. PrincipalDomain.NO_DOMAIN ('') is a legal value
+    and means the MESH DEFAULT — the theme a domain with no row of its own inherits.
+
+    The selection is stored, NOT the rendered CSS: preset + ramp + style are what the
+    operator chose, and re-deriving from them means a fix to the colour maths (the AA
+    derivation has already been corrected twice) reaches every domain without a
+    migration. A cached render belongs in front of this, never in it.
+  -->
+  <changeSet id="340-1-domain-theme" author="hugmesh">
+    <createTable tableName="domain_theme">
+      <column name="domain" type="varchar(255)">
+        <constraints primaryKey="true" nullable="false"/>
+      </column>
+      <!-- theme_presets.PRESETS ids ("nord", "pride", "dark"). Not an enum: the preset
+           table is data and grows (12 desktop schemes landed in one commit), and an
+           enum would need a migration per addition. -->
+      <column name="preset" type="varchar(64)">
+        <constraints nullable="false"/>
+      </column>
+      <!-- theme_presets.MODES — the time-of-day ramp (dark|light|dawn|…). -->
+      <column name="ramp" type="varchar(32)" defaultValue="dark">
+        <constraints nullable="false"/>
+      </column>
+      <!-- theme.STYLE_VARIANTS — the shape axis (soft|sharp|outlined|…). -->
+      <column name="style" type="varchar(32)" defaultValue="soft">
+        <constraints nullable="false"/>
+      </column>
+      <!-- Optional hand-picked overrides; null = use the preset's own colours. -->
+      <column name="primary_hex" type="varchar(7)"/>
+      <column name="secondary_hex" type="varchar(7)"/>
+      <column name="updated_at" type="timestamp" defaultValueComputed="now()">
+        <constraints nullable="false"/>
+      </column>
+      <!-- WHO last changed it. A theme is a visible, mesh-wide change and the audit
+           question ("who made everything pink?") has no other answer. -->
+      <column name="updated_by" type="varchar(255)"/>
+    </createTable>
+  </changeSet>
+
+  <!-- Shape guards. A bad value here does not fail loudly at write time — it renders a
+       fallback theme, which reads as "my choice was ignored", the exact complaint this
+       whole feature line has already produced twice. Reject it at the boundary. -->
+  <changeSet id="340-2-domain-theme-hex-check" author="hugmesh">
+    <sql>
+      ALTER TABLE domain_theme ADD CONSTRAINT domain_theme_primary_hex_chk
+        CHECK (primary_hex IS NULL OR primary_hex ~ '^#[0-9A-Fa-f]{6}$');
+      ALTER TABLE domain_theme ADD CONSTRAINT domain_theme_secondary_hex_chk
+        CHECK (secondary_hex IS NULL OR secondary_hex ~ '^#[0-9A-Fa-f]{6}$');
+    </sql>
+    <rollback>
+      <sql>
+        ALTER TABLE domain_theme DROP CONSTRAINT domain_theme_primary_hex_chk;
+        ALTER TABLE domain_theme DROP CONSTRAINT domain_theme_secondary_hex_chk;
+      </sql>
+    </rollback>
+  </changeSet>
+</databaseChangeLog>

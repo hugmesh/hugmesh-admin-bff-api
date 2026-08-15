@@ -696,4 +696,5 @@
       already exist by here, so the drop + re-add applies cleanly.
     -->
     <include file="db/changelog/330-access-suspension-mesh-role.xml"/>
+    <include file="db/changelog/340-domain-theme.xml"/>
 </databaseChangeLog>
