@@ -543,7 +543,7 @@ JWT principal.
 - `GET /bff/me` / `GET /bff/me/namespaces` — the caller's identity and granted
   namespaces (admins see all platform namespaces).
 - `POST /bff/provision/matrix` (`ROLE_MATRIX`) / `POST /bff/provision/mastodon`
-  (`ROLE_MASTODON`) — broker **real** Synapse/Mastodon access tokens server-side, only
+  (`ROLE_MASTODON`) — broker **real** tuwunel/Mastodon access tokens server-side, only
   after registration completes. The broker refuses a **suspended** or **reserved**
   localpart. The homeserver service password (`broker.svc-password`) is now **mandatory**:
   the old baked-in default (`hugmesh-svc-pw`) is **gone** (#136), so `SVC_PASSWORD`

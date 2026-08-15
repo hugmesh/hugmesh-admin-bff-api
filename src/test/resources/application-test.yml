@@ -12,7 +12,7 @@
 # (a missing SVC_PASSWORD fails prod startup rather than falling back to the known
 # "hugmesh-svc-pw" credential). The full-context boots that instantiate
 # ServiceTokenBroker resolve broker.svc-password from here; this is a throwaway test
-# literal that never leaves the test JVM (no real Synapse/Mastodon is dialed in test).
+# literal that never leaves the test JVM (no real tuwunel/Mastodon is dialed in test).
 broker:
   svc-password: "test-svc-pw"
 

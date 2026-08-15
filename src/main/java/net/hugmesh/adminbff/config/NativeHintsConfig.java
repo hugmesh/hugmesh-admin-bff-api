@@ -33,7 +33,7 @@ import net.hugmesh.adminbff.web.dto.RegisterDeviceRequest;
  *   <li><b>JSON-bound DTOs</b> reached reflectively through Jackson — the records
  *       crossing the HTTP / Kafka boundary ({@link Account}, {@link RouteRule},
  *       {@link UrlRoute}, {@link IsoArtifact}, {@link UsageEvent}). The Casdoor /
- *       ClickHouse / Synapse clients deserialize into raw {@code Map}/{@code List}
+ *       ClickHouse / tuwunel clients deserialize into raw {@code Map}/{@code List}
  *       (already reflection-safe), but the typed records need explicit binding
  *       hints so their constructors/accessors survive native image.</li>
  *   <li><b>The {@code @KafkaListener} bean</b> — keep the consumer + its advised

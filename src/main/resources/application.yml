@@ -84,9 +84,11 @@ broker:
   # + present client certs). The defaults stay on the direct services until the
   # proxies land. The broker ALSO refuses to mint for a suspended localpart
   # (access_suspension is the source of truth) regardless of the URL repoint.
-  synapse-url: "${SYNAPSE_URL:http://matrix-synapse.hugmesh-backend.svc.cluster.local:8008}"
+  # synapse-url is a FROZEN property name (env SYNAPSE_URL) — the homeserver behind
+  # it is tuwunel; see ServiceTokenBroker's constructor javadoc.
+  synapse-url: "${SYNAPSE_URL:http://tuwunel.hugmesh-backend.svc.cluster.local:8008}"
   mastodon-url: "${MASTODON_URL:http://mastodon-web.hugmesh-backend.svc.cluster.local:3000}"
-  # MANDATORY — no baked default. This password brokers REAL Synapse/Mastodon access
+  # MANDATORY — no baked default. This password brokers REAL tuwunel/Mastodon access
   # tokens server-side; a hard-coded fallback (the old "hugmesh-svc-pw") would let a
   # deployment that forgot to set SVC_PASSWORD silently mint tokens against a
   # publicly-known credential. With no default the app FAILS TO START unless SVC_PASSWORD

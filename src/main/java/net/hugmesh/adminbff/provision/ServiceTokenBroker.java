@@ -20,12 +20,12 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * Brokers REAL Matrix (Synapse) and Mastodon access tokens server-side (reactive),
+ * Brokers REAL Matrix (tuwunel) and Mastodon access tokens server-side (reactive),
  * so the admin-ui / login-ui never hold homeserver admin credentials — the BFF
  * mints them against the real services and hands back just the user's access
- * token. The reactive port of the mock-bff {@code synapseToken} / {@code
+ * token. The reactive port of the mock-bff {@code matrixToken} / {@code
  * mastodonToken} brokering, with the same register-then-login fallback against
- * Synapse.
+ * tuwunel.
  *
  * <p>Only callable once the account's registration is complete (the controller
  * enforces the two-stage gate before delegating here).
@@ -47,7 +47,7 @@ public class ServiceTokenBroker {
     /** OAuth scopes for the broker's app + minted user tokens (Mastodon/Akkoma). */
     private static final String MASTODON_SCOPES = "read write follow";
 
-    private final WebClient synapse;
+    private final WebClient tuwunel;
     private final WebClient mastodon;
     private final String svcPassword;
     private final String mastodonEmailDomain;
@@ -67,10 +67,16 @@ public class ServiceTokenBroker {
      * overrides {@code broker.synapse-url}/{@code broker.mastodon-url} to the
      * {@code *-proxy:4443} services (presenting client certs) once those sidecars
      * exist. Until the proxy is present the defaults below keep the broker working.
+     *
+     * <p>{@code broker.synapse-url} is a FROZEN Spring property name — the k8s
+     * deployment manifest and every local compose profile set the env var
+     * {@code SYNAPSE_URL} to bind it, even though the homeserver behind it is
+     * tuwunel (a Synapse-COMPATIBLE server, hence the name). Do not rename the
+     * property key without a coordinated change across every repo that sets it.
      */
     @Autowired
     public ServiceTokenBroker(
-            @Value("${broker.synapse-url:http://matrix-synapse.hugmesh-backend.svc.cluster.local:8008}") String synapseUrl,
+            @Value("${broker.synapse-url:http://tuwunel.hugmesh-backend.svc.cluster.local:8008}") String tuwunelUrl,
             @Value("${broker.mastodon-url:http://mastodon-web.hugmesh-backend.svc.cluster.local:3000}") String mastodonUrl,
             // No default: the insecure literal lives nowhere. broker.svc-password resolves
             // from the MANDATORY ${SVC_PASSWORD} in application.yml, so a missing secret
@@ -79,7 +85,7 @@ public class ServiceTokenBroker {
             @Value("${broker.mastodon-email-domain:}") String mastodonEmailDomain,
             SuspensionService suspensions,
             HsTokenRegistry hsTokens) {
-        this.synapse = WebClient.builder().baseUrl(synapseUrl).build();
+        this.tuwunel = WebClient.builder().baseUrl(tuwunelUrl).build();
         // Plain-HTTP homeserver base (compose talks to mastodon-web:3000 directly, no
         // TLS sidecar): assert the edge protocol or mainline Mastodon's force_ssl 308s
         // every API call (its /health is exempt, so the service LOOKS fine while every
@@ -101,16 +107,16 @@ public class ServiceTokenBroker {
      * exchange) so the JSON decode path can be exercised without a live
      * homeserver. Production uses the {@code @Autowired} constructor above.
      */
-    ServiceTokenBroker(WebClient synapse, WebClient mastodon, String svcPassword,
+    ServiceTokenBroker(WebClient tuwunel, WebClient mastodon, String svcPassword,
                        SuspensionService suspensions, HsTokenRegistry hsTokens) {
-        this(synapse, mastodon, svcPassword, "e2e.local", suspensions, hsTokens);
+        this(tuwunel, mastodon, svcPassword, "e2e.local", suspensions, hsTokens);
     }
 
     /** Test seam with an explicit mastodon email domain. */
-    ServiceTokenBroker(WebClient synapse, WebClient mastodon, String svcPassword,
+    ServiceTokenBroker(WebClient tuwunel, WebClient mastodon, String svcPassword,
                        String mastodonEmailDomain,
                        SuspensionService suspensions, HsTokenRegistry hsTokens) {
-        this.synapse = synapse;
+        this.tuwunel = tuwunel;
         this.mastodon = mastodon;
         this.svcPassword = svcPassword;
         this.mastodonEmailDomain = mastodonEmailDomain;
@@ -126,16 +132,16 @@ public class ServiceTokenBroker {
     }
 
     /**
-     * Mint (or recover) a Synapse access token: register, else password-login.
+     * Mint (or recover) a tuwunel access token: register, else password-login.
      * Refuses a localpart under an active ROLE_MATRIX suspension (the table is the
      * source of truth, so a suspended user can never re-broker a token even if the
      * homeserver account leg is still stubbed). On success the brokered token is
      * recorded in the hs_tokens registry (kind=brokered).
      */
     public Mono<Map<String, Object>> matrixToken(String username) {
-        // Guard suspension, then register or login to Synapse and record the brokered token.
+        // Guard suspension, then register or login to tuwunel and record the brokered token.
         return guardSuspended(username, AccessSuspension.ROLE_MATRIX)
-                .then(Mono.defer(() -> synapseRegisterOrLogin(username)
+                .then(Mono.defer(() -> tuwunelRegisterOrLogin(username)
                         .flatMap(out -> recordBrokered(out, username, "matrix"))));
     }
 
@@ -285,7 +291,7 @@ public class ServiceTokenBroker {
      * Like {@link #postJson} but PARSES 4xx protocol bodies instead of throwing (the
      * doorkeeper endpoints speak through them: {@code invalid_grant} on the recover
      * leg, validation errors on register) — only 5xx (a homeserver-side failure with
-     * no protocol meaning) propagates as an error. Mirrors {@link #synapseRegister}'s
+     * no protocol meaning) propagates as an error. Mirrors {@link #tuwunelRegister}'s
      * UIAA tolerance. Optional {@code authorization} header for the app-token leg.
      */
     private Mono<JsonNode> postJsonTolerant(WebClient client, String path, Object body,
@@ -303,9 +309,9 @@ public class ServiceTokenBroker {
                 .switchIfEmpty(Mono.fromSupplier(JsonNodeFactory.instance::objectNode));
     }
 
-    /** Register with Synapse (two-stage if dummy auth required), falling back to password login. */
-    private Mono<Map<String, Object>> synapseRegisterOrLogin(String username) {
-        return synapseRegister(username, null).flatMap(reg -> resolveRegistrationResponse(reg, username));
+    /** Register with tuwunel (two-stage if dummy auth required), falling back to password login. */
+    private Mono<Map<String, Object>> tuwunelRegisterOrLogin(String username) {
+        return tuwunelRegister(username, null).flatMap(reg -> resolveRegistrationResponse(reg, username));
     }
 
     /** Interpret the initial registration response: return token, attempt stage-2, or login. */
@@ -315,14 +321,14 @@ public class ServiceTokenBroker {
         }
         String regSession = reg.path("session").asText(null);
         Mono<JsonNode> stage2 = (regSession != null)
-                ? synapseRegister(username, Map.of("type", "m.login.dummy", "session", regSession))
+                ? tuwunelRegister(username, Map.of("type", "m.login.dummy", "session", regSession))
                 : Mono.empty();
         return stage2.flatMap(reg2 -> reg2.hasNonNull("access_token")
                         ? Mono.just(tokenOut(reg2)) : Mono.<Map<String, Object>>empty())
                 // Already registered → password login.
-                .switchIfEmpty(synapseLogin(username).flatMap(login -> {
+                .switchIfEmpty(tuwunelLogin(username).flatMap(login -> {
                     if (login.hasNonNull("access_token")) return Mono.just(tokenOut(login));
-                    return Mono.error(new RuntimeException("synapse: " + login));
+                    return Mono.error(new RuntimeException("tuwunel: " + login));
                 }));
     }
 
@@ -350,7 +356,7 @@ public class ServiceTokenBroker {
         return hsTokens.recordBrokered(token.toString(), localpart, platform).thenReturn(out);
     }
 
-    // ── Synapse helpers ────────────────────────────────────────────────
+    // ── tuwunel helpers (Matrix client-server API, Synapse-compatible) ──────
     /**
      * Matrix client registration POST that TOLERATES the spec's non-2xx control
      * responses so the User-Interactive-Auth (UIAA) handshake can complete. Per the
@@ -364,16 +370,16 @@ public class ServiceTokenBroker {
      * </ul>
      * A plain {@code .retrieve()} raises {@code WebClientResponseException} on both,
      * short-circuiting {@link #resolveRegistrationResponse} (and the login fallback)
-     * before it can read the body — so a real homeserver (e.g. tuwunel/Synapse) could
-     * NEVER be provisioned. Here both 400 and 401 are read as JSON and passed through;
-     * every other 4xx/5xx still propagates as a genuine error.
+     * before it can read the body — so a real homeserver (e.g. tuwunel or Synapse)
+     * could NEVER be provisioned. Here both 400 and 401 are read as JSON and passed
+     * through; every other 4xx/5xx still propagates as a genuine error.
      */
-    private Mono<JsonNode> synapseRegister(String username, Map<String, Object> auth) {
+    private Mono<JsonNode> tuwunelRegister(String username, Map<String, Object> auth) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("username", username);
         body.put("password", svcPassword);
         if (auth != null) body.put("auth", auth);
-        return synapse.post().uri("/_matrix/client/v3/register")
+        return tuwunel.post().uri("/_matrix/client/v3/register")
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(body)
                 .exchangeToMono(resp -> {
@@ -387,12 +393,12 @@ public class ServiceTokenBroker {
                 });
     }
 
-    private Mono<JsonNode> synapseLogin(String username) {
+    private Mono<JsonNode> tuwunelLogin(String username) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("type", "m.login.password");
         body.put("identifier", Map.of("type", "m.id.user", "user", username));
         body.put("password", svcPassword);
-        return postJson(synapse, "/_matrix/client/v3/login", body);
+        return postJson(tuwunel, "/_matrix/client/v3/login", body);
     }
 
     private static Map<String, Object> tokenOut(JsonNode n) {
