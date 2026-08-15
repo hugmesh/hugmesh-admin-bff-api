@@ -36,35 +36,85 @@ import java.util.Map;
 import java.util.Optional;
 
 /**
- * The REAL {@link WorkloadClient}, backed by the fabric8 {@link KubernetesClient} (already on
- * the classpath via the leader-election starter). Wired ONLY when
- * {@code app.workload-console.k8s.enabled=true} (see {@link WorkloadConsoleClientConfig}) —
- * otherwise the fail-closed {@link NoopWorkloadClient} is the bean. Every blocking fabric8
- * call is wrapped on the boundedElastic scheduler (the reactive boundary), and EVERY error
- * fails-closed to {@link WorkloadClientException#failed} (mapped to 502), never coerced to an
- * empty success.
+ * The REAL {@link WorkloadClient}, backed by TWO fabric8 {@link KubernetesClient}s — one per
+ * least-privilege ServiceAccount the generator provisions (workload-console-rbac):
+ *
+ * <ul>
+ *   <li>{@code readClient} (workload-console-read SA) — every read: list/inspect/
+ *       namespace-domain/metrics/events/volumes/network/logs. Its Role has NO
+ *       exec/portforward/delete/secrets;</li>
+ *   <li>{@code mutateClient} (workload-console-mutate SA) — every runtime mutation:
+ *       delete/rollout-restart/exec/port-forward (pods delete + pods/exec + pods/portforward
+ *       create, nothing wider).</li>
+ * </ul>
+ *
+ * Either half may be ABSENT (its projected token file was not mounted): that half then raises
+ * {@link WorkloadClientException#unavailable} on every call — the SAME 503 posture as the
+ * {@link NoopWorkloadClient}, NEVER a fallback onto the other half or the pod's own SA (the
+ * pod runs as backups-effector; see {@link WorkloadConsoleClientConfig}). Wired ONLY when
+ * {@code app.workload-console.k8s.enabled=true} — otherwise the fail-closed
+ * {@link NoopWorkloadClient} is the bean. Every blocking fabric8 call is wrapped on the
+ * boundedElastic scheduler (the reactive boundary), and EVERY error fails-closed to
+ * {@link WorkloadClientException#failed} (mapped to 502), never coerced to an empty success.
  *
  * <p>The namespace allowlist (STEP 0b) + the central authz predicate have already run before
  * any call reaches here, and the in-cluster RBAC of the two least-privilege ServiceAccounts
- * the generator provisions is the defence-in-depth backstop (the read SA's Role has NO
- * exec/portforward/delete/secrets and is bound ONLY in app-tier namespaces).
+ * is the defence-in-depth backstop (bound ONLY in app-tier namespaces).
  */
 public class Fabric8WorkloadClient implements WorkloadClient {
 
     private static final Logger log = LoggerFactory.getLogger(Fabric8WorkloadClient.class);
 
-    private final KubernetesClient client;
+    static final String READ_DARK_MSG =
+            "workload console READ k8s client is not available "
+            + "(workload-console-read SA token not mounted) — fail-closed";
+    static final String MUTATE_DARK_MSG =
+            "workload console MUTATE k8s client is not available "
+            + "(workload-console-mutate SA token not mounted) — fail-closed";
 
-    public Fabric8WorkloadClient(KubernetesClient client) {
-        this.client = client;
+    private final KubernetesClient readClient;
+    private final KubernetesClient mutateClient;
+
+    /** Either half may be null (its SA token file was absent) — that half then 503s. */
+    public Fabric8WorkloadClient(KubernetesClient readClient, KubernetesClient mutateClient) {
+        this.readClient = readClient;
+        this.mutateClient = mutateClient;
     }
 
     @Override
     public boolean available() {
-        return true;
+        return readClient != null || mutateClient != null;
     }
 
+    boolean readHalfAvailable() {
+        return readClient != null;
+    }
+
+    boolean mutateHalfAvailable() {
+        return mutateClient != null;
+    }
+
+    /** The read half, or the Noop/503 posture when its SA token was never mounted. Called
+     *  INSIDE the reactive callables so the dark half surfaces as an error signal, not a
+     *  synchronous throw at assembly. */
+    private KubernetesClient read() {
+        if (readClient == null) throw WorkloadClientException.unavailable(READ_DARK_MSG);
+        return readClient;
+    }
+
+    /** The mutate half, or the Noop/503 posture when its SA token was never mounted. */
+    private KubernetesClient mutate() {
+        if (mutateClient == null) throw WorkloadClientException.unavailable(MUTATE_DARK_MSG);
+        return mutateClient;
+    }
+
+    /** Wrap a k8s failure as a 502 — but PRESERVE a fail-closed 503 riding the cause chain
+     *  (a projected token vanishing mid-flight raises unavailable inside the fabric8 request
+     *  pipeline, which may hand it back wrapped). */
     private static WorkloadClientException fail(String what, Throwable t) {
+        for (Throwable c = t; c != null; c = c.getCause()) {
+            if (c instanceof WorkloadClientException w && w.isUnavailable()) return w;
+        }
         return WorkloadClientException.failed("workload k8s call failed: " + what, t);
     }
 
@@ -142,7 +192,7 @@ public class Fabric8WorkloadClient implements WorkloadClient {
     @Override
     public Flux<PodSummary> listPods(String namespace) {
         return Mono.fromCallable(() ->
-                        client.pods().inNamespace(namespace).list().getItems().stream()
+                        read().pods().inNamespace(namespace).list().getItems().stream()
                                 .map(Fabric8WorkloadClient::summary).toList())
                 .subscribeOn(Schedulers.boundedElastic())
                 .flatMapMany(Flux::fromIterable)
@@ -157,13 +207,13 @@ public class Fabric8WorkloadClient implements WorkloadClient {
     @Override
     public Mono<PodInspect> inspectPod(String namespace, String name) {
         // Fetch and project the pod metadata on boundedElastic (blocking k8s call).
-        return Mono.fromCallable(() -> fetchPodInspect(namespace, name))
+        return Mono.fromCallable(() -> fetchPodInspect(read(), namespace, name))
                 .subscribeOn(Schedulers.boundedElastic())
                 .onErrorMap(t -> !(t instanceof WorkloadClientException), t -> fail("inspectPod " + name, t));
     }
 
     /** Blocking: fetch the pod and project to a PodInspect (labels only, no secrets). */
-    private PodInspect fetchPodInspect(String namespace, String name) {
+    private static PodInspect fetchPodInspect(KubernetesClient client, String namespace, String name) {
         Pod p = client.pods().inNamespace(namespace).withName(name).get();
         if (p == null) return null;
         var meta = p.getMetadata();
@@ -191,15 +241,15 @@ public class Fabric8WorkloadClient implements WorkloadClient {
     public Mono<String> namespaceDomain(String namespace) {
         // Read the namespace object's owner-chain domain label on boundedElastic (blocking get).
         // EMPTY when the namespace is unlabelled (single-brand-cluster default) or absent.
-        return Mono.fromCallable(() -> fetchNamespaceDomain(namespace))
+        return Mono.fromCallable(() -> fetchNamespaceDomain(read(), namespace))
                 .subscribeOn(Schedulers.boundedElastic())
                 .flatMap(opt -> opt.map(Mono::just).orElseGet(Mono::empty))
                 .onErrorMap(t -> !(t instanceof WorkloadClientException), t -> fail("namespaceDomain " + namespace, t));
     }
 
-    /** Blocking: read the namespace's {@code hugmesh.net/domain} owner-chain label;
+    /** Blocking: read the namespace's {@code hugmesh.systems/domain} owner-chain label;
      *  Optional.empty when the namespace has no such label (or does not exist). */
-    private Optional<String> fetchNamespaceDomain(String namespace) {
+    private static Optional<String> fetchNamespaceDomain(KubernetesClient client, String namespace) {
         var ns = client.namespaces().withName(namespace).get();
         if (ns == null || ns.getMetadata() == null || ns.getMetadata().getLabels() == null) {
             return Optional.empty();
@@ -211,13 +261,14 @@ public class Fabric8WorkloadClient implements WorkloadClient {
     @Override
     public Flux<PodMetrics> podMetrics(String namespace) {
         // Collect pod metrics on boundedElastic; swallow absence (metrics-server optional).
-        return Mono.fromCallable(() -> fetchPodMetrics(namespace))
+        // read() is resolved OUTSIDE the helper's swallow-catch so a dark read half stays 503.
+        return Mono.fromCallable(() -> fetchPodMetrics(read(), namespace))
                 .subscribeOn(Schedulers.boundedElastic())
                 .flatMapMany(Flux::fromIterable);
     }
 
     /** Blocking: collect per-pod cpu/mem metrics; returns empty list when metrics-server is absent. */
-    private List<PodMetrics> fetchPodMetrics(String namespace) {
+    private static List<PodMetrics> fetchPodMetrics(KubernetesClient client, String namespace) {
         List<PodMetrics> out = new ArrayList<>();
         try {
             client.top().pods().metrics(namespace).getItems().forEach(m -> {
@@ -241,7 +292,7 @@ public class Fabric8WorkloadClient implements WorkloadClient {
     public Flux<WorkloadEvent> events(String namespace) {
         // Map k8s Event objects to WorkloadEvent on boundedElastic (blocking list call).
         return Mono.fromCallable(() ->
-                        client.v1().events().inNamespace(namespace).list().getItems().stream()
+                        read().v1().events().inNamespace(namespace).list().getItems().stream()
                                 .map(e -> toWorkloadEvent(namespace, e)).toList())
                 .subscribeOn(Schedulers.boundedElastic())
                 .flatMapMany(Flux::fromIterable)
@@ -261,7 +312,7 @@ public class Fabric8WorkloadClient implements WorkloadClient {
     public Flux<VolumeSummary> volumes(String namespace) {
         // Map PVC resources to VolumeSummary on boundedElastic (blocking list call).
         return Mono.fromCallable(() ->
-                        client.persistentVolumeClaims().inNamespace(namespace).list().getItems().stream()
+                        read().persistentVolumeClaims().inNamespace(namespace).list().getItems().stream()
                                 .map(pvc -> toVolumeSummary(namespace, pvc)).toList())
                 .subscribeOn(Schedulers.boundedElastic())
                 .flatMapMany(Flux::fromIterable)
@@ -284,6 +335,7 @@ public class Fabric8WorkloadClient implements WorkloadClient {
     @Override
     public Flux<NetworkSummary> network(String namespace) {
         return Mono.fromCallable(() -> {
+                    KubernetesClient client = read();
                     List<NetworkSummary> out = new ArrayList<>();
                     client.services().inNamespace(namespace).list().getItems().forEach(s ->
                             out.add(new NetworkSummary(namespace, "Service", s.getMetadata().getName(),
@@ -301,7 +353,7 @@ public class Fabric8WorkloadClient implements WorkloadClient {
     @Override
     public Mono<String> readLog(String namespace, String pod, String container, int tailLines) {
         return Mono.fromCallable(() ->
-                        client.pods().inNamespace(namespace).withName(pod).inContainer(container)
+                        read().pods().inNamespace(namespace).withName(pod).inContainer(container)
                                 .tailingLines(Math.max(1, tailLines)).getLog())
                 .subscribeOn(Schedulers.boundedElastic())
                 .onErrorMap(t -> !(t instanceof WorkloadClientException), t -> fail("readLog " + pod, t));
@@ -314,13 +366,14 @@ public class Fabric8WorkloadClient implements WorkloadClient {
                 .subscribeOn(Schedulers.boundedElastic());
     }
 
-    /** Open a piped log watch and drain lines to the sink on boundedElastic; dispose closes the watch. */
+    /** Open a piped log watch and drain lines to the sink on boundedElastic; dispose closes
+     *  the watch. A dark read half surfaces via {@code fail}'s unavailable-preserving unwrap. */
     private void openLogStream(String namespace, String pod, String container,
                                 reactor.core.publisher.FluxSink<LogLine> sink) {
         PipedOutputStream pos = new PipedOutputStream();
         try {
             PipedInputStream pis = new PipedInputStream(pos, 64 * 1024);
-            var watch = client.pods().inNamespace(namespace).withName(pod)
+            var watch = read().pods().inNamespace(namespace).withName(pod)
                     .inContainer(container).watchLog(pos);
             Schedulers.boundedElastic().schedule(() -> drainLogLines(pis, container, pod, sink));
             sink.onDispose(() -> {
@@ -352,7 +405,7 @@ public class Fabric8WorkloadClient implements WorkloadClient {
     @Override
     public Mono<Integer> deletePod(String namespace, String pod) {
         return Mono.fromCallable(() -> {
-                    var details = client.pods().inNamespace(namespace).withName(pod).delete();
+                    var details = mutate().pods().inNamespace(namespace).withName(pod).delete();
                     return details == null ? 0 : details.size();
                 })
                 .subscribeOn(Schedulers.boundedElastic())
@@ -362,13 +415,13 @@ public class Fabric8WorkloadClient implements WorkloadClient {
     @Override
     public Mono<Integer> deleteWorkloadPods(String namespace, String workload) {
         // List pods matching the workload label then delete each on boundedElastic.
-        return Mono.fromCallable(() -> deleteMatchingPods(namespace, workload))
+        return Mono.fromCallable(() -> deleteMatchingPods(mutate(), namespace, workload))
                 .subscribeOn(Schedulers.boundedElastic())
                 .onErrorMap(t -> !(t instanceof WorkloadClientException), t -> fail("deleteWorkloadPods " + workload, t));
     }
 
     /** Blocking: delete all pods whose workload label matches and return the total deleted count. */
-    private int deleteMatchingPods(String namespace, String workload) {
+    private static int deleteMatchingPods(KubernetesClient client, String namespace, String workload) {
         var pods = client.pods().inNamespace(namespace).list().getItems().stream()
                 .filter(p -> workload.equals(workloadOf(p)))
                 .map(p -> p.getMetadata().getName()).toList();
@@ -383,15 +436,16 @@ public class Fabric8WorkloadClient implements WorkloadClient {
     @Override
     public Mono<ExecResult> execReadOnly(String namespace, String pod, String container,
                                          List<String> command) {
-        // Run the one-shot exec on boundedElastic (blocks until the command exits).
-        return Mono.fromCallable(() -> runExecReadOnly(namespace, pod, container, command))
+        // Run the one-shot exec on boundedElastic (blocks until the command exits). Exec is a
+        // pods/exec CREATE — the MUTATE SA's verb (the read Role has no exec), even read-only.
+        return Mono.fromCallable(() -> runExecReadOnly(mutate(), namespace, pod, container, command))
                 .subscribeOn(Schedulers.boundedElastic())
                 .onErrorMap(t -> !(t instanceof WorkloadClientException), t -> fail("execReadOnly " + pod, t));
     }
 
     /** Blocking: exec a read-only command, capture stdout+stderr, return exit code + output. */
-    private ExecResult runExecReadOnly(String namespace, String pod, String container,
-                                        List<String> command) throws Exception {
+    private static ExecResult runExecReadOnly(KubernetesClient client, String namespace, String pod,
+                                        String container, List<String> command) throws Exception {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         ByteArrayOutputStream err = new ByteArrayOutputStream();
         final int[] exit = {-1};
@@ -414,14 +468,14 @@ public class Fabric8WorkloadClient implements WorkloadClient {
     public Mono<ExecSession> openExec(String namespace, String pod, String container,
                                       List<String> command) {
         // Open a PTY exec session on boundedElastic (blocking k8s watch setup).
-        return Mono.fromCallable(() -> openExecSession(namespace, pod, container, command))
+        return Mono.fromCallable(() -> openExecSession(mutate(), namespace, pod, container, command))
                 .subscribeOn(Schedulers.boundedElastic())
                 .onErrorMap(t -> !(t instanceof WorkloadClientException), t -> fail("openExec " + pod, t));
     }
 
     /** Blocking: wire piped stdin + sink-backed stdout/stderr and open the PTY exec watch. */
-    private ExecSession openExecSession(String namespace, String pod, String container,
-                                         List<String> command) throws Exception {
+    private static ExecSession openExecSession(KubernetesClient client, String namespace, String pod,
+                                         String container, List<String> command) throws Exception {
         Sinks.Many<byte[]> output = Sinks.many().multicast().onBackpressureBuffer();
         PipedInputStream stdin = new PipedInputStream(64 * 1024);
         PipedOutputStream stdinWriter = new PipedOutputStream(stdin);
@@ -441,14 +495,14 @@ public class Fabric8WorkloadClient implements WorkloadClient {
     @Override
     public Mono<PortForwardSession> openPortForward(String namespace, String workload, int port) {
         // Resolve the first pod of the workload then open a port-forward on boundedElastic.
-        return Mono.fromCallable(() -> openPortForwardSession(namespace, workload, port))
+        return Mono.fromCallable(() -> openPortForwardSession(mutate(), namespace, workload, port))
                 .subscribeOn(Schedulers.boundedElastic())
                 .onErrorMap(t -> !(t instanceof WorkloadClientException), t -> fail("openPortForward " + workload, t));
     }
 
     /** Blocking: find the first pod of the workload and open a LocalPortForward to it. */
-    private PortForwardSession openPortForwardSession(String namespace, String workload,
-                                                       int port) {
+    private static PortForwardSession openPortForwardSession(KubernetesClient client, String namespace,
+                                                       String workload, int port) {
         // Forward to the first ready pod of the workload.
         String podName = client.pods().inNamespace(namespace).list().getItems().stream()
                 .filter(p -> workload.equals(workloadOf(p)))

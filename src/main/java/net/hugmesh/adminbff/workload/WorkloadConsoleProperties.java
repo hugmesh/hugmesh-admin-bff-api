@@ -50,6 +50,9 @@ public class WorkloadConsoleProperties {
     /** Default grant TTL in hours (DECISION 4/6, ~24h). */
     private long grantTtlHours = 24;
 
+    /** The k8s seam's two projected SA token files (read / mutate). */
+    private K8s k8s = new K8s();
+
     public boolean isEnabled() {
         return enabled;
     }
@@ -90,6 +93,14 @@ public class WorkloadConsoleProperties {
         this.grantTtlHours = grantTtlHours;
     }
 
+    public K8s getK8s() {
+        return k8s;
+    }
+
+    public void setK8s(K8s k8s) {
+        this.k8s = k8s == null ? new K8s() : k8s;
+    }
+
     // ── derived helpers ─────────────────────────────────────────────────────────
 
     /** The namespace allowlist as a Set for O(1) STEP-0b membership checks. */
@@ -116,6 +127,42 @@ public class WorkloadConsoleProperties {
         if (command == null || command.isEmpty()) return false;
         String head = command.get(0);
         return head != null && execReadOnlyCommands.contains(head);
+    }
+
+    /**
+     * The k8s seam ({@code app.workload-console.k8s.*}) — the two PROJECTED ServiceAccount
+     * token files the deployment mounts ({@code automountServiceAccountToken:false} on both
+     * SAs; the generator's workload-console-rbac provisions them). Each file is the SOLE
+     * credential of its half: an absent/unreadable file degrades that half to the Noop/503
+     * posture — NEVER a fallback to the pod's own SA (the pod runs as backups-effector).
+     * The files are re-read per k8s request, so kubelet-rotated projected tokens are picked
+     * up without a restart (fabric8 {@code OAuthTokenProvider}).
+     */
+    public static class K8s {
+
+        /** The workload-console-read SA token file (the read half: list/inspect/logs/
+         *  metrics/events/volumes/network). */
+        private String readTokenFile = "/var/run/secrets/workload-console-read/token";
+
+        /** The workload-console-mutate SA token file (the mutate half: delete/rollout-
+         *  restart/exec/port-forward). */
+        private String mutateTokenFile = "/var/run/secrets/workload-console-mutate/token";
+
+        public String getReadTokenFile() {
+            return readTokenFile;
+        }
+
+        public void setReadTokenFile(String readTokenFile) {
+            this.readTokenFile = readTokenFile == null ? "" : readTokenFile;
+        }
+
+        public String getMutateTokenFile() {
+            return mutateTokenFile;
+        }
+
+        public void setMutateTokenFile(String mutateTokenFile) {
+            this.mutateTokenFile = mutateTokenFile == null ? "" : mutateTokenFile;
+        }
     }
 
     /** A curated port-forward target. */
