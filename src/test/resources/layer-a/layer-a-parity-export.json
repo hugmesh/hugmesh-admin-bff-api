@@ -1,0 +1,31 @@
+{
+  "signed": true,
+  "signature": "PARITY-FIXTURE-NOT-A-REAL-SIGNATURE",
+  "body": {
+    "meshId": "east-01",
+    "generation": 11,
+    "operators": [
+      {
+        "operator": "alice",
+        "machineKeyFp": "fpA",
+        "hostname": "node-a",
+        "keyFingerprints": ["SHA256:ka"],
+        "via": "DEVICE-LICENSE"
+      },
+      {
+        "operator": "alice",
+        "machineKeyFp": "fpB",
+        "hostname": "node-b",
+        "keyFingerprints": ["SHA256:ka"],
+        "via": "DOMAIN-LICENSE"
+      },
+      {
+        "operator": "bob",
+        "machineKeyFp": "fpA",
+        "hostname": "node-a",
+        "keyFingerprints": ["SHA256:kb"],
+        "via": "DEVICE-LICENSE"
+      }
+    ]
+  }
+}
