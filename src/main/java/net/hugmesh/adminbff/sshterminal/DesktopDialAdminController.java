@@ -26,6 +26,7 @@ import net.hugmesh.adminbff.desktop.terminal.DeviceTerminalStepUpGate;
 import net.hugmesh.commons.security.DomainRegistry;
 import net.hugmesh.commons.security.PrincipalDomain;
 import net.hugmesh.commons.web.ApiException;
+import net.hugmesh.adminbff.web.StepUpRequiredException;
 import net.hugmesh.adminbff.web.dto.DeviceSshDialResponse;
 
 /**
@@ -135,9 +136,8 @@ public class DesktopDialAdminController {
     private Mono<DeviceSshDialResponse> executeActivate(String deviceId, String by, String stepUpToken,
                                                         String sessionToken, boolean mfaFresh) {
         if (!stepUp.isSatisfied(by, stepUpToken, mfaFresh)) {
-            return Mono.error(ApiException.forbidden(
-                    "dial activation requires step-up re-authentication (present "
-                    + DeviceTerminalStepUpGate.STEP_UP_HEADER + ")"));
+            return Mono.error(StepUpRequiredException.forRetryHeader(
+                    DeviceTerminalStepUpGate.STEP_UP_HEADER, "dial activation"));
         }
         return service.activate(deviceId, by)
                 .map(DeviceSshDialResponse::of)
@@ -178,9 +178,8 @@ public class DesktopDialAdminController {
     private Mono<DeviceSshDialResponse> executeRevoke(String deviceId, String by, String stepUpToken,
                                                       String sessionToken, boolean mfaFresh) {
         if (!stepUp.isSatisfied(by, stepUpToken, mfaFresh)) {
-            return Mono.error(ApiException.forbidden(
-                    "dial revoke requires step-up re-authentication (present "
-                    + DeviceTerminalStepUpGate.STEP_UP_HEADER + ")"));
+            return Mono.error(StepUpRequiredException.forRetryHeader(
+                    DeviceTerminalStepUpGate.STEP_UP_HEADER, "dial revoke"));
         }
         return service.revoke(deviceId, by)
                 .map(DeviceSshDialResponse::of)

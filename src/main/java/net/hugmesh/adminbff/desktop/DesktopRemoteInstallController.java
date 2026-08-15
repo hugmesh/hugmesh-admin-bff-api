@@ -23,6 +23,7 @@ import net.hugmesh.adminbff.desktop.terminal.DeviceTerminalStepUpGate;
 import net.hugmesh.commons.security.DomainRegistry;
 import net.hugmesh.commons.security.PrincipalDomain;
 import net.hugmesh.commons.web.ApiException;
+import net.hugmesh.adminbff.web.StepUpRequiredException;
 import net.hugmesh.adminbff.web.dto.DesktopRemoteInstallRequest;
 
 /**
@@ -122,9 +123,8 @@ public class DesktopRemoteInstallController {
                                               String stepUpToken, String sessionToken,
                                               boolean mfaFresh, PrincipalDomain scope) {
         if (!stepUp.isSatisfied(operator, stepUpToken, mfaFresh)) {
-            return Mono.error(ApiException.forbidden(
-                    "remote-install requires step-up re-authentication (present "
-                    + DeviceTerminalStepUpGate.STEP_UP_HEADER + ")"));
+            return Mono.error(StepUpRequiredException.forRetryHeader(
+                    DeviceTerminalStepUpGate.STEP_UP_HEADER, "remote-install"));
         }
         // Consume the single-use token/freshness ONLY after the full device authz pass — a denied
         // attempt never burns it; the MFA freshness is consumed in the same callback.

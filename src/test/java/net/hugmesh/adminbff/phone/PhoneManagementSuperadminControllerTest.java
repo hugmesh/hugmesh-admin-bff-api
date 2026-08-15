@@ -14,6 +14,7 @@ import org.springframework.test.web.reactive.server.WebTestClient;
 import reactor.core.publisher.Mono;
 import net.hugmesh.adminbff.config.SecurityConfig;
 import net.hugmesh.adminbff.web.ApiExceptionHandler;
+import net.hugmesh.adminbff.web.StepUpRequiredException;
 import net.hugmesh.adminbff.web.ValidationExceptionHandler;
 import net.hugmesh.commons.security.DomainRegistry;
 import net.hugmesh.commons.web.ApiException;
@@ -152,22 +153,22 @@ class PhoneManagementSuperadminControllerTest {
     @Test
     void setOwner_superadmin_withStepUp_ok() {
         when(stepUp.isSatisfied(any(), eq(TOKEN))).thenReturn(true);
-        when(service.setOwner(eq("phone-1"), eq("alice-subject"), eq("acme.hugmesh.net"), any()))
-                .thenReturn(Mono.just(ownedPhone("phone-1", "alice-subject", "acme.hugmesh.net")));
+        when(service.setOwner(eq("phone-1"), eq("alice-subject"), eq("acme.hugmesh.systems"), any()))
+                .thenReturn(Mono.just(ownedPhone("phone-1", "alice-subject", "acme.hugmesh.systems")));
         asSuperadmin().put().uri("/bff/superadmin/phone-devices/phone-1/owner")
                 .header(STEP_UP, TOKEN).contentType(MediaType.APPLICATION_JSON)
-                .bodyValue("{\"physicalOwner\":\"alice-subject\",\"ownerDomain\":\"acme.hugmesh.net\"}")
+                .bodyValue("{\"physicalOwner\":\"alice-subject\",\"ownerDomain\":\"acme.hugmesh.systems\"}")
                 .exchange().expectStatus().isOk()
                 .expectBody()
                 .jsonPath("$.physicalOwner").isEqualTo("alice-subject")
-                .jsonPath("$.ownerDomain").isEqualTo("acme.hugmesh.net");
+                .jsonPath("$.ownerDomain").isEqualTo("acme.hugmesh.systems");
     }
 
     @Test
     void setOwner_admin_forbidden_neverReachService() {
         asAdmin().put().uri("/bff/superadmin/phone-devices/phone-1/owner")
                 .header(STEP_UP, TOKEN).contentType(MediaType.APPLICATION_JSON)
-                .bodyValue("{\"physicalOwner\":\"alice-subject\",\"ownerDomain\":\"acme.hugmesh.net\"}")
+                .bodyValue("{\"physicalOwner\":\"alice-subject\",\"ownerDomain\":\"acme.hugmesh.systems\"}")
                 .exchange().expectStatus().isForbidden();
         verify(service, never()).setOwner(any(), any(), any(), any());
     }
@@ -177,7 +178,7 @@ class PhoneManagementSuperadminControllerTest {
         when(stepUp.isSatisfied(any(), any())).thenReturn(false);
         asSuperadmin().put().uri("/bff/superadmin/phone-devices/phone-1/owner")
                 .contentType(MediaType.APPLICATION_JSON)
-                .bodyValue("{\"physicalOwner\":\"alice-subject\",\"ownerDomain\":\"acme.hugmesh.net\"}")
+                .bodyValue("{\"physicalOwner\":\"alice-subject\",\"ownerDomain\":\"acme.hugmesh.systems\"}")
                 .exchange().expectStatus().isForbidden();
         verify(service, never()).setOwner(any(), any(), any(), any());
     }
@@ -270,6 +271,60 @@ class PhoneManagementSuperadminControllerTest {
         asSuperadmin().post().uri("/bff/superadmin/phone-devices/nope/unlock")
                 .header(STEP_UP, TOKEN)
                 .exchange().expectStatus().isNotFound();
+    }
+
+    // ── STRUCTURED STEP-UP SIGNAL on the real wire (gate #3 of 3: PhoneLock) ───────────
+    // This gate builds its message from a `verb` VARIABLE rather than a literal, so it also
+    // proves the centralised factory carries a runtime verb through unchanged.
+
+    @Test
+    void lock_missingStepUp_carriesTheStructuredSignal_namingPhoneLockFlavour() {
+        when(stepUp.isSatisfied(any(), any())).thenReturn(false);
+        asSuperadmin().post().uri("/bff/superadmin/phone-devices/phone-1/lock")
+                .contentType(MediaType.APPLICATION_JSON).bodyValue("{\"reason\":\"x\"}")
+                .exchange().expectStatus().isForbidden()
+                .expectHeader().valueEquals(StepUpRequiredException.SIGNAL_HEADER,
+                        PhoneLockStepUpGate.STEP_UP_HEADER)
+                // the runtime verb still leads the message, and the old-UI phrase is intact
+                .expectBody().jsonPath("$.error").isEqualTo(
+                        "lock requires step-up re-authentication (present X-PhoneLock-StepUp)");
+        verify(service, never()).lock(any(), any(), any());
+    }
+
+    @Test
+    void unlock_missingStepUp_carriesTheStructuredSignal_withItsOwnVerb() {
+        when(stepUp.isSatisfied(any(), any())).thenReturn(false);
+        asSuperadmin().post().uri("/bff/superadmin/phone-devices/phone-1/unlock")
+                .exchange().expectStatus().isForbidden()
+                .expectHeader().valueEquals(StepUpRequiredException.SIGNAL_HEADER,
+                        PhoneLockStepUpGate.STEP_UP_HEADER)
+                .expectBody().jsonPath("$.error").isEqualTo(
+                        "unlock requires step-up re-authentication (present X-PhoneLock-StepUp)");
+        verify(service, never()).unlock(any(), any());
+    }
+
+    @Test
+    void byodConflict409_hasNoStepUpSignal_soNoMfaPromptPops() {
+        // THE negative: step-up IS satisfied; the refusal is an unrelated ApiException.conflict
+        // through the SAME renderer.
+        when(stepUp.isSatisfied(any(), eq(TOKEN))).thenReturn(true);
+        when(service.lock(eq("phone-byod"), any(), any()))
+                .thenReturn(Mono.error(ApiException.conflict("phone 'phone-byod' is not a managed device")));
+        asSuperadmin().post().uri("/bff/superadmin/phone-devices/phone-byod/lock")
+                .header(STEP_UP, TOKEN).contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("{\"reason\":\"x\"}")
+                .exchange().expectStatus().isEqualTo(409)
+                .expectHeader().doesNotExist(StepUpRequiredException.SIGNAL_HEADER);
+    }
+
+    @Test
+    void adminRoleFloor403_hasNoStepUpSignal() {
+        // An ADMIN below the SUPERADMIN floor: a routine authz DENY, no MFA prompt.
+        asAdmin().post().uri("/bff/superadmin/phone-devices/phone-1/lock")
+                .header(STEP_UP, TOKEN).contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("{\"reason\":\"x\"}")
+                .exchange().expectStatus().isForbidden()
+                .expectHeader().doesNotExist(StepUpRequiredException.SIGNAL_HEADER);
     }
 
     /**

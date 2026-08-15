@@ -1,6 +1,7 @@
 package net.hugmesh.adminbff.phone;
 
 import org.springframework.stereotype.Service;
+import net.hugmesh.adminbff.workload.AbstractStepUpGate;
 import net.hugmesh.adminbff.workload.WorkloadStepUpService;
 
 /**
@@ -36,41 +37,12 @@ import net.hugmesh.adminbff.workload.WorkloadStepUpService;
  * WorkloadStepUpService} for the token leg and {@code MfaStepUpService} for the MFA leg.
  */
 @Service
-public class PhoneLockStepUpGate {
+public class PhoneLockStepUpGate extends AbstractStepUpGate {
 
     /** The header the controller reads the presented step-up token from. */
     public static final String STEP_UP_HEADER = "X-PhoneLock-StepUp";
 
-    private final WorkloadStepUpService stepUp;
-
     public PhoneLockStepUpGate(WorkloadStepUpService stepUp) {
-        this.stepUp = stepUp;
-    }
-
-    /**
-     * True iff {@code subject} presents a currently-valid step-up token. Fail-closed: a null
-     * subject/token is NOT satisfied.
-     *
-     * <p>TODO (Casdoor-MFA leg): also return true when the request's validated JWT carries the
-     * {@code MFA_SATISFIED} authority (amr/acr) or the opaque session is {@code mfa_satisfied}.
-     */
-    public boolean isSatisfied(String subject, String stepUpToken) {
-        if (subject == null || stepUpToken == null || stepUpToken.isBlank()) {
-            return false;
-        }
-        return stepUp.validate(subject, stepUpToken);
-    }
-
-    /**
-     * UNIFIED step-up: satisfied if EITHER a valid {@link WorkloadStepUpService} token OR a
-     * FRESH Casdoor-MFA stamp on the caller's opaque session ({@code mfaFresh}, computed by
-     * {@link net.hugmesh.authcore.casdoor.MfaStepUpService}). The two legs are CO-EQUAL.
-     * The step-up satisfies ONLY the re-confirmation; the SUPERADMIN role + PrincipalDomain
-     * scope + the state-machine preconditions (managed-only lock) remain enforced downstream.
-     * {@code mfaFresh} is gated on {@code app.casdoor.mfa.enabled} (false by default) AND the
-     * freshness window.
-     */
-    public boolean isSatisfied(String subject, String stepUpToken, boolean mfaFresh) {
-        return mfaFresh || isSatisfied(subject, stepUpToken);
+        super(stepUp);
     }
 }

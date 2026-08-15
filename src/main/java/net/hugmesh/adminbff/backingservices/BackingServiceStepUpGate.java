@@ -1,6 +1,7 @@
 package net.hugmesh.adminbff.backingservices;
 
 import org.springframework.stereotype.Service;
+import net.hugmesh.adminbff.workload.AbstractStepUpGate;
 import net.hugmesh.adminbff.workload.WorkloadStepUpService;
 
 /**
@@ -24,36 +25,12 @@ import net.hugmesh.adminbff.workload.WorkloadStepUpService;
  * {@code hasRole('SUPERADMIN')}), so the mint path already covers it — no ADMIN widening.
  */
 @Service
-public class BackingServiceStepUpGate {
+public class BackingServiceStepUpGate extends AbstractStepUpGate {
 
     /** The header the controller reads the presented step-up token from. */
     public static final String STEP_UP_HEADER = "X-BackingServices-StepUp";
 
-    private final WorkloadStepUpService stepUp;
-
     public BackingServiceStepUpGate(WorkloadStepUpService stepUp) {
-        this.stepUp = stepUp;
-    }
-
-    /**
-     * True iff {@code subject} presents a currently-valid step-up token. Fail-closed: a null
-     * subject/token is NOT satisfied.
-     */
-    public boolean isSatisfied(String subject, String stepUpToken) {
-        if (subject == null || stepUpToken == null || stepUpToken.isBlank()) {
-            return false;
-        }
-        return stepUp.validate(subject, stepUpToken);
-    }
-
-    /**
-     * A5 UNIFIED step-up: satisfied if EITHER a valid {@link WorkloadStepUpService} token OR a
-     * FRESH Casdoor-MFA stamp on the caller's opaque session ({@code mfaFresh}, computed by
-     * {@link net.hugmesh.authcore.casdoor.MfaStepUpService}). The two legs are CO-EQUAL,
-     * exactly as on the go-live / image-gen / ssh-issue gates. {@code mfaFresh} is gated on
-     * {@code app.casdoor.mfa.enabled} (false by default) AND the freshness window.
-     */
-    public boolean isSatisfied(String subject, String stepUpToken, boolean mfaFresh) {
-        return mfaFresh || isSatisfied(subject, stepUpToken);
+        super(stepUp);
     }
 }

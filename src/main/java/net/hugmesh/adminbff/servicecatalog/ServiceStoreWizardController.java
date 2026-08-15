@@ -31,6 +31,7 @@ import net.hugmesh.adminbff.servicecatalog.federation.ServiceCatalogFederationSe
 import net.hugmesh.adminbff.servicecatalog.scaffold.ScaffoldArchetype;
 import net.hugmesh.adminbff.servicecatalog.scaffold.ScaffoldService;
 import net.hugmesh.adminbff.servicecatalog.scaffold.ServiceScaffold;
+import net.hugmesh.adminbff.web.StepUpRequiredException;
 import net.hugmesh.adminbff.web.dto.FederateServiceRequest;
 import net.hugmesh.adminbff.web.dto.ScaffoldServiceRequest;
 
@@ -132,9 +133,8 @@ public class ServiceStoreWizardController {
     private Mono<ServiceScaffold> createIfStepUpSatisfied(boolean mfaFresh, String actor,
             String stepUpToken, String sessionToken, String domain, ScaffoldServiceRequest body) {
         if (!stepUp.isSatisfied(actor, stepUpToken, mfaFresh)) {
-            return Mono.error(ApiException.forbidden(
-                    "scaffolding a service requires step-up re-authentication (present "
-                    + ServiceStoreStepUpGate.STEP_UP_HEADER + ")"));
+            return Mono.error(StepUpRequiredException.forRetryHeader(
+                    ServiceStoreStepUpGate.STEP_UP_HEADER, "scaffolding a service"));
         }
         Mono<Void> consume = mfaFresh ? mfaStepUp.consume(sessionToken) : Mono.empty();
         return consume.then(scaffold.create(domain, body.serviceKey(), body.archetype(),
@@ -186,9 +186,8 @@ public class ServiceStoreWizardController {
     private Mono<FederateOutcome> federateIfStepUpSatisfied(boolean mfaFresh, String actor,
             String stepUpToken, String sessionToken, String domain, String id, FederateServiceRequest body) {
         if (!stepUp.isSatisfied(actor, stepUpToken, mfaFresh)) {
-            return Mono.error(ApiException.forbidden(
-                    "federating a deployment requires step-up re-authentication (present "
-                    + ServiceStoreStepUpGate.STEP_UP_HEADER + ")"));
+            return Mono.error(StepUpRequiredException.forRetryHeader(
+                    ServiceStoreStepUpGate.STEP_UP_HEADER, "federating a deployment"));
         }
         Mono<Void> consume = mfaFresh ? mfaStepUp.consume(sessionToken) : Mono.empty();
         return consume.then(deployments.findById(id)
