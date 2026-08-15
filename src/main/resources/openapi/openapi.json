@@ -6506,6 +6506,50 @@
         }
       }
     },
+    "/bff/admin/users/search" : {
+      "get" : {
+        "tags" : [ "user-directory-controller" ],
+        "summary" : "Search users",
+        "operationId" : "adminUserSearch",
+        "parameters" : [ {
+          "name" : "q",
+          "in" : "query",
+          "required" : false,
+          "schema" : {
+            "maxLength" : 200,
+            "minLength" : 0,
+            "type" : "string",
+            "default" : ""
+          }
+        }, {
+          "name" : "limit",
+          "in" : "query",
+          "required" : false,
+          "schema" : {
+            "maximum" : 25,
+            "minimum" : 1,
+            "type" : "integer",
+            "format" : "int32",
+            "default" : 10
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "type" : "array",
+                  "items" : {
+                    "$ref" : "#/components/schemas/DirectoryUser"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/bff/admin/usb-devices" : {
       "get" : {
         "tags" : [ "backup-controller" ],
@@ -12070,6 +12114,23 @@
           "count" : {
             "type" : "integer",
             "format" : "int32"
+          }
+        }
+      },
+      "DirectoryUser" : {
+        "type" : "object",
+        "properties" : {
+          "username" : {
+            "type" : "string"
+          },
+          "handle" : {
+            "type" : "string"
+          },
+          "provider" : {
+            "type" : "string"
+          },
+          "domain" : {
+            "type" : "string"
           }
         }
       },

@@ -65,21 +65,35 @@ class OpenApiSpecDumpTest extends AdminBffPostgresTestSupport {
 
     /**
      * The full-context boot scans the whole {@code net.hugmesh.adminbff} package,
-     * which sweeps in two TOP-LEVEL package-private {@code @RestController} probe stand-ins
+     * which sweeps in three TOP-LEVEL package-private {@code @RestController} probe stand-ins
      * that live in test sources under {@code net.hugmesh.adminbff.config}
      * ({@code Probes} in {@code SecurityConfigPathRulesTest}, {@code Guarded} in
-     * {@code MethodSecuritySuperadminBypassTest}). Because they are top-level (not nested)
-     * they get registered as beans and collide with the real controllers (e.g.
-     * {@code Probes#admin()} vs {@code AdminController#allowlist()}, both mapping
-     * {@code GET /bff/admin/allowlist}), failing the handler-mapping init with an
-     * "Ambiguous mapping". This {@link ImportBeanDefinitionRegistrar} removes just those two
+     * {@code MethodSecuritySuperadminBypassTest}, {@code InternalProbes} in
+     * {@code InternalSurfaceRoleMatrixTest}). Because they are top-level (not nested)
+     * they get registered as beans. This {@link ImportBeanDefinitionRegistrar} removes those
      * test-only bean definitions before the handler mapping is built, leaving the real
      * production surface — the only thing the dumped spec should describe — untouched.
+     *
+     * <p>They leak in TWO different ways, and only the first one is self-announcing:
+     * <ul>
+     *   <li>{@code Probes} / {@code Guarded} COLLIDE with real controllers (e.g.
+     *       {@code Probes#admin()} vs {@code AdminController#allowlist()}, both mapping
+     *       {@code GET /bff/admin/allowlist}) and fail the handler-mapping init with an
+     *       "Ambiguous mapping" — a loud boot failure.</li>
+     *   <li>{@code InternalProbes} maps the catch-all {@code /bff/internal/**}, which
+     *       collides with nothing (Spring prefers the more specific real patterns), so the
+     *       context boots CLEANLY and the probe is silently dumped into the committed spec
+     *       as a fake {@code /bff/internal/**} path with seven {@code any*} operations.
+     *       That is the dangerous shape: nothing fails, the spec just quietly grows a
+     *       public-looking endpoint that does not exist in production. It must stay in this
+     *       set even though omitting it breaks no test.</li>
+     * </ul>
      */
     static class ExcludeTestProbeControllers implements BeanDefinitionRegistryPostProcessor {
         private static final Set<String> TEST_PROBE_TYPES = Set.of(
                 "net.hugmesh.adminbff.config.Probes",
-                "net.hugmesh.adminbff.config.Guarded");
+                "net.hugmesh.adminbff.config.Guarded",
+                "net.hugmesh.adminbff.config.InternalProbes");
 
         @Override
         public void postProcessBeanDefinitionRegistry(BeanDefinitionRegistry registry) {
