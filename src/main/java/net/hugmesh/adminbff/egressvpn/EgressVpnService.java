@@ -9,6 +9,10 @@ import net.hugmesh.adminbff.device.DeviceRegistryRepository;
 import net.hugmesh.commons.security.DomainRegistry;
 import net.hugmesh.commons.security.PrincipalDomain;
 
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Set;
+
 /**
  * Write/read surface for the egress-VPN control plane ({@code vpn_config} +
  * {@code vpn_node_assignment}). SUPERADMIN imports/revokes configs and assigns/unassigns;
@@ -25,8 +29,13 @@ import net.hugmesh.commons.security.PrincipalDomain;
  *
  * <h3>Secrets off-DB</h3>
  * A config row holds ONLY a {@code secret_ref} + the parsed non-secret metadata. The
- * {@code .conf}/{@code .ovpn} bytes (and the private VPN key) ride a K8s Secret via ESO /
- * the key-USB — the parser validates the body but never persists it.
+ * {@code .conf}/{@code .ovpn} bytes (and the private VPN key) ride a K8s Secret / the
+ * key-USB — the parser validates the body but never persists it to the DATABASE. On a FRESH
+ * import the validated bytes are handed to the {@link VpnConfigSecretWriter} seam (the
+ * default-off runtime delivery leg; the dark Noop drops them). The idempotent re-import
+ * no-op deliberately does NOT re-deliver: the existing row's metadata was parsed from the
+ * ORIGINAL bytes, and overwriting the Secret with a different body under the same
+ * (domain, name) would silently diverge row metadata from Secret content.
  *
  * <h3>DEVICE assignment guards</h3>
  * A DEVICE assignment resolves the target node by its {@code machine_key_fp} FIRST and
@@ -34,6 +43,22 @@ import net.hugmesh.commons.security.PrincipalDomain;
  * (cross-tenant assignment), and (c) a SUPERADMIN-owned node (core nodes are not
  * domain-public-egress targets). The assignment's home {@code domain} is stamped from the
  * CONFIG's residency, never the caller.
+ *
+ * <h3>Pod-labeling fast path</h3>
+ * Every assignment activate/deactivate (fresh assign, un-assign, and the revoke-config
+ * cascade) triggers ONE {@link VpnEgressLabeler#reconcile()} AFTER the row commit — the same
+ * convergence the {@link VpnEgressLabelReconciler} drift sweep runs on a cadence, so the
+ * opt-in {@code snapdragon.systems/vpn-egress} label lands/vanishes promptly on a mutation and
+ * the two paths cannot diverge. {@code reconcile()} never errors (the dark Noop returns 0; the
+ * real labeler swallows cluster failures), so the admin mutation never fails on it.
+ *
+ * <h3>Node report-back</h3>
+ * {@link #reportNodeState} closes the propagation loop the node-level
+ * {@code hugmesh-vpn-reconcile} agent drives: the agent PUTs its per-node applied/failed/
+ * degraded outcome and the rows that FED that node's signed export (the SAME compile
+ * predicate: ACTIVE DEVICE assignments on the fp + ACTIVE DOMAIN assignments on the node's
+ * residency, plus their still-active configs) transition out of {@code pending}. Fail-closed:
+ * an unknown fp or a SUPERADMIN-owned node transitions NOTHING (0 rows, never a leaky error).
  */
 @Service
 public class EgressVpnService {
@@ -44,13 +69,18 @@ public class EgressVpnService {
     private final VpnNodeAssignmentRepository assignments;
     private final DeviceRegistryRepository devices;
     private final DomainRegistry domainRegistry;
+    private final VpnConfigSecretWriter secretWriter;
+    private final VpnEgressLabeler labeler;
 
     public EgressVpnService(VpnConfigRepository configs, VpnNodeAssignmentRepository assignments,
-                            DeviceRegistryRepository devices, DomainRegistry domainRegistry) {
+                            DeviceRegistryRepository devices, DomainRegistry domainRegistry,
+                            VpnConfigSecretWriter secretWriter, VpnEgressLabeler labeler) {
         this.configs = configs;
         this.assignments = assignments;
         this.devices = devices;
         this.domainRegistry = domainRegistry;
+        this.secretWriter = secretWriter;
+        this.labeler = labeler;
     }
 
     // ── configs ─────────────────────────────────────────────────────────────────
@@ -82,7 +112,8 @@ public class EgressVpnService {
                                     .doOnNext(an -> log.info(
                                             "[egress-vpn] revoke config id={} by={} -> cascade-revoked {} assignment(s)",
                                             configId, revokedBy, an))
-                                    .thenReturn(n);
+                                    // The cascade deactivated assignments — un-label promptly.
+                                    .flatMap(an -> labeler.reconcile().thenReturn(n));
                         }));
     }
 
@@ -129,11 +160,64 @@ public class EgressVpnService {
         return assignments.maxGeneration().flatMap(maxGen ->
                 assignments.revoke(assignmentId, revokedBy, maxGen + 1, scope)
                         .doOnNext(n -> log.info("[egress-vpn] revoke assignment id={} by={} gen={} rows={}",
-                                assignmentId, revokedBy, maxGen + 1, n)));
+                                assignmentId, revokedBy, maxGen + 1, n))
+                        // Fast path on an actual deactivate only (the lost-CAS 0 changed nothing).
+                        .flatMap(n -> n == 0L ? Mono.just(0L)
+                                : labeler.reconcile().thenReturn(n)));
     }
 
     public Flux<VpnNodeAssignment> listAssignments(PrincipalDomain scope) {
         return assignments.list(scope);
+    }
+
+    // ── node report-back ─────────────────────────────────────────────────────────
+
+    /**
+     * Record the propagation outcome the node-level reconcile agent reports for ONE node
+     * ({@code applied}/{@code failed}/{@code degraded} — never {@code pending}, which only a
+     * MUTATION resets). Transitions the {@code propagation_state} of exactly the rows that fed
+     * that node's signed export (the {@link VpnExportService} compile predicate): the ACTIVE
+     * DEVICE assignments on the fp, the ACTIVE DOMAIN assignments on the node's residency, and
+     * the still-active configs they reference. Returns the rows updated. Fail-closed: an
+     * unknown fp or a SUPERADMIN-owned node updates NOTHING (0 — a probe learns nothing); an
+     * out-of-vocabulary state is a hard {@link IllegalArgumentException} (-> 422).
+     */
+    public Mono<Long> reportNodeState(String machineKeyFp, String state) {
+        if (!VpnConfig.PROP_APPLIED.equals(state) && !VpnConfig.PROP_FAILED.equals(state)
+                && !VpnConfig.PROP_DEGRADED.equals(state)) {
+            return Mono.error(new IllegalArgumentException(
+                    "propagation state must be applied|failed|degraded, not '" + state + "'"));
+        }
+        return devices.findByMachineKey(machineKeyFp)
+                .filter(node -> !node.isSuperadminOwned())
+                .flatMap(node -> assignments.listActiveAll().collectList()
+                        .flatMap(active -> transitionForNode(node, active, state)))
+                .defaultIfEmpty(0L)
+                .doOnNext(n -> log.info("[egress-vpn] node report fp={} state={} -> {} row(s)",
+                        machineKeyFp, state, n));
+    }
+
+    /** Flip the matching assignments + their still-active configs to the reported state. */
+    private Mono<Long> transitionForNode(net.hugmesh.adminbff.device.Device node,
+                                         List<VpnNodeAssignment> active, String state) {
+        List<VpnNodeAssignment> matching = active.stream()
+                .filter(a -> (a.isDeviceScoped() && node.machineKeyFp().equals(a.targetNodeId()))
+                        || (a.isDomainScoped() && node.domain().equals(a.targetDomain())))
+                .toList();
+        Set<String> configIds = new LinkedHashSet<>();
+        for (VpnNodeAssignment a : matching) configIds.add(a.configId());
+        return Flux.fromIterable(matching)
+                .concatMap(a -> assignments.updatePropagationState(a.id(), state))
+                .reduce(0L, Long::sum)
+                .flatMap(an -> Flux.fromIterable(configIds)
+                        // A revoked config is skipped — its pending revocation is a MUTATION
+                        // outcome the next export propagates, not this report's.
+                        .concatMap(id -> configs.findById(id)
+                                .filter(VpnConfig::isActive)
+                                .flatMap(c -> configs.updatePropagationState(c.id(), state))
+                                .defaultIfEmpty(0L))
+                        .reduce(0L, Long::sum)
+                        .map(cn -> an + cn));
     }
 
     /** Validate domain + name + config body then idempotently insert a VPN config row. */
@@ -170,7 +254,14 @@ public class EgressVpnService {
                     return configs.insertActive(draft, maxGen + 1)
                             .doOnNext(c -> log.info(
                                     "[egress-vpn] imported config {} kind={} domain={} gen={} (id={})",
-                                    c.name(), c.kind(), c.domain(), c.generation(), c.id()));
+                                    c.name(), c.kind(), c.domain(), c.generation(), c.id()))
+                            // Runtime delivery leg (fresh import ONLY — never the re-import
+                            // no-op): hand the validated bytes to the Secret writer seam.
+                            // Best-effort by contract (the writer swallows failures to false);
+                            // the row is the committed control record either way.
+                            .flatMap(c -> secretWriter
+                                    .write(c.secretRef(), c.domain(), c.name(), c.kind(), configBody)
+                                    .thenReturn(c));
                 })));
     }
 
@@ -215,7 +306,10 @@ public class EgressVpnService {
                     return assignments.insertActive(draft, maxGen + 1)
                             .doOnNext(a -> log.info(
                                     "[egress-vpn] assigned config {} to node {} svc={} domain={} gen={} (id={})",
-                                    configId, targetNodeFp, svc, cfg.domain(), a.generation(), a.id()));
+                                    configId, targetNodeFp, svc, cfg.domain(), a.generation(), a.id()))
+                            // Fast path on the fresh activate only (the idempotent no-op
+                            // changed nothing to converge).
+                            .flatMap(a -> labeler.reconcile().thenReturn(a));
                 })));
     }
 
@@ -250,7 +344,10 @@ public class EgressVpnService {
                     return assignments.insertActive(draft, maxGen + 1)
                             .doOnNext(a -> log.info(
                                     "[egress-vpn] assigned config {} to domain {} svc={} gen={} (id={})",
-                                    configId, td, svc, a.generation(), a.id()));
+                                    configId, td, svc, a.generation(), a.id()))
+                            // Fast path on the fresh activate only (the idempotent no-op
+                            // changed nothing to converge).
+                            .flatMap(a -> labeler.reconcile().thenReturn(a));
                 })));
     }
 

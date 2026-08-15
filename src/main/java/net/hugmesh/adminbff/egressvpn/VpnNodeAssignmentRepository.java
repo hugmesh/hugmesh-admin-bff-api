@@ -95,4 +95,9 @@ public class VpnNodeAssignmentRepository {
     public Mono<Long> revokeByConfig(String configId, String revokedBy, long newGeneration) {
         return repo.revokeByConfig(configId, revokedBy, newGeneration);
     }
+
+    /** Record the push-with-ack propagation outcome for a row. UNSCOPED. */
+    public Mono<Long> updatePropagationState(String id, String propagationState) {
+        return repo.updatePropagationState(id, propagationState);
+    }
 }

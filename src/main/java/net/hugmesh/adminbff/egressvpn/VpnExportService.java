@@ -21,7 +21,7 @@ import java.util.TreeSet;
 
 /**
  * Builds the SIGNED PER-NODE egress-VPN export — the ONE artefact the node-level
- * reconcile agent compiles into the {@code hugmesh-egress-vpn} service's
+ * reconcile agent compiles into the {@code snapdragon-egress-vpn} service's
  * {@code active.conf} + the assigned-service set. CLONES
  * {@link net.hugmesh.adminbff.device.DeviceRegistryExportService} EXACTLY: a pure
  * deterministic {@code compile} + a detached-Ed25519 {@code sign} over canonical
