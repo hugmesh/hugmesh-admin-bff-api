@@ -27,11 +27,10 @@ import net.hugmesh.adminbff.workload.WorkloadStepUpService;
  * ADMIN, so without an ADMIN-reachable mint an ADMIN could never satisfy step-up. The mint itself is
  * unchanged (leader-pinned + active-ssh-license precondition); only the CALLER widened.
  *
- * <p>DONE (was a TODO for the Casdoor-MFA leg): a fresh MFA stamp on the opaque
- * {@code bff_} session IS accepted as a co-equal satisfying signal, via the 3-arg
- * {@code isSatisfied(subject, stepUpToken, mfaFresh)}. The old wording named a mechanism that
- * never existed — no code derives {@code MFA_SATISFIED} from {@code amr}/{@code acr}; it comes
- * from the BFF-written {@code mfa_satisfied_at} claim (see {@code Roles.isMfaSatisfied}).
+ * <p>A fresh MFA stamp on the opaque {@code bff_} session is accepted as a co-equal satisfying
+ * signal, via the 3-arg {@code isSatisfied(subject, stepUpToken, mfaFresh)}. No code derives
+ * {@code MFA_SATISFIED} from {@code amr}/{@code acr}; it comes from the BFF-written
+ * {@code mfa_satisfied_at} claim (see {@code Roles.isMfaSatisfied}).
  */
 @Service
 public class DeviceTerminalStepUpGate extends AbstractStepUpGate {

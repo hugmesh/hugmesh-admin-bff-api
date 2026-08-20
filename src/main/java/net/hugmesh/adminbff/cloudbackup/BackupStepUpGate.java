@@ -19,12 +19,12 @@ import net.hugmesh.adminbff.workload.WorkloadStepUpService;
  * "requires step-up" contract (the {@code error} body says so), so a client knows to obtain a
  * step-up token first.
  *
- * <p>DONE (was a TODO for the Casdoor-MFA leg): this gate DOES accept a fresh MFA stamp as
- * satisfying step-up, via the 3-arg {@link #isSatisfied(String, String, boolean)} — "restore"
- * is one of the generalized step-up operations the design memo named. The stamp arrives on the
- * opaque {@code bff_} session; it is not derived from {@code amr}/{@code acr}, which no code
- * reads. Alongside it the workload step-up token remains a co-equal step-up mechanism (no
- * separate stub broker); this gate is the single seam for both.
+ * <p>This gate also accepts a fresh MFA stamp as satisfying step-up, via the 3-arg
+ * {@link #isSatisfied(String, String, boolean)} — "restore" is one of the generalized step-up
+ * operations the design memo named. The stamp arrives on the opaque {@code bff_} session; it is
+ * not derived from {@code amr}/{@code acr}, which no code reads. Alongside it the workload
+ * step-up token remains a co-equal step-up mechanism (no separate stub broker); this gate is the
+ * single seam for both.
  */
 @Service
 public class BackupStepUpGate extends AbstractStepUpGate {
