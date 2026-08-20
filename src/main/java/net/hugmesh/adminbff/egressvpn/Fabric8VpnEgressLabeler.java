@@ -21,7 +21,7 @@ import java.util.Set;
 import java.util.TreeSet;
 
 /**
- * The REAL {@link VpnEgressLabeler}: converges the {@code snapdragon.systems/vpn-egress}
+ * The REAL {@link VpnEgressLabeler}: converges the {@code hugmesh.net/vpn-egress}
  * label over the Deployments/StatefulSets + their live pods in the egress namespace from the
  * ACTIVE {@code vpn_node_assignment} set.
  *

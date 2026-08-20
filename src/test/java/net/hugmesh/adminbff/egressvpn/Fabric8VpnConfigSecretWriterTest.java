@@ -106,8 +106,8 @@ class Fabric8VpnConfigSecretWriterTest {
         assertThat(secret.getStringData().get("egress-vpn-brandx-proton-us")).isEqualTo(BODY);
         assertThat(secret.getType()).isEqualTo("Opaque");
         assertThat(secret.getMetadata().getLabels())
-                .containsEntry("snapdragon.systems/optional-service", "egress-vpn")
-                .containsEntry("snapdragon.systems/vpn-config-domain", "brandx");
+                .containsEntry("hugmesh.net/optional-service", "egress-vpn")
+                .containsEntry("hugmesh.net/vpn-config-domain", "brandx");
 
         assertNoKeyMaterialInLogs();
     }
