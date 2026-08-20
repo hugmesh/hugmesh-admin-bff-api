@@ -125,6 +125,7 @@ class InternalSurfaceRoleMatrixTest {
                 arguments(HttpMethod.GET, "/bff/internal/desktop/sudo/entitlement?subject=a&deviceId=d"),
                 arguments(HttpMethod.GET, "/bff/internal/domain-capabilities/brandx/user_mesh_devices"),
                 arguments(HttpMethod.POST, "/bff/internal/oidc/first-login"),
+                arguments(HttpMethod.POST, "/bff/internal/aio-triage/ingest"),
                 // No controller claims this one — it must be denied, not inherited-open.
                 arguments(HttpMethod.GET, "/bff/internal/some-future-endpoint"));
     }

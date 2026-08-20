@@ -2791,6 +2791,38 @@
         }
       }
     },
+    "/bff/internal/aio-triage/ingest" : {
+      "post" : {
+        "tags" : [ "aio-triage-ingest-controller" ],
+        "summary" : "Ingest a collected infra/NIDS signal batch for edge-AI triage",
+        "operationId" : "aioTriageIngest",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/AioTriageIngestRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "type" : "object",
+                  "additionalProperties" : {
+                    "type" : "object"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/bff/internal/accounts/{id}/complete" : {
       "post" : {
         "tags" : [ "internal-account-controller" ],
@@ -10637,6 +10669,37 @@
           "expiresInSeconds" : {
             "type" : "integer",
             "format" : "int64"
+          }
+        }
+      },
+      "AioTriageIngestRequest" : {
+        "required" : [ "adminSubjects", "domain", "eventKey", "signals" ],
+        "type" : "object",
+        "properties" : {
+          "domain" : {
+            "maxLength" : 64,
+            "minLength" : 0,
+            "type" : "string"
+          },
+          "adminSubjects" : {
+            "maxItems" : 100,
+            "minItems" : 0,
+            "type" : "array",
+            "items" : {
+              "maxLength" : 255,
+              "minLength" : 0,
+              "type" : "string"
+            }
+          },
+          "eventKey" : {
+            "maxLength" : 200,
+            "minLength" : 0,
+            "type" : "string"
+          },
+          "signals" : {
+            "maxLength" : 16384,
+            "minLength" : 0,
+            "type" : "string"
           }
         }
       },

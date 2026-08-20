@@ -7,6 +7,9 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import net.hugmesh.adminbff.notification.FeatureNotificationService;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.List;
 
 /**
@@ -29,13 +32,18 @@ import java.util.List;
  *
  * <p>Ships DARK with the edge-AI client: when {@code inference.edge-ai.enabled=false} (default)
  * the triage is a {@code disabled} sentinel and NO notification is emitted, so a mesh without a
- * GPU/edge-AI node is unaffected. Idempotent: the {@code eventKey} is the outbox natural key, so
- * a retried signal produces no duplicate alert.
+ * GPU/edge-AI node is unaffected. Idempotent: the per-admin outbox natural key is DERIVED from
+ * the {@code eventKey} (see {@link #outboxKey}), so a retried signal produces no duplicate alert.
  */
 @Service
 public class AioTriageService {
 
     private static final Logger log = LoggerFactory.getLogger(AioTriageService.class);
+
+    /** Width of {@code notification_outbox.source_id} (changeset 062) — the hard ceiling
+     *  {@link #outboxKey} derives the per-admin natural key to fit. Must stay EVEN: the
+     *  derivation appends whole hex-encoded BYTES, so an odd ceiling would overshoot it. */
+    private static final int SOURCE_ID_MAX = 36;
 
     private final EdgeAiInferenceClient edgeAi;
     private final FeatureNotificationService notifications;
@@ -54,7 +62,8 @@ public class AioTriageService {
      * @param domain        the validated tenant (never user-settable)
      * @param adminSubjects the admin/superadmin Casdoor subjects to alert (recipient resolution
      *                      is the caller's RBAC concern — this service never widens the audience)
-     * @param eventKey      a stable key for this signal batch (the outbox natural key → idempotent)
+     * @param eventKey      a stable key for this signal batch (the per-admin outbox natural key
+     *                      is derived from it → idempotent)
      * @param signals       the raw infra/NIDS/integrity/k8s signal text
      * @return the number of admins newly alerted (deduped retries count 0)
      */
@@ -88,8 +97,44 @@ public class AioTriageService {
         return Flux.fromIterable(adminSubjects)
                 .flatMap(admin -> notifications.emit(
                         FeatureNotificationService.Kind.INFRA_IMPACTING,
-                        domain, admin, eventKey + ":" + admin, triage.asNote()))
+                        domain, admin, outboxKey(eventKey, admin), triage.asNote()))
                 .filter(Boolean::booleanValue)
                 .count();
+    }
+
+    /**
+     * The per-admin outbox natural key, DERIVED rather than concatenated.
+     * {@code notification_outbox.source_id} is {@code varchar(36)} (changeset 062), so the
+     * literal {@code eventKey + ":" + admin} pair overflows the column for any realistic
+     * Casdoor subject ({@code "snort:rule-123" + ":" + "google:admin@example.org"} is already
+     * 40 characters) — and the overflow does not surface as an error a caller can act on:
+     * {@code NotificationOutboxRepository#insertIfAbsent} classifies the driver's
+     * data-integrity violation as the natural-key DUPLICATE it deduplicates, so the alert is
+     * silently dropped and reported as {@code 0} newly-alerted admins. Since nothing has ever
+     * called this service (that is the gap the ingest controller closes), no key of the old
+     * shape exists to be compatible with.
+     *
+     * <p>{@code sha256(eventKey + ":" + admin)} truncated to 36 lowercase hex characters keeps
+     * both properties the concatenation was there for — the SAME pair always derives the SAME
+     * key (a retried signal batch still dedups to one alert per admin), and different admins
+     * derive different keys (the per-recipient fan-out is preserved) — while always fitting
+     * the column. The 12-hex {@code HeadscaleAclCompiler#hash12} precedent, widened to the
+     * full column.
+     */
+    private static String outboxKey(String eventKey, String admin) {
+        byte[] digest;
+        try {
+            digest = MessageDigest.getInstance("SHA-256")
+                    .digest((eventKey + ":" + admin).getBytes(StandardCharsets.UTF_8));
+        } catch (NoSuchAlgorithmException e) {
+            // SHA-256 is a mandated platform algorithm; unreachable.
+            throw new IllegalStateException("SHA-256 unavailable", e);
+        }
+        StringBuilder hex = new StringBuilder(SOURCE_ID_MAX);
+        for (int i = 0; hex.length() < SOURCE_ID_MAX; i++) {
+            hex.append(Character.forDigit((digest[i] >> 4) & 0xF, 16));
+            hex.append(Character.forDigit(digest[i] & 0xF, 16));
+        }
+        return hex.toString();
     }
 }
