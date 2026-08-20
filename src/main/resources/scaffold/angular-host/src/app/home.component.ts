@@ -20,13 +20,13 @@ import { ChangeDetectionStrategy, Component, signal } from '@angular/core';
         max-width: 32rem;
         margin: 4rem auto;
         text-align: center;
-        color: var(--sd-text);
+        color: var(--hug-text);
       }
       .snap-home h1 {
-        color: var(--sd-accent-soft);
+        color: var(--hug-accent-soft);
       }
       .snap-home p {
-        color: var(--sd-text-muted);
+        color: var(--hug-text-muted);
       }
     `,
   ],

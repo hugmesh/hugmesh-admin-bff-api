@@ -22,18 +22,18 @@ import { ChangeDetectionStrategy, Component, signal } from '@angular/core';
   `,
   styles: [
     `
-      /* Consume the cross-repo --sd-* palette contract (src/styles.scss). */
+      /* Consume the cross-repo --hug-* palette contract (src/styles.scss). */
       .snap-hello {
         max-width: 24rem;
         margin: 4rem auto;
         text-align: center;
-        color: var(--sd-text);
+        color: var(--hug-text);
       }
       .snap-hello h1 {
-        color: var(--sd-accent-soft);
+        color: var(--hug-accent-soft);
       }
       .snap-hello p {
-        color: var(--sd-text-muted);
+        color: var(--hug-text-muted);
       }
     `,
   ],

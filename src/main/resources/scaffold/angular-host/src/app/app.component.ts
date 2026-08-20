@@ -26,11 +26,11 @@ import { MenuComponent } from './menu.component';
         align-items: center;
         gap: 2rem;
         padding: 0.75rem 1.5rem;
-        background: var(--sd-bg-1);
-        border-bottom: 1px solid var(--sd-border);
+        background: var(--hug-bg-1);
+        border-bottom: 1px solid var(--hug-border);
       }
       .snap-shell-header .brand {
-        color: var(--sd-accent-soft);
+        color: var(--hug-accent-soft);
         font-weight: 600;
       }
     `,

@@ -1,7 +1,7 @@
 /* {{BRAND_TITLE}} {{TITLE_WORD}} remote — global styles.
  *
  * CROSS-REPO PALETTE CONTRACT: every HugMesh-shaped UI reaches for the
- * --sd-* custom properties instead of pasting hex literals (contract source:
+ * --hug-* custom properties instead of pasting hex literals (contract source:
  * the host shell's styles.scss, mirrored from hugmesh.games; audit:
  * decisions/024-wcag-palette-audit.md). When this remote is mounted INSIDE the
  * host, the host's :root definitions win the cascade and theme this bundle;
@@ -9,23 +9,23 @@
  * remote is never unstyled on its own. Values match the host contract, each
  * with its contrast ratio against #0a0a12 recorded at the source. */
 :root {
-  --sd-bg-0:        #0a0a12; /* shell + login backdrop */
-  --sd-bg-1:        #12121e; /* cards, panels */
-  --sd-bg-2:        #1a1a2e; /* scrollbar trough */
-  --sd-border:      #1e1e32;
-  --sd-text:        #e8e8f0; /* 15.9:1 AAA */
-  --sd-text-muted:  #a8acc4; /*  8.77:1 AAA */
-  --sd-accent:      #7c4dff; /* backgrounds/borders only — 3.22:1 as text */
-  --sd-accent-soft: #b388ff; /*  7.38:1 AAA — use this for accent text */
-  --sd-success:     #4caf50;
-  --sd-error:       #ff6b6b;
+  --hug-bg-0:        #0a0a12; /* shell + login backdrop */
+  --hug-bg-1:        #12121e; /* cards, panels */
+  --hug-bg-2:        #1a1a2e; /* scrollbar trough */
+  --hug-border:      #1e1e32;
+  --hug-text:        #e8e8f0; /* 15.9:1 AAA */
+  --hug-text-muted:  #a8acc4; /*  8.77:1 AAA */
+  --hug-accent:      #7c4dff; /* backgrounds/borders only — 3.22:1 as text */
+  --hug-accent-soft: #b388ff; /*  7.38:1 AAA — use this for accent text */
+  --hug-success:     #4caf50;
+  --hug-error:       #ff6b6b;
 }
 
 html,
 body {
   margin: 0;
   min-height: 100%;
-  background: var(--sd-bg-0);
-  color: var(--sd-text);
+  background: var(--hug-bg-0);
+  color: var(--hug-text);
   font-family: system-ui, sans-serif;
 }
