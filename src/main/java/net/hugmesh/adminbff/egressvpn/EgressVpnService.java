@@ -48,7 +48,7 @@ import java.util.Set;
  * Every assignment activate/deactivate (fresh assign, un-assign, and the revoke-config
  * cascade) triggers ONE {@link VpnEgressLabeler#reconcile()} AFTER the row commit — the same
  * convergence the {@link VpnEgressLabelReconciler} drift sweep runs on a cadence, so the
- * opt-in {@code snapdragon.systems/vpn-egress} label lands/vanishes promptly on a mutation and
+ * opt-in {@code hugmesh.net/vpn-egress} label lands/vanishes promptly on a mutation and
  * the two paths cannot diverge. {@code reconcile()} never errors (the dark Noop returns 0; the
  * real labeler swallows cluster failures), so the admin mutation never fails on it.
  *

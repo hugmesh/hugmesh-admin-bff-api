@@ -28,7 +28,7 @@ import static org.mockito.Mockito.when;
  * <ul>
  *   <li>a slug-carrying assignment labels JUST that service's workload
  *       ({@code metadata.labels}, NEVER {@code spec.template} — restart-free) AND its live
- *       pods with {@code snapdragon.systems/vpn-egress=true} (the exact key/value the
+ *       pods with {@code hugmesh.net/vpn-egress=true} (the exact key/value the
  *       generator's {@code egress-vpn-interaction.yaml} podSelector matches);</li>
  *   <li>an all-services (null-slug) assignment labels the whole configured public trio;
  *       an unrelated workload is NEVER labelled;</li>
@@ -124,16 +124,16 @@ class Fabric8VpnEgressLabelerTest {
 
         assertThat(changed).isEqualTo(2L); // the coturn Deployment meta + its one pod
         assertThat(deploymentLabels("hugmesh-coturn"))
-                .containsEntry("snapdragon.systems/vpn-egress", "true");
+                .containsEntry("hugmesh.net/vpn-egress", "true");
         assertThat(podLabels("hugmesh-coturn-0"))
-                .containsEntry("snapdragon.systems/vpn-egress", "true");
+                .containsEntry("hugmesh.net/vpn-egress", "true");
         // restart-free: the pod TEMPLATE is untouched (labelling it would roll the service).
         assertThat(client.apps().deployments().inNamespace(NS).withName("hugmesh-coturn").get()
                 .getSpec().getTemplate().getMetadata().getLabels())
-                .doesNotContainKey("snapdragon.systems/vpn-egress");
+                .doesNotContainKey("hugmesh.net/vpn-egress");
         // nothing else labelled.
         assertThat(deploymentLabels("akkoma")).isNullOrEmpty();
-        assertThat(podLabels("akkoma-0")).doesNotContainKey("snapdragon.systems/vpn-egress");
+        assertThat(podLabels("akkoma-0")).doesNotContainKey("hugmesh.net/vpn-egress");
         assertThat(deploymentLabels("frontend")).isNullOrEmpty();
     }
 
@@ -147,15 +147,15 @@ class Fabric8VpnEgressLabelerTest {
 
         // akkoma (Deployment meta + pod), hugmesh-coturn (meta + pod), tuwunel (STS meta + pod).
         assertThat(changed).isEqualTo(6L);
-        assertThat(deploymentLabels("akkoma")).containsEntry("snapdragon.systems/vpn-egress", "true");
+        assertThat(deploymentLabels("akkoma")).containsEntry("hugmesh.net/vpn-egress", "true");
         assertThat(client.apps().statefulSets().inNamespace(NS).withName("tuwunel").get()
-                .getMetadata().getLabels()).containsEntry("snapdragon.systems/vpn-egress", "true");
-        assertThat(podLabels("akkoma-0")).containsEntry("snapdragon.systems/vpn-egress", "true");
-        assertThat(podLabels("tuwunel-0")).containsEntry("snapdragon.systems/vpn-egress", "true");
-        assertThat(podLabels("hugmesh-coturn-0")).containsEntry("snapdragon.systems/vpn-egress", "true");
+                .getMetadata().getLabels()).containsEntry("hugmesh.net/vpn-egress", "true");
+        assertThat(podLabels("akkoma-0")).containsEntry("hugmesh.net/vpn-egress", "true");
+        assertThat(podLabels("tuwunel-0")).containsEntry("hugmesh.net/vpn-egress", "true");
+        assertThat(podLabels("hugmesh-coturn-0")).containsEntry("hugmesh.net/vpn-egress", "true");
         // the bystander stays unlabelled (fail-closed onto the Squid/default-deny path).
         assertThat(deploymentLabels("frontend")).isNullOrEmpty();
-        assertThat(podLabels("frontend-0")).doesNotContainKey("snapdragon.systems/vpn-egress");
+        assertThat(podLabels("frontend-0")).doesNotContainKey("hugmesh.net/vpn-egress");
     }
 
     // ── emptied assignment set -> un-label (key REMOVED) + stray-pod sweep ────────────────
@@ -164,16 +164,16 @@ class Fabric8VpnEgressLabelerTest {
     void emptiedAssignments_unlabelsEverything_removingTheKey() {
         when(assignments.listActiveAll()).thenReturn(Flux.just(assignment("coturn")));
         labeler().reconcile().block();
-        assertThat(podLabels("hugmesh-coturn-0")).containsEntry("snapdragon.systems/vpn-egress", "true");
+        assertThat(podLabels("hugmesh-coturn-0")).containsEntry("hugmesh.net/vpn-egress", "true");
 
         when(assignments.listActiveAll()).thenReturn(Flux.empty());
         Long changed = labeler().reconcile().block();
 
         assertThat(changed).isEqualTo(2L); // meta + pod un-labelled
-        assertThat(deploymentLabels("hugmesh-coturn")).doesNotContainKey("snapdragon.systems/vpn-egress");
+        assertThat(deploymentLabels("hugmesh-coturn")).doesNotContainKey("hugmesh.net/vpn-egress");
         // the key is REMOVED, never flipped to "false" (the NetworkPolicy matches value "true";
         // a lingering key would still read as opted-in to a human).
-        assertThat(podLabels("hugmesh-coturn-0")).doesNotContainKey("snapdragon.systems/vpn-egress");
+        assertThat(podLabels("hugmesh-coturn-0")).doesNotContainKey("hugmesh.net/vpn-egress");
     }
 
     @Test
@@ -181,14 +181,14 @@ class Fabric8VpnEgressLabelerTest {
         client.pods().inNamespace(NS).resource(new PodBuilder()
                 .withNewMetadata().withName("stray-0")
                 .addToLabels("app", "stray")
-                .addToLabels("snapdragon.systems/vpn-egress", "true")
+                .addToLabels("hugmesh.net/vpn-egress", "true")
                 .endMetadata().build()).create();
         when(assignments.listActiveAll()).thenReturn(Flux.empty());
 
         Long changed = labeler().reconcile().block();
 
         assertThat(changed).isEqualTo(1L);
-        assertThat(podLabels("stray-0")).doesNotContainKey("snapdragon.systems/vpn-egress");
+        assertThat(podLabels("stray-0")).doesNotContainKey("hugmesh.net/vpn-egress");
     }
 
     // ── convergence: a second identical sweep is a no-op ──────────────────────────────────

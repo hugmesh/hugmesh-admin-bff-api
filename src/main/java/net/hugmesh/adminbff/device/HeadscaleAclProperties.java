@@ -20,7 +20,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  *   <li>confirms the canonical machine-key fp field on a live control node (the SAME
  *       {@code docs/CANONICAL-FP.md} blocker the READ side carries — the compiled policy keys
  *       nodes by {@code machine_key_fp}, so it inherits that unverified-field caveat), then</li>
- *   <li>provisions a headscale API key (Vault {@code snapdragon/headscale-admin} property
+ *   <li>provisions a headscale API key (Vault {@code hugmesh/headscale-admin} property
  *       {@code api-key} via ESO, injected as {@code app.registry.headscale-acl.api-key} —
  *       placeholder-only, NEVER inline; NOTE no ExternalSecret or deployment env for this
  *       exists in the cluster tree yet), and</li>
@@ -99,7 +99,7 @@ public class HeadscaleAclProperties {
     private String sshUser = "admin";
 
     /**
-     * The headscale admin API key (Vault {@code snapdragon/headscale-admin} property
+     * The headscale admin API key (Vault {@code hugmesh/headscale-admin} property
      * {@code api-key} via ESO, injected as {@code app.registry.headscale-acl.api-key}).
      * PLACEHOLDER-ONLY — NEVER inline a real key. Blank by default → no {@code Authorization}
      * header (so a recording-ExchangeFunction test exercises the real call shape without a

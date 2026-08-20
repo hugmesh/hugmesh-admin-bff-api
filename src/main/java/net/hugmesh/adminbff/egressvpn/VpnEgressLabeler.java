@@ -4,7 +4,7 @@ import reactor.core.publisher.Mono;
 
 /**
  * The POD-LABELING leg of the egress-VPN control plane — the seam that stamps the OPT-IN
- * label <b>{@code snapdragon.systems/vpn-egress=true}</b> (the key the generator's
+ * label <b>{@code hugmesh.net/vpn-egress=true}</b> (the key the generator's
  * {@code egress-vpn-interaction.yaml} NetworkPolicy selects on, published as
  * {@code vpnEgressLabel} in its {@code optional-services.yaml} entry) onto the workloads named
  * by the ACTIVE assignments — and removes it when an assignment is revoked. Without this leg
@@ -30,7 +30,7 @@ import reactor.core.publisher.Mono;
 public interface VpnEgressLabeler {
 
     /** The pod opt-in label key the interaction NetworkPolicy selects on. */
-    String LABEL_KEY = "snapdragon.systems/vpn-egress";
+    String LABEL_KEY = "hugmesh.net/vpn-egress";
 
     /** The only value the NetworkPolicy matches. Un-labeling REMOVES the key (never "false"). */
     String LABEL_VALUE = "true";

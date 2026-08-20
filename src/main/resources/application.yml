@@ -935,7 +935,7 @@ app:
     secret-delivery:
       enabled: "${EGRESS_VPN_SECRET_DELIVERY_ENABLED:false}"
       namespace: "${EGRESS_VPN_SECRET_NAMESPACE:hugmesh-backend}"
-    # The pod-labeling leg: stamp snapdragon.systems/vpn-egress=true (the OPT-IN label the
+    # The pod-labeling leg: stamp hugmesh.net/vpn-egress=true (the OPT-IN label the
     # egress-vpn-interaction NetworkPolicy + the node split-tunnel key off) onto the
     # deployments/statefulsets + pods named by the ACTIVE assignments, and sweep drift on a
     # cadence (new/replaced pods re-labelled within one tick; un-assigned ones un-labelled —
