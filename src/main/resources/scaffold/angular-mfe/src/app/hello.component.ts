@@ -12,10 +12,10 @@ import { ChangeDetectionStrategy, Component, signal } from '@angular/core';
  * without mustaches; keep that style for any text this skeleton renders.
  */
 @Component({
-  selector: 'snap-{{APP_SLUG}}-hello',
+  selector: 'hug-{{APP_SLUG}}-hello',
   standalone: true,
   template: `
-    <main class="snap-hello">
+    <main class="hug-hello">
       <h1 [textContent]="title()"></h1>
       <p [textContent]="message()"></p>
     </main>
@@ -23,16 +23,16 @@ import { ChangeDetectionStrategy, Component, signal } from '@angular/core';
   styles: [
     `
       /* Consume the cross-repo --hug-* palette contract (src/styles.scss). */
-      .snap-hello {
+      .hug-hello {
         max-width: 24rem;
         margin: 4rem auto;
         text-align: center;
         color: var(--hug-text);
       }
-      .snap-hello h1 {
+      .hug-hello h1 {
         color: var(--hug-accent-soft);
       }
-      .snap-hello p {
+      .hug-hello p {
         color: var(--hug-text-muted);
       }
     `,

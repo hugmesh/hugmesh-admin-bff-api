@@ -25,11 +25,11 @@ interface NavEntry {
  * ([textContent]="entry.label") express the same thing without mustaches.
  */
 @Component({
-  selector: 'snap-host-menu',
+  selector: 'hug-host-menu',
   standalone: true,
   imports: [RouterLink, RouterLinkActive],
   template: `
-    <nav class="snap-menu" aria-label="Main navigation">
+    <nav class="hug-menu" aria-label="Main navigation">
       <ul role="menubar">
         @for (entry of navEntries; track entry.route) {
           <li role="none">
@@ -57,21 +57,21 @@ interface NavEntry {
   `,
   styles: [
     `
-      .snap-menu ul {
+      .hug-menu ul {
         display: flex;
         gap: 1.5rem;
         margin: 0;
         padding: 0;
         list-style: none;
       }
-      .snap-menu a {
+      .hug-menu a {
         color: var(--hug-text);
         text-decoration: none;
       }
-      .snap-menu a.active {
+      .hug-menu a.active {
         color: var(--hug-accent-soft);
       }
-      .snap-menu .disabled {
+      .hug-menu .disabled {
         color: var(--hug-text-muted);
         cursor: not-allowed;
       }

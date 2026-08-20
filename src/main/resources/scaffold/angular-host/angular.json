@@ -7,7 +7,7 @@
 			"projectType": "application",
 			"root": ".",
 			"sourceRoot": "src",
-			"prefix": "snap-host",
+			"prefix": "hug-host",
 			"architect": {
 				"build": {
 					"builder": "@angular-architects/native-federation:build",
