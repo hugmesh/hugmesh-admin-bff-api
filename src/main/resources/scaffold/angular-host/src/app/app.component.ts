@@ -7,13 +7,13 @@ import { MenuComponent } from './menu.component';
  * remote mounts into. [textContent] bindings only (see menu.component.ts).
  */
 @Component({
-  selector: 'snap-host-root',
+  selector: 'hug-host-root',
   standalone: true,
   imports: [RouterOutlet, MenuComponent],
   template: `
-    <header class="snap-shell-header">
+    <header class="hug-shell-header">
       <span class="brand" [textContent]="brand()"></span>
-      <snap-host-menu />
+      <hug-host-menu />
     </header>
     <main>
       <router-outlet />
@@ -21,7 +21,7 @@ import { MenuComponent } from './menu.component';
   `,
   styles: [
     `
-      .snap-shell-header {
+      .hug-shell-header {
         display: flex;
         align-items: center;
         gap: 2rem;
@@ -29,7 +29,7 @@ import { MenuComponent } from './menu.component';
         background: var(--hug-bg-1);
         border-bottom: 1px solid var(--hug-border);
       }
-      .snap-shell-header .brand {
+      .hug-shell-header .brand {
         color: var(--hug-accent-soft);
         font-weight: 600;
       }

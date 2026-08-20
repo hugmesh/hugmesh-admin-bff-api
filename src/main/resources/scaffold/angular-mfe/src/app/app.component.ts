@@ -7,7 +7,7 @@ import { RouterOutlet } from '@angular/router';
  * (ROUTES) directly — this component never renders there.
  */
 @Component({
-  selector: 'snap-{{APP_SLUG}}-root',
+  selector: 'hug-{{APP_SLUG}}-root',
   standalone: true,
   imports: [RouterOutlet],
   template: '<router-outlet />',

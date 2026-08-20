@@ -6,26 +6,26 @@ import { ChangeDetectionStrategy, Component, signal } from '@angular/core';
  * Angular's double-curly interpolation cannot appear in a skeleton source file.
  */
 @Component({
-  selector: 'snap-host-home',
+  selector: 'hug-host-home',
   standalone: true,
   template: `
-    <section class="snap-home">
+    <section class="hug-home">
       <h1 [textContent]="title()"></h1>
       <p [textContent]="message()"></p>
     </section>
   `,
   styles: [
     `
-      .snap-home {
+      .hug-home {
         max-width: 32rem;
         margin: 4rem auto;
         text-align: center;
         color: var(--hug-text);
       }
-      .snap-home h1 {
+      .hug-home h1 {
         color: var(--hug-accent-soft);
       }
-      .snap-home p {
+      .hug-home p {
         color: var(--hug-text-muted);
       }
     `,
