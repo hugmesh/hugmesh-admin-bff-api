@@ -107,10 +107,12 @@ public class AioTriageService {
      * {@code notification_outbox.source_id} is {@code varchar(36)} (changeset 062), so the
      * literal {@code eventKey + ":" + admin} pair overflows the column for any realistic
      * Casdoor subject ({@code "snort:rule-123" + ":" + "google:admin@example.org"} is already
-     * 40 characters) — and the overflow does not surface as an error a caller can act on:
-     * {@code NotificationOutboxRepository#insertIfAbsent} classifies the driver's
-     * data-integrity violation as the natural-key DUPLICATE it deduplicates, so the alert is
-     * silently dropped and reported as {@code 0} newly-alerted admins. Since nothing has ever
+     * 40 characters). MEASURED on the repo's H2 test store: the INSERT fails outright
+     * ({@code BadSqlGrammar}), so the alert is lost and the caller gets an error it cannot act
+     * on. Worse where the driver reports the overflow as a data-integrity violation instead
+     * (the Postgres {@code 22001} mapping): {@code NotificationOutboxRepository#insertIfAbsent}
+     * classifies THAT as the natural-key DUPLICATE it exists to swallow, so the alert is
+     * dropped silently and reported as {@code 0} newly-alerted admins. Since nothing has ever
      * called this service (that is the gap the ingest controller closes), no key of the old
      * shape exists to be compatible with.
      *

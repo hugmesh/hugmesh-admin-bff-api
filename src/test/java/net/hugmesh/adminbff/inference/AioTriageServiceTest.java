@@ -51,8 +51,9 @@ class AioTriageServiceTest {
     @Test
     void perAdminOutboxKey_fitsTheSourceIdColumn_stablePerAdmin_distinctAcrossAdmins() {
         // The literal "eventKey:admin" pair this service used to pass is 61 characters here —
-        // over the varchar(36) source_id, where the driver's data-integrity violation is
-        // classified as a natural-key DUPLICATE and the alert vanishes, reported as 0 alerted.
+        // over the varchar(36) source_id, where the INSERT either fails outright or (when the
+        // driver reports the overflow as a data-integrity violation) is swallowed by
+        // insertIfAbsent's duplicate classifier and the alert vanishes, reported as 0 alerted.
         String eventKey = "snort:rule-123:2026-08-20T12:00:00Z";
         String admin1 = "google:admin1@example.org";
         String admin2 = "google:admin2@example.org";

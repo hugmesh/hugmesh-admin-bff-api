@@ -223,10 +223,11 @@ sentinel and emits nothing (`alerted:0`).
 
 > **Why the per-admin outbox key is derived, not concatenated.** `notification_outbox.source_id`
 > is `varchar(36)` (changeset 062). The original `eventKey + ":" + admin` composition overflows
-> it for any realistic Casdoor subject, and the overflow is *invisible*:
-> `NotificationOutboxRepository#insertIfAbsent` classifies the driver's data-integrity violation
-> as the natural-key DUPLICATE it exists to swallow, so the alert is dropped and reported as
-> `0` newly-alerted admins. `AioTriageService#outboxKey` now derives a 36-char
+> it for any realistic Casdoor subject. On the H2 test store that is a hard `BadSqlGrammar` on
+> the INSERT (measured); where the driver reports the overflow as a data-integrity violation
+> instead (Postgres `22001`), it is *invisible* — `NotificationOutboxRepository#insertIfAbsent`
+> classifies that as the natural-key DUPLICATE it exists to swallow, so the alert is dropped
+> and reported as `0` newly-alerted admins. `AioTriageService#outboxKey` now derives a 36-char
 > `sha256(eventKey + ":" + admin)` prefix instead — same pair → same key (retries still dedup),
 > different admin → different key (the fan-out survives), always inside the column.
 
