@@ -118,8 +118,10 @@ for the narrower ones):
   `UnconfiguredDeviceSshChannelFactory` is only what's wired while that second flag
   stays off. What's genuinely roadmap is the security re-review the class's own
   Javadoc calls for before flipping it on.
-- `AioTriageService` (edge-AI infra triage) is tested and wired as a bean but has
-  **no in-repo caller** — see `docs/SUBSYSTEMS.md`.
+- Edge-AI infra triage now has its in-repo caller (`AioTriageIngestController`,
+  `POST /bff/internal/aio-triage/ingest`), but the node-level DaemonSet **collector**
+  that would post to it lives outside this repo and is not built yet — so the endpoint
+  has no production caller. See `docs/SUBSYSTEMS.md`.
 - Node radio attachments (`RadioDeviceController` + the signed per-node export) are
   real and tested, but the companion meshbridge daemon (`hugmesh-generator` PR #374)
   reads a **separate, static, manually-edited devices ConfigMap** instead of this
@@ -910,6 +912,17 @@ calls a `NoopBackingServiceEffector` (logs only, no live effect) — see
   "account scoping is the caller's responsibility" posture as
   `InternalAccountController#sessionsForAccount`, because there is no untrusted
   principal at this internal surface.
+- **`AioTriageIngestController`** — `POST /bff/internal/aio-triage/ingest`
+  (`{domain, adminSubjects[], eventKey, signals}` → `{accepted, alerted}`): where the
+  in-cluster signal collector hands a batch of Snort/Suricata + AIDE + k8s signals to
+  `AioTriageService`, which triages it on the edge-AI node and emits one
+  `infra-impacting` `@system` notification per admin. Same boundary as the other node
+  ingests (no JWT; `ROLE_SERVICE` over mTLS + `X-Internal-Token`), same
+  "tenancy is the caller's concern" posture as the capability check above. **Ships dark
+  with the feature**: at `inference.edge-ai.enabled=false` (default) the batch is
+  accepted, the triage is the `disabled` sentinel, and nothing is emitted
+  (`alerted:0`). The collector DaemonSet itself lives outside this repo and is not
+  built yet — see the "Edge-AI infra triage" section of `docs/SUBSYSTEMS.md`.
 
 ### Desktop app governance, cloud-backup v2, image-build, SSH surfaces (✅ shipped, ships-dark)
 

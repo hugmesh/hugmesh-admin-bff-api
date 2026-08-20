@@ -193,7 +193,7 @@ for the detached Ed25519 signature + monotonic generation).
 > pod will never see them until that reconcile agent is built — a real, currently-open,
 > cross-repo integration gap, not a documentation lag.
 
-## Edge-AI infra triage (`net.hugmesh.adminbff.inference`) — ✅ shipped, dark by default, no in-repo caller yet
+## Edge-AI infra triage (`net.hugmesh.adminbff.inference`) — ✅ shipped, dark by default
 
 `AioTriageService` turns a batch of mesh infra/security signals (NIDS, file-integrity,
 k8s events) into an admin-facing Matrix `@system` alert, reusing the existing
@@ -201,19 +201,35 @@ notifications outbox end-to-end: `EdgeAiInferenceClient.triageInfra(...)` (gated
 `inference.edge-ai.enabled`, default `false` — a `disabled` sentinel with no
 notification emitted when off) feeds `FeatureNotificationService`, which the existing
 `ExternalChannelReconciler` then delivers as a Matrix DM to each admin/superadmin.
-Idempotent: the caller-supplied `eventKey` is the outbox natural key, so a retried
-signal never double-alerts.
+Idempotent: the per-admin outbox natural key is derived from the caller-supplied
+`eventKey` (see below), so a retried signal never double-alerts.
 
-> **Known gap — no wiring yet.** Unlike the other gated stub-seams in this repo (which
-> at least have a controller or scheduler invoking them), nothing in *this* repo calls
-> `AioTriageService.triageInfra(...)` — no REST endpoint exposes it and no
-> `@Scheduled` job drives it. By design the signal-*collection* side is a separate
-> node-level DaemonSet/collector (not yet built) that is meant to call this service, or
-> a future scheduled reconciler; until one of those lands, this is a tested, wired
-> `@Service` bean with zero live invocations. Not dead code (it's a real, tested,
-> intentionally-exposed integration point — see `AioTriageServiceTest` /
-> `EdgeAiInferenceClientTest`), but a genuine "half of a feature" gap worth flagging
-> for whoever builds the collector side.
+**The caller** is `AioTriageIngestController` — `POST /bff/internal/aio-triage/ingest`,
+the in-cluster collector's entry point (`{domain, adminSubjects[], eventKey, signals}` →
+`{accepted, alerted}`). It sits on the same `/bff/internal/**` trust boundary as the other
+node/Job ingests (`ROLE_SERVICE`, satisfied by mTLS + `X-Internal-Token`, **no JWT**) and
+performs no cross-tenant check of its own — tenancy is the caller's concern at this hop,
+exactly as `DomainCapabilityInternalController` states; it only *bounds* the batch so a
+malformed or runaway post is a clean 400 instead of an `IllegalArgumentException` or an
+unbounded prompt. Wiring the caller does **not** turn the feature on: with
+`inference.edge-ai.enabled=false` the endpoint accepts the batch, gets the `disabled`
+sentinel and emits nothing (`alerted:0`).
+
+> **Still open — the collector itself.** The node-level DaemonSet that tails
+> Snort/Suricata + AIDE + k8s events and posts to this endpoint lives outside this repo
+> and is not built yet, so the endpoint has no *production* caller. That is now an
+> ordinary "the agent on the other side isn't written" gap, not the previous
+> "the service has no caller at all, in any repo, by any route" one.
+
+> **Why the per-admin outbox key is derived, not concatenated.** `notification_outbox.source_id`
+> is `varchar(36)` (changeset 062). The original `eventKey + ":" + admin` composition overflows
+> it for any realistic Casdoor subject. On the H2 test store that is a hard `BadSqlGrammar` on
+> the INSERT (measured); where the driver reports the overflow as a data-integrity violation
+> instead (Postgres `22001`), it is *invisible* — `NotificationOutboxRepository#insertIfAbsent`
+> classifies that as the natural-key DUPLICATE it exists to swallow, so the alert is dropped
+> and reported as `0` newly-alerted admins. `AioTriageService#outboxKey` now derives a 36-char
+> `sha256(eventKey + ":" + admin)` prefix instead — same pair → same key (retries still dedup),
+> different admin → different key (the fan-out survives), always inside the column.
 
 ## Registration a11y display-name forwarder (`net.hugmesh.adminbff.profile`) — ✅ shipped, dark by default
 
