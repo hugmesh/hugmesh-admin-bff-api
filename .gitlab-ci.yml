@@ -8,8 +8,12 @@
 # as the hidden `.pentest-*` jobs. ONE source of truth org-wide — the generator
 # owns the job bodies; this repo just `extends:` them below. See memory
 # hugmesh-pentest-standard ("a stage in every ArgoCD-onboarded repo's pipeline").
+# `project:` is the GitLab namespace PATH — the lowercase org slug the mirror
+# creates the group under, never the brand title. Keep it byte-exact: the
+# generator's spring-bff archetype anchors its CI-include rewrite on this
+# literal, so a re-cased slug makes that anchor miss and the tenant render abort.
 include:
-  - project: 'HugMesh/hugmesh-generator'
+  - project: 'hugmesh/hugmesh-generator'
     ref: main
     file: '/tests/pentest/ci/pentest-stage.gitlab-ci.yml'
 
