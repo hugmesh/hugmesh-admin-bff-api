@@ -22,7 +22,7 @@ npm start                   # standalone dev shell on :4201
   `[textContent]` because Angular's double-curly interpolation mustaches would
   collide with the templating renderer's fail-closed brand-token scan (see the
   comment in the component).
-- `src/styles.scss` — the cross-repo `--sd-*` palette contract (standalone
+- `src/styles.scss` — the cross-repo `--hug-*` palette contract (standalone
   floor; the host's `:root` wins when federated).
 - `nginx.conf` — CORS `Access-Control-Allow-Origin *` on every bundle path (the
   host fetches remoteEntry.json cross-origin); serves on 8080 for the

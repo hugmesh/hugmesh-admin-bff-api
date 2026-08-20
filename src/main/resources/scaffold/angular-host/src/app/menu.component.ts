@@ -65,14 +65,14 @@ interface NavEntry {
         list-style: none;
       }
       .snap-menu a {
-        color: var(--sd-text);
+        color: var(--hug-text);
         text-decoration: none;
       }
       .snap-menu a.active {
-        color: var(--sd-accent-soft);
+        color: var(--hug-accent-soft);
       }
       .snap-menu .disabled {
-        color: var(--sd-text-muted);
+        color: var(--hug-text-muted);
         cursor: not-allowed;
       }
     `,

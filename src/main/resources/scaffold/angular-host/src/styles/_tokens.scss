@@ -2,9 +2,9 @@
 // styles/_tokens.scss slot). These drive the shell's visual theme and are
 // consumed via `@use 'tokens' as t` (angular.json stylePreprocessorOptions
 // includePaths: src/styles). They are HOST-LOCAL: remotes never see SCSS
-// variables — the cross-repo contract is tier 2, the runtime --sd-* custom
+// variables — the cross-repo contract is tier 2, the runtime --hug-* custom
 // properties in styles.scss. Keep the two tiers aligned: a tier-1 retheme must
-// update the matching --sd-* values (and re-check the recorded contrast ratios).
+// update the matching --hug-* values (and re-check the recorded contrast ratios).
 $black:       #0a0a12;
 $dark:        #12121e;
 $border:      #1e1e32;
