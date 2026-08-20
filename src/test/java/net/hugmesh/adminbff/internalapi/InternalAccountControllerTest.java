@@ -22,9 +22,13 @@ import net.hugmesh.authcore.casdoor.MfaStepUpService;
 import net.hugmesh.authcore.casdoor.OidcExchangeClient;
 import net.hugmesh.authcore.casdoor.OidcTokens;
 
+import org.mockito.ArgumentCaptor;
+
 import java.time.LocalDateTime;
 import java.util.Base64;
 import java.util.List;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -245,6 +249,79 @@ class InternalAccountControllerTest {
                 .expectNextCount(1)
                 .verifyComplete();
         verify(accounts).ensureAccount("casdoor", "e2e-admin", List.of("admin", "user"));
+    }
+
+    // ── issue #14: the `roles` claim is bounded before AccountStore CSV-joins it ──
+
+    @Test
+    void ensureAccount_casdoor_overLongRoleStringIsDroppedNotTruncated() {
+        // One absurd entry must not reach the CSV join — and must not take the legitimate
+        // roles either side of it down with it. Dropped whole: a truncated role string
+        // would be a DIFFERENT role than the one the claim named.
+        String huge = "x".repeat(200);
+        String idToken = fakeIdToken(
+                "{\"sub\":\"e2e-admin\",\"roles\":[\"ROLE_ADMIN\",\"" + huge + "\",\"ROLE_USER\"]}");
+        when(accounts.ensureAccount(eq("casdoor"), eq("e2e-admin"), any())).thenReturn(Mono.just(acct(true)));
+        StepVerifier.create(controller.ensureAccount(
+                        new InternalAccountController.EnsureAccountRequest("casdoor", idToken)))
+                .expectNextCount(1)
+                .verifyComplete();
+        verify(accounts).ensureAccount("casdoor", "e2e-admin", List.of("admin", "user"));
+    }
+
+    @Test
+    void ensureAccount_casdoor_roleLengthCapBoundary_keepsExactlyAtTheCapDropsOverIt() {
+        // MAX_ROLE_LENGTH is 64, measured AFTER normalizeRole strips the ROLE_ prefix.
+        String atCap = "a".repeat(64);
+        String overCap = "b".repeat(65);
+        String idToken = fakeIdToken("{\"sub\":\"e2e-edge\",\"roles\":[\"ROLE_" + atCap
+                + "\",\"ROLE_" + overCap + "\"]}");
+        when(accounts.ensureAccount(eq("casdoor"), eq("e2e-edge"), any())).thenReturn(Mono.just(acct(true)));
+        StepVerifier.create(controller.ensureAccount(
+                        new InternalAccountController.EnsureAccountRequest("casdoor", idToken)))
+                .expectNextCount(1)
+                .verifyComplete();
+        verify(accounts).ensureAccount("casdoor", "e2e-edge", List.of(atCap));
+    }
+
+    @Test
+    void ensureAccount_casdoor_manyRolesCappedSoTheJoinedCsvFitsTheAccountRolesColumn() {
+        // account.roles is varchar(255) (changeset 004) and AccountStore.ensureAccount writes
+        // String.join(",", roles) into it — an unbounded claim would fail that INSERT, i.e.
+        // fail the login. First-seen-wins: the surviving prefix stays in claim order.
+        String many = IntStream.range(0, 500)
+                .mapToObj(i -> "\"ROLE_R" + i + "\"")
+                .collect(Collectors.joining(","));
+        String idToken = fakeIdToken("{\"sub\":\"e2e-many\",\"roles\":[" + many + "]}");
+        when(accounts.ensureAccount(eq("casdoor"), eq("e2e-many"), any())).thenReturn(Mono.just(acct(true)));
+        StepVerifier.create(controller.ensureAccount(
+                        new InternalAccountController.EnsureAccountRequest("casdoor", idToken)))
+                .expectNextCount(1)
+                .verifyComplete();
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<String>> captor = ArgumentCaptor.forClass(List.class);
+        verify(accounts).ensureAccount(eq("casdoor"), eq("e2e-many"), captor.capture());
+        List<String> synced = captor.getValue();
+        assertThat(String.join(",", synced)).hasSizeLessThanOrEqualTo(255);
+        assertThat(synced).isNotEmpty().startsWith("r0", "r1", "r2");
+    }
+
+    @Test
+    void ensureAccount_casdoor_rolesClaimEntriesPastTheScanCapAreIgnored() {
+        // MAX_ROLE_CLAIM_ENTRIES is 64 and bounds the SCAN, not just what is admitted — so
+        // entries that cost no CSV width (here, 70 duplicates) still consume the scan cap,
+        // and the distinct role sitting behind them is never reached.
+        String padding = IntStream.range(0, 70)
+                .mapToObj(i -> "\"ROLE_USER\"")
+                .collect(Collectors.joining(","));
+        String idToken = fakeIdToken(
+                "{\"sub\":\"e2e-scan\",\"roles\":[" + padding + ",\"ROLE_ADMIN\"]}");
+        when(accounts.ensureAccount(eq("casdoor"), eq("e2e-scan"), any())).thenReturn(Mono.just(acct(true)));
+        StepVerifier.create(controller.ensureAccount(
+                        new InternalAccountController.EnsureAccountRequest("casdoor", idToken)))
+                .expectNextCount(1)
+                .verifyComplete();
+        verify(accounts).ensureAccount("casdoor", "e2e-scan", List.of("user"));
     }
 
     // ── changeset 292: the Casdoor `sub` UUID stamp (A5 part-B route-pin fix) ──

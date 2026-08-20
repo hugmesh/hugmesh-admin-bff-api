@@ -371,6 +371,11 @@ public class InternalAccountController {
      * legacy default) when the token isn't decodable or carries no roles claim — never
      * throws, since degrading to the safe "user"-only default beats failing the login
      * over a malformed/missing claim.
+     *
+     * <p>The returned set is BOUNDED (issue #14) by {@link #MAX_ROLE_CLAIM_ENTRIES},
+     * {@link #MAX_ROLE_LENGTH} and {@link #MAX_ROLES_CSV_LENGTH} — see the inline note at
+     * the loop for why, and why a truncated list (not a thrown error) is the right
+     * degradation.
      */
     private static List<String> rolesFromIdToken(String idToken) {
         if (idToken == null) {
@@ -391,18 +396,44 @@ public class InternalAccountController {
             // via a direct grant, once via group membership) — de-dupe, preserving the
             // first-seen order, so the stored CSV/rendered role list is exactly the
             // distinct set the frontend's hasRole()/isAdmin()/isMod() checks expect.
-            // TODO: no cap on rolesClaim.size() or on each raw role string's length before this
-            // set is later CSV-joined by AccountStore.ensureAccount(provider, handle, roles) —
-            // a Casdoor id_token carrying an attacker-influenced/malformed `roles` claim (e.g.
-            // many entries, or one very long entry) is not bounded here before that join.
-            // Narrow, still-open gap; low severity since the id_token only reaches this path
-            // over the internal mTLS + X-Internal-Token surface from user-bff.
+            //
+            // Issue #14: the claim is BOUNDED here, before this set is CSV-joined by
+            // AccountStore.ensureAccount(provider, handle, roles) into account.roles —
+            // varchar(255) (changeset 004). A malformed/attacker-influenced `roles` claim
+            // can carry arbitrarily many entries, or one arbitrarily long entry, and the
+            // id_token is decoded but NOT signature-verified on this path; an over-long
+            // join then fails the INSERT outright, i.e. fails the login. Three narrow,
+            // first-seen-wins bounds, none of which a real principal's role set reaches:
+            // stop scanning past MAX_ROLE_CLAIM_ENTRIES, DROP any normalized entry longer
+            // than MAX_ROLE_LENGTH (dropped, never truncated — a truncated role string is
+            // a DIFFERENT role), and stop admitting once the join would exceed
+            // MAX_ROLES_CSV_LENGTH. Degrading to a SHORTER role list is the right failure
+            // mode here: this column is a cached nav-display field, never an authorization
+            // decision boundary (see changeset 260) — the gateway's Casdoor-JWT RBAC is
+            // wholly independent of it, so a dropped entry costs a nav item, not a grant.
             java.util.Set<String> roles = new java.util.LinkedHashSet<>();
+            int scanned = 0;
+            int csvLength = 0;
             for (com.fasterxml.jackson.databind.JsonNode entry : rolesClaim) {
-                String raw = entry.isObject() ? entry.path("name").asText(null) : entry.asText(null);
-                if (raw != null && !raw.isBlank()) {
-                    roles.add(normalizeRole(raw));
+                if (++scanned > MAX_ROLE_CLAIM_ENTRIES) {
+                    break;
                 }
+                String raw = entry.isObject() ? entry.path("name").asText(null) : entry.asText(null);
+                if (raw == null || raw.isBlank()) {
+                    continue;
+                }
+                String role = normalizeRole(raw);
+                if (role.length() > MAX_ROLE_LENGTH || roles.contains(role)) {
+                    continue;
+                }
+                // The width this entry would add to String.join(",", roles): the role itself,
+                // plus the separator it needs when it is not the first one admitted.
+                int joined = csvLength + role.length() + (roles.isEmpty() ? 0 : 1);
+                if (joined > MAX_ROLES_CSV_LENGTH) {
+                    break;
+                }
+                roles.add(role);
+                csvLength = joined;
             }
             return new java.util.ArrayList<>(roles);
         } catch (IllegalArgumentException | java.io.IOException e) {
@@ -496,6 +527,23 @@ public class InternalAccountController {
 
     /** Subject claims tried in order when deriving a stable account handle from an id_token. */
     private static final String[] SUBJECT_CLAIMS = {"email", "preferred_username", "sub"};
+
+    /** Issue #14 — max {@code roles}-claim array entries {@link #rolesFromIdToken} SCANS.
+     *  Bounds the parse work itself for a claim carrying an absurd number of entries;
+     *  entries past this are ignored. */
+    private static final int MAX_ROLE_CLAIM_ENTRIES = 64;
+
+    /** Issue #14 — max characters in a single NORMALIZED role (post-{@link #normalizeRole},
+     *  so the stripped {@code ROLE_} prefix does not count). The longest name in the
+     *  platform's role vocabulary is {@code "mastodon_external_client"} (24), so this is
+     *  pure headroom; a longer entry is dropped rather than truncated. */
+    private static final int MAX_ROLE_LENGTH = 64;
+
+    /** Issue #14 — max characters in the CSV {@code AccountStore.ensureAccount} joins the
+     *  role set into: exactly the width of {@code account.roles} (varchar(255), changeset
+     *  004), so an over-long {@code roles} claim degrades to a shorter role list instead of
+     *  failing the login on an INSERT that no longer fits the column. */
+    private static final int MAX_ROLES_CSV_LENGTH = 255;
 
     /** Read an account by id; 404 when absent. */
     @GetMapping("/accounts/{id}")
