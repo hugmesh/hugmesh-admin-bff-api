@@ -901,8 +901,10 @@ calls a `NoopBackingServiceEffector` (logs only, no live effect) — see
 - **`DomainCapabilityInternalController`** — `GET
   /bff/internal/domain-capabilities/{domain}/{capability}` → `{"active": <bool>}`: the
   SERVICE-to-service capability check, mirroring `InternalAccountController`'s wiring
-  exactly (no JWT; `/bff/internal/**` is `permitAll()` at the Spring layer, gated in
-  depth by mTLS + `X-Internal-Token`). **ALWAYS 200** — an absent row, an ungranted
+  exactly (no human JWT; `/bff/internal/**` is `hasRole('SERVICE')` at the Spring
+  layer — see the route table above — satisfied by a Casdoor client-credentials
+  SERVICE JWT or by the in-cluster `X-Internal-Token`, with mTLS as defence in
+  depth). **ALWAYS 200** — an absent row, an ungranted
   domain, or a lookup error all resolve to `active:false`, never a 404/403/5xx a naive
   caller could mistake for "allowed". **Contract for the integrating caller
   (user-bff's mesh-device registration/claim path, NOT wired by this change):** resolve
