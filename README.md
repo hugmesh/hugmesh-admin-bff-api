@@ -1218,17 +1218,17 @@ that share code/contracts with it, include:
 
 | Repo | Relationship |
 |---|---|
-| [`hugmesh-net/hugmesh-commons`](https://github.com/hugmesh-net/hugmesh-commons) | Shared security/tenancy/web building blocks (`CasdoorAuthorities`, `DomainRegistry`, `PrincipalDomain`, …) |
-| [`hugmesh-net/hugmesh-auth-core`](https://github.com/hugmesh-net/hugmesh-auth-core) | Shared account/session/MFA/Casdoor-admin library consumed by this service and `user-bff` |
-| [`hugmesh-net/hugmesh-user-bff`](https://github.com/hugmesh-net/hugmesh-user-bff) | `user-bff` — the SSO login/session orchestration this service's `/bff/internal` API backs |
-| [`hugmesh-net/hugmesh-admin-ui`](https://github.com/hugmesh-net/hugmesh-admin-ui) | The admin console frontend this BFF serves |
-| [`hugmesh-net/hugmesh-login-ui`](https://github.com/hugmesh-net/hugmesh-login-ui) | The login frontend that posts to `/bff/login` / `/bff/register/**` |
-| [`hugmesh-net/hugmesh-gateway`](https://github.com/hugmesh-net/hugmesh-gateway) | The platform gateway(s) that enforce `gateway_route_access` and perform the `bff_` → JWT exchange |
-| [`hugmesh-net/hugmesh-generator`](https://github.com/hugmesh-net/hugmesh-generator) | Cluster/image tooling: `docs/MDM.md` (Headwind + `phone-wizard.sh`), device provisioning scripts, the shared OWASP pen-test CI stage this repo's pipeline includes |
-| [`hugmesh-net/hugmesh-forum-api`](https://github.com/hugmesh-net/hugmesh-forum-api) | The phpBB forum backend proxied by `ForumAdminController` |
-| [`hugmesh-net/hugmesh-mastodon-ui`](https://github.com/hugmesh-net/hugmesh-mastodon-ui) | Consumes the Mastodon-UI appearance defaults described in `docs/SUBSYSTEMS.md` |
+| [`hugmesh/hugmesh-commons`](https://github.com/hugmesh/hugmesh-commons) | Shared security/tenancy/web building blocks (`CasdoorAuthorities`, `DomainRegistry`, `PrincipalDomain`, …) |
+| [`hugmesh/hugmesh-auth-core`](https://github.com/hugmesh/hugmesh-auth-core) | Shared account/session/MFA/Casdoor-admin library consumed by this service and `user-bff` |
+| [`hugmesh/hugmesh-user-bff`](https://github.com/hugmesh/hugmesh-user-bff) | `user-bff` — the SSO login/session orchestration this service's `/bff/internal` API backs |
+| [`hugmesh/hugmesh-admin-ui`](https://github.com/hugmesh/hugmesh-admin-ui) | The admin console frontend this BFF serves |
+| [`hugmesh/hugmesh-login-ui`](https://github.com/hugmesh/hugmesh-login-ui) | The login frontend that posts to `/bff/login` / `/bff/register/**` |
+| [`hugmesh/hugmesh-gateway`](https://github.com/hugmesh/hugmesh-gateway) | The platform gateway(s) that enforce `gateway_route_access` and perform the `bff_` → JWT exchange |
+| [`hugmesh/hugmesh-generator`](https://github.com/hugmesh/hugmesh-generator) | Cluster/image tooling: `docs/MDM.md` (Headwind + `phone-wizard.sh`), device provisioning scripts, the shared OWASP pen-test CI stage this repo's pipeline includes |
+| [`hugmesh/hugmesh-forum-api`](https://github.com/hugmesh/hugmesh-forum-api) | The phpBB forum backend proxied by `ForumAdminController` |
+| [`hugmesh/hugmesh-mastodon-ui`](https://github.com/hugmesh/hugmesh-mastodon-ui) | Consumes the Mastodon-UI appearance defaults described in `docs/SUBSYSTEMS.md` |
 
-See the [HugMesh](https://github.com/hugmesh-net) organization for the full set of
+See the [HugMesh](https://github.com/hugmesh) organization for the full set of
 platform repositories.
 
 ## Contributing
