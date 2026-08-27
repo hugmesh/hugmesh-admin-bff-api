@@ -1,0 +1,60 @@
+# reserved-prefixes-policy — the GitOps/ArgoCD enforcement layer of the
+# reserved-prefix rule. Applies:
+#   * hugmesh-policy/reserved-prefixes ConfigMap (in-cluster mirror of the
+#     canonical source specs/cluster/reserved-prefixes.yaml), and
+#   * the Kyverno ClusterPolicy `reserved-prefixes` that reads it and blocks
+#     vanity-shadowing Ingress/HTTPRoute hosts + (defensively) reserved vanity
+#     CRD handles.
+# Syncs in the default wave (0), AFTER kyverno (apps/15-kyverno.yaml, wave -1) so
+# the ClusterPolicy CRD exists. The reserved set is the single auditable source
+# of truth; scripts/validate-reserved-prefixes.sh asserts the ConfigMap matches
+# the canonical source AND covers every deployed gateway route prefix.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: reserved-prefixes-policy
+  namespace: devops
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/hugmesh/hugmesh-generator.git
+    targetRevision: main
+    path: specs/cluster/manifests/policy
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: hugmesh-policy
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }
+    # Replace=false; ClusterPolicy is cluster-scoped but kustomize emits it fine.
+    # RespectIgnoreDifferences=true: the KEYSTONE half for the installed-services
+    # ConfigMap mirror — selfHeal must NOT revert the admin-bff
+    # OptionalServiceReconciler's runtime write of the per-slug greying booleans
+    # (docs/OPTIONAL-SERVICES.md §7). services.json + workloadConsole + the
+    # reserved-prefixes ConfigMap stay fully selfHeal-enforced (not ignored).
+    syncOptions: [CreateNamespace=true, RespectIgnoreDifferences=true]
+  # The 12 cluster-service boolean keys of the installed-services ConfigMap are the
+  # runtime greying mirror the OptionalServiceReconciler owns (a targeted merge-patch
+  # of exactly these keys). Let ONLY these diverge from git; every other key
+  # (services.json, workloadConsole) stays git-enforced. Keep this list in sync with
+  # the OptionalService CRD slug enum + the reconciler's OptionalServiceRegistry.
+  ignoreDifferences:
+    - group: ""
+      kind: ConfigMap
+      name: installed-services
+      namespace: hugmesh-policy
+      jsonPointers:
+        - /data/akkoma
+        - /data/tuwunel
+        - /data/phpbb
+        - /data/games
+        - /data/owncast
+        - /data/tube
+        - /data/character-studio
+        - /data/anubis
+        - /data/coturn
+        - /data/edge-ai
+        - /data/edge-ai-analysis
+        - /data/edge-ai-tts
+  # Health: ArgoCD treats Kyverno ClusterPolicy ready-state via its status; no
+  # extra config needed. If Kyverno is not yet installed the ClusterPolicy apply
+  # waits for its CRD (wave ordering above guarantees it).

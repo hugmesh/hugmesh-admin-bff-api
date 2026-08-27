@@ -17,7 +17,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * <ul>
  *   <li><b>not-leader skips entirely</b> (single-writer): no write, no status;</li>
  *   <li><b>derives the desired map over the CLOSED slug set</b>: enabled CRs -&gt; true,
- *       every other managed slug -&gt; false, all 12 present;</li>
+ *       every other managed slug -&gt; false, all present;</li>
  *   <li><b>both write targets receive the SAME desired map</b> (single source of truth);</li>
  *   <li><b>status</b>: enabled+ok -&gt; installed/Enabled; disabled+ok -&gt; !installed/Disabled;
  *       a write failure -&gt; Degraded + installed false;</li>
@@ -48,6 +48,13 @@ class OptionalServiceReconcilerTest {
         @Override public List<OptionalServiceCr> listDesired() { return crs; }
         @Override public boolean updateStatus(OptionalServiceCr c, OptionalServiceStatus s) {
             statuses.add(Map.entry(c.slug(), s)); return true;
+        }
+        @Override public OptionalServiceCr setEnabled(String slug, boolean enabled, String reason,
+                                                      String requestedBy) {
+            // The reconcile loop never writes a CR spec — only the superadmin surface does
+            // (OptionalServiceAdminService). Throwing keeps that boundary honest: if a future
+            // reconciler change starts writing spec, this test dies instead of quietly passing.
+            throw new UnsupportedOperationException("the reconciler must not write CR specs");
         }
         @Override public boolean isReal() { return true; }
         OptionalServiceStatus statusOf(String slug) {
@@ -101,7 +108,8 @@ class OptionalServiceReconcilerTest {
         newReconciler(new FakeLeader(true), client, patcher, writer).runOnce().block();
 
         Map<String, Boolean> desired = patcher.last();
-        // ALL 12 managed slugs present; only CR-enabled ones true.
+        // ALL managed slugs present (count pinned by OptionalServiceRegistryParityTest,
+        // never restated as a literal here); only CR-enabled ones true.
         assertThat(desired.keySet()).containsExactlyInAnyOrderElementsOf(REGISTRY.slugs());
         assertThat(desired.get("akkoma")).isTrue();
         assertThat(desired.get("tuwunel")).isTrue();

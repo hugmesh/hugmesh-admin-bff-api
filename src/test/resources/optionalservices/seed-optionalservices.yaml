@@ -1,0 +1,176 @@
+# Seed OptionalService CRs — one INERT desired-state object per cluster-service
+# slug, so a freshly-bootstrapped cluster has a full `kubectl get optionalservices`
+# table an admin can edit in place (no CR authoring needed for the common toggle).
+#
+# `enabled` MIRRORS the installed-services ConfigMap git baseline (the real
+# install-state), NOT 13a's all-"false" pre-cut-over element baseline:
+#   akkoma/tuwunel/phpbb = true (DEFAULT-ON), everything else = false (DEFAULT-OFF).
+# The stage4 builders REWRITE these per the resolved OPTIONAL_SERVICES selection via
+# _opt_render_optionalservice_cr() (alongside _opt_render_installed_services), so a
+# USB built WITHOUT a slug ships that slug's CR enabled:false.
+#
+# SHIPS DARK / CHANGES NOTHING until deliberately enabled: the admin-bff reconciler
+# is app.optional-services.reconcile.enabled=false by default (NoopOptionalService
+# writers), so these CRs are recorded desired-state that the controller does NOT act
+# on. ⚠ Enabling the reconciler while akkoma/tuwunel/phpbb=true BEFORE the hardcoded-
+# app cut-over would make the ApplicationSet create optional-akkoma/etc. that DOUBLE-
+# MANAGE the same manifests as the still-present hardcoded apps/30-akkoma.yaml (name
+# `akkoma`) etc. — see docs/OPTIONAL-SERVICES.md §10 (the cluster-gated cut-over).
+---
+apiVersion: platform.hugmesh.net/v1alpha1
+kind: OptionalService
+metadata:
+  name: akkoma
+  namespace: devops
+  labels: { app.kubernetes.io/part-of: hugmesh.net }
+spec:
+  slug: akkoma
+  enabled: true
+  reason: build-seed (DEFAULT-ON baseline)
+  requestedBy: generator:_opt_render_optionalservice_cr
+---
+apiVersion: platform.hugmesh.net/v1alpha1
+kind: OptionalService
+metadata:
+  name: tuwunel
+  namespace: devops
+  labels: { app.kubernetes.io/part-of: hugmesh.net }
+spec:
+  slug: tuwunel
+  enabled: true
+  reason: build-seed (DEFAULT-ON baseline)
+  requestedBy: generator:_opt_render_optionalservice_cr
+---
+apiVersion: platform.hugmesh.net/v1alpha1
+kind: OptionalService
+metadata:
+  name: phpbb
+  namespace: devops
+  labels: { app.kubernetes.io/part-of: hugmesh.net }
+spec:
+  slug: phpbb
+  enabled: true
+  reason: build-seed (DEFAULT-ON baseline)
+  requestedBy: generator:_opt_render_optionalservice_cr
+---
+apiVersion: platform.hugmesh.net/v1alpha1
+kind: OptionalService
+metadata:
+  name: games
+  namespace: devops
+  labels: { app.kubernetes.io/part-of: hugmesh.net }
+spec:
+  slug: games
+  enabled: false
+  reason: build-seed (DEFAULT-OFF baseline)
+  requestedBy: generator:_opt_render_optionalservice_cr
+---
+apiVersion: platform.hugmesh.net/v1alpha1
+kind: OptionalService
+metadata:
+  name: owncast
+  namespace: devops
+  labels: { app.kubernetes.io/part-of: hugmesh.net }
+spec:
+  slug: owncast
+  enabled: false
+  reason: build-seed (DEFAULT-OFF baseline)
+  requestedBy: generator:_opt_render_optionalservice_cr
+---
+apiVersion: platform.hugmesh.net/v1alpha1
+kind: OptionalService
+metadata:
+  name: tube
+  namespace: devops
+  labels: { app.kubernetes.io/part-of: hugmesh.net }
+spec:
+  slug: tube
+  enabled: false
+  reason: build-seed (DEFAULT-OFF baseline)
+  requestedBy: generator:_opt_render_optionalservice_cr
+---
+apiVersion: platform.hugmesh.net/v1alpha1
+kind: OptionalService
+metadata:
+  name: character-studio
+  namespace: devops
+  labels: { app.kubernetes.io/part-of: hugmesh.net }
+spec:
+  slug: character-studio
+  enabled: false
+  reason: build-seed (DEFAULT-OFF baseline)
+  requestedBy: generator:_opt_render_optionalservice_cr
+---
+apiVersion: platform.hugmesh.net/v1alpha1
+kind: OptionalService
+metadata:
+  name: character-forge
+  namespace: devops
+  labels: { app.kubernetes.io/part-of: hugmesh.net }
+spec:
+  slug: character-forge
+  enabled: false
+  reason: build-seed (DEFAULT-OFF baseline)
+  requestedBy: generator:_opt_render_optionalservice_cr
+---
+apiVersion: platform.hugmesh.net/v1alpha1
+kind: OptionalService
+metadata:
+  name: anubis
+  namespace: devops
+  labels: { app.kubernetes.io/part-of: hugmesh.net }
+spec:
+  slug: anubis
+  # SAFE TEST BASELINE (optional-services.yaml anubis default:off; PROD flips it on
+  # at build via _opt_anubis_installed). The CR is the authoritative runtime override.
+  enabled: false
+  reason: build-seed (ENV-conditional; safe test baseline)
+  requestedBy: generator:_opt_render_optionalservice_cr
+---
+apiVersion: platform.hugmesh.net/v1alpha1
+kind: OptionalService
+metadata:
+  name: coturn
+  namespace: devops
+  labels: { app.kubernetes.io/part-of: hugmesh.net }
+spec:
+  slug: coturn
+  enabled: false
+  reason: build-seed (DEFAULT-OFF, runtime-only)
+  requestedBy: generator:_opt_render_optionalservice_cr
+---
+apiVersion: platform.hugmesh.net/v1alpha1
+kind: OptionalService
+metadata:
+  name: edge-ai
+  namespace: devops
+  labels: { app.kubernetes.io/part-of: hugmesh.net }
+spec:
+  slug: edge-ai
+  enabled: false
+  reason: build-seed (DEFAULT-OFF, GPU-gated)
+  requestedBy: generator:_opt_render_optionalservice_cr
+---
+apiVersion: platform.hugmesh.net/v1alpha1
+kind: OptionalService
+metadata:
+  name: edge-ai-analysis
+  namespace: devops
+  labels: { app.kubernetes.io/part-of: hugmesh.net }
+spec:
+  slug: edge-ai-analysis
+  enabled: false
+  reason: build-seed (DEFAULT-OFF, dependsOn edge-ai)
+  requestedBy: generator:_opt_render_optionalservice_cr
+---
+apiVersion: platform.hugmesh.net/v1alpha1
+kind: OptionalService
+metadata:
+  name: edge-ai-tts
+  namespace: devops
+  labels: { app.kubernetes.io/part-of: hugmesh.net }
+spec:
+  slug: edge-ai-tts
+  enabled: false
+  reason: build-seed (DEFAULT-OFF, CPU-only)
+  requestedBy: generator:_opt_render_optionalservice_cr

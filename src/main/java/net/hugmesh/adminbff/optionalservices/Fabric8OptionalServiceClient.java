@@ -2,7 +2,9 @@ package net.hugmesh.adminbff.optionalservices;
 
 import io.fabric8.kubernetes.api.model.GenericKubernetesResource;
 import io.fabric8.kubernetes.api.model.GenericKubernetesResourceList;
+import io.fabric8.kubernetes.api.model.ObjectMeta;
 import io.fabric8.kubernetes.client.KubernetesClient;
+import io.fabric8.kubernetes.client.KubernetesClientException;
 import io.fabric8.kubernetes.client.dsl.base.ResourceDefinitionContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -88,9 +90,103 @@ public class Fabric8OptionalServiceClient implements OptionalServiceClient {
         }
     }
 
+    /**
+     * Set {@code spec.enabled} (+ audit fields) on ONE slug's CR, creating the CR when the
+     * cluster carries no seed for it. Read-modify-write on the LIVE object (PUT with the
+     * fetched resourceVersion — optimistic concurrency), never a whole-object serverSideApply
+     * that would fight ArgoCD's field manager, and {@code spec.slug} is written only on the
+     * create path (the CRD's CEL rule pins it immutable thereafter).
+     *
+     * <p>UNLIKE every other method here this one THROWS: a superadmin toggle that did not land
+     * must be reported, not swallowed into the next tick. A 4xx from the API server (e.g. a
+     * slug outside the CRD {@code spec.slug} enum) is {@link OptionalServiceWriteException.Kind#REJECTED};
+     * anything else is {@link OptionalServiceWriteException.Kind#FAILED}.
+     */
+    @Override
+    public OptionalServiceCr setEnabled(String slug, boolean enabled, String reason, String requestedBy) {
+        if (slug == null || slug.isBlank()) {
+            throw new OptionalServiceWriteException(OptionalServiceWriteException.Kind.REJECTED,
+                    "slug must not be blank");
+        }
+        try (KubernetesClient client = clientFactory.get()) {
+            GenericKubernetesResource live = client.genericKubernetesResources(OPTSVC_RDC)
+                    .inNamespace(namespace).withName(slug).get();
+            GenericKubernetesResource target = (live != null) ? live : newCr(slug);
+
+            Map<String, Object> spec = mutableSpec(target);
+            spec.put("slug", slug);
+            spec.put("enabled", enabled);
+            putOrRemove(spec, "reason", reason);
+            putOrRemove(spec, "requestedBy", requestedBy);
+            target.setAdditionalProperty("spec", spec);
+
+            GenericKubernetesResource written = (live != null)
+                    ? client.genericKubernetesResources(OPTSVC_RDC).inNamespace(namespace)
+                            .resource(target).update()
+                    : client.genericKubernetesResources(OPTSVC_RDC).inNamespace(namespace)
+                            .resource(target).create();
+
+            OptionalServiceCr projected = project(written);
+            if (projected == null) {
+                throw new OptionalServiceWriteException(OptionalServiceWriteException.Kind.FAILED,
+                        "the API server accepted the write but returned an OptionalService with no spec.slug");
+            }
+            log.info("[optional-services-admin] {} {}/{} spec.enabled={} by={}",
+                    live != null ? "updated" : "created", namespace, slug, enabled, requestedBy);
+            return projected;
+        } catch (OptionalServiceWriteException e) {
+            throw e;
+        } catch (KubernetesClientException e) {
+            OptionalServiceWriteException.Kind kind = (e.getCode() >= 400 && e.getCode() < 500)
+                    ? OptionalServiceWriteException.Kind.REJECTED
+                    : OptionalServiceWriteException.Kind.FAILED;
+            log.warn("[optional-services-admin] spec write for {}/{} {}: {}",
+                    namespace, slug, kind, e.getMessage());
+            throw new OptionalServiceWriteException(kind,
+                    "the API server refused the OptionalService write for '" + slug + "': "
+                            + e.getMessage(), e);
+        } catch (Exception e) {
+            log.warn("[optional-services-admin] spec write for {}/{} errored: {}",
+                    namespace, slug, e.toString());
+            throw new OptionalServiceWriteException(OptionalServiceWriteException.Kind.FAILED,
+                    "the OptionalService write for '" + slug + "' could not be completed: "
+                            + e.getMessage(), e);
+        }
+    }
+
     @Override
     public boolean isReal() {
         return true;
+    }
+
+    /** A fresh, minimal OptionalService shell for the create path (no spec yet). */
+    private GenericKubernetesResource newCr(String slug) {
+        GenericKubernetesResource cr = new GenericKubernetesResource();
+        cr.setApiVersion(OPTSVC_RDC.getGroup() + "/" + OPTSVC_RDC.getVersion());
+        cr.setKind(OPTSVC_RDC.getKind());
+        ObjectMeta meta = new ObjectMeta();
+        meta.setName(slug);
+        meta.setNamespace(namespace);
+        cr.setMetadata(meta);
+        return cr;
+    }
+
+    /** The CR's spec as a MUTABLE copy (the live object's map may be immutable / shared). */
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> mutableSpec(GenericKubernetesResource cr) {
+        Object spec = cr.getAdditionalProperties() == null ? null : cr.getAdditionalProperties().get("spec");
+        return (spec instanceof Map<?, ?> m)
+                ? new LinkedHashMap<>((Map<String, Object>) m)
+                : new LinkedHashMap<>();
+    }
+
+    /** Set an optional audit field, or CLEAR it when the caller supplied nothing (no stale reason). */
+    private static void putOrRemove(Map<String, Object> spec, String key, String value) {
+        if (value == null || value.isBlank()) {
+            spec.remove(key);
+        } else {
+            spec.put(key, value);
+        }
     }
 
     /** Project one generic CR to the fabric8-free {@link OptionalServiceCr}. Null if it has no slug. */
