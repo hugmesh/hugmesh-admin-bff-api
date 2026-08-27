@@ -18,7 +18,7 @@ on:
 # secrets and variables so the same Dockerfile keeps working unmodified.
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: hugmesh-net/hugmesh-admin-bff-api
+  IMAGE_NAME: hugmesh/hugmesh-admin-bff-api
 
 jobs:
   build-and-push:
