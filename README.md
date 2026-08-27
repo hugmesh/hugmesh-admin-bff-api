@@ -127,9 +127,6 @@ for the narrower ones):
   reads a **separate, static, manually-edited devices ConfigMap** instead of this
   export — the on-node/cluster reconcile agent that would connect the two doesn't
   exist yet. See `docs/SUBSYSTEMS.md`.
-- A narrow role-string length/count cap is missing before the CSV join in
-  `InternalAccountController#rolesFromIdToken` — flagged inline as a `TODO` (see
-  `src/main/java/net/hugmesh/adminbff/internalapi/InternalAccountController.java`).
 
 ---
 

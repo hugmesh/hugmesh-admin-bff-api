@@ -37,9 +37,9 @@ public class StubDeviceSshTransport implements DeviceSshTransport {
 
     @Override
     public Mono<Session> open(String deviceId, String hostname, String operator, int cols, int rows) {
-        // No real connection — log + hand back a banner-only session. TODO(follow-on): the real
-        // SSH client impl replaces this bean (flag on + real bean present); it MUST NOT change the
-        // handler's connect-time gates, only the transport.
+        // No real connection — log + hand back a banner-only session. The real transport is
+        // SshDeviceTerminalTransport (flag on, see class Javadoc above); this stub MUST NOT be
+        // changed to alter the handler's connect-time gates, only what backs the transport.
         log.info("[device-terminal] (stub, SHIPS DARK) open requested device={} operator={} {}x{} "
                 + "— no SSH dialed", deviceId, operator, cols, rows);
         return Mono.just(new StubSession());
