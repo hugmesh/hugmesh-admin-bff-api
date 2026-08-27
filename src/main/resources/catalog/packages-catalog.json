@@ -1152,7 +1152,6 @@
               "net-firewall/firewalld",
               "net-firewall/conntrack-tools",
               "net-misc/socat",
-              "net-dns/bind-tools",
               "sys-apps/ethtool",
               "sys-apps/iproute2"
             ],
@@ -1321,7 +1320,7 @@
           },
           {
             "atoms": [
-              "app-arch/p7zip",
+              "app-arch/7zip",
               "app-arch/unzip",
               "sys-process/htop",
               "sys-apps/flatpak"
@@ -2484,8 +2483,8 @@
     "x86": {
       "be": {
         "available": [
+          "app-arch/7zip",
           "app-arch/file-roller",
-          "app-arch/p7zip",
           "app-arch/unzip",
           "app-crypt/gocryptfs",
           "app-editors/neovim",
@@ -2586,7 +2585,6 @@
           "app-editors/nano",
           "app-misc/jq",
           "app-misc/screen",
-          "net-dns/bind-tools",
           "net-firewall/conntrack-tools",
           "net-firewall/firewalld",
           "net-firewall/iptables",
@@ -2631,8 +2629,8 @@
       },
       "be+gpu": {
         "available": [
+          "app-arch/7zip",
           "app-arch/file-roller",
-          "app-arch/p7zip",
           "app-arch/unzip",
           "app-crypt/gocryptfs",
           "app-editors/neovim",
@@ -2728,7 +2726,6 @@
           "app-editors/nano",
           "app-misc/jq",
           "app-misc/screen",
-          "net-dns/bind-tools",
           "net-firewall/conntrack-tools",
           "net-firewall/firewalld",
           "net-firewall/iptables",
@@ -2779,8 +2776,8 @@
       },
       "chromebook": {
         "available": [
+          "app-arch/7zip",
           "app-arch/file-roller",
-          "app-arch/p7zip",
           "app-arch/unzip",
           "app-editors/neovim",
           "app-editors/vim",
@@ -2847,7 +2844,6 @@
           "app-editors/nano",
           "app-misc/jq",
           "app-misc/screen",
-          "net-dns/bind-tools",
           "net-firewall/conntrack-tools",
           "net-firewall/firewalld",
           "net-firewall/iptables",
@@ -2927,8 +2923,8 @@
       },
       "desktop": {
         "available": [
+          "app-arch/7zip",
           "app-arch/file-roller",
-          "app-arch/p7zip",
           "app-arch/unzip",
           "app-editors/neovim",
           "app-editors/vim",
@@ -2995,7 +2991,6 @@
           "app-editors/nano",
           "app-misc/jq",
           "app-misc/screen",
-          "net-dns/bind-tools",
           "net-firewall/conntrack-tools",
           "net-firewall/firewalld",
           "net-firewall/iptables",
@@ -3075,8 +3070,8 @@
       },
       "edge_ai": {
         "available": [
+          "app-arch/7zip",
           "app-arch/file-roller",
-          "app-arch/p7zip",
           "app-arch/unzip",
           "app-crypt/gocryptfs",
           "app-editors/neovim",
@@ -3172,7 +3167,6 @@
           "app-editors/nano",
           "app-misc/jq",
           "app-misc/screen",
-          "net-dns/bind-tools",
           "net-firewall/conntrack-tools",
           "net-firewall/firewalld",
           "net-firewall/iptables",
@@ -3223,8 +3217,8 @@
       },
       "fe": {
         "available": [
+          "app-arch/7zip",
           "app-arch/file-roller",
-          "app-arch/p7zip",
           "app-arch/unzip",
           "app-crypt/gocryptfs",
           "app-editors/neovim",
@@ -3325,7 +3319,6 @@
           "app-editors/nano",
           "app-misc/jq",
           "app-misc/screen",
-          "net-dns/bind-tools",
           "net-firewall/conntrack-tools",
           "net-firewall/firewalld",
           "net-firewall/iptables",
@@ -3370,8 +3363,8 @@
       },
       "laptop": {
         "available": [
+          "app-arch/7zip",
           "app-arch/file-roller",
-          "app-arch/p7zip",
           "app-arch/unzip",
           "app-editors/neovim",
           "app-editors/vim",
@@ -3438,7 +3431,6 @@
           "app-editors/nano",
           "app-misc/jq",
           "app-misc/screen",
-          "net-dns/bind-tools",
           "net-firewall/conntrack-tools",
           "net-firewall/firewalld",
           "net-firewall/iptables",
@@ -3518,8 +3510,8 @@
       },
       "omnibus": {
         "available": [
+          "app-arch/7zip",
           "app-arch/file-roller",
-          "app-arch/p7zip",
           "app-arch/unzip",
           "app-crypt/gocryptfs",
           "app-editors/neovim",
@@ -3615,7 +3607,6 @@
           "app-editors/nano",
           "app-misc/jq",
           "app-misc/screen",
-          "net-dns/bind-tools",
           "net-firewall/conntrack-tools",
           "net-firewall/firewalld",
           "net-firewall/iptables",
@@ -3666,8 +3657,8 @@
       },
       "pki": {
         "available": [
+          "app-arch/7zip",
           "app-arch/file-roller",
-          "app-arch/p7zip",
           "app-arch/unzip",
           "app-crypt/gocryptfs",
           "app-editors/neovim",
@@ -3768,7 +3759,6 @@
           "app-editors/nano",
           "app-misc/jq",
           "app-misc/screen",
-          "net-dns/bind-tools",
           "net-firewall/conntrack-tools",
           "net-firewall/firewalld",
           "net-firewall/iptables",
@@ -3813,8 +3803,8 @@
       },
       "standalone-thick": {
         "available": [
+          "app-arch/7zip",
           "app-arch/file-roller",
-          "app-arch/p7zip",
           "app-arch/unzip",
           "app-editors/neovim",
           "app-editors/vim",
@@ -3881,7 +3871,6 @@
           "app-editors/nano",
           "app-misc/jq",
           "app-misc/screen",
-          "net-dns/bind-tools",
           "net-firewall/conntrack-tools",
           "net-firewall/firewalld",
           "net-firewall/iptables",
@@ -3961,8 +3950,8 @@
       },
       "standalone-thin": {
         "available": [
+          "app-arch/7zip",
           "app-arch/file-roller",
-          "app-arch/p7zip",
           "app-arch/unzip",
           "app-editors/neovim",
           "app-editors/vim",
@@ -4029,7 +4018,6 @@
           "app-editors/nano",
           "app-misc/jq",
           "app-misc/screen",
-          "net-dns/bind-tools",
           "net-firewall/conntrack-tools",
           "net-firewall/firewalld",
           "net-firewall/iptables",
@@ -4109,8 +4097,8 @@
       },
       "standalone-unaffiliated": {
         "available": [
+          "app-arch/7zip",
           "app-arch/file-roller",
-          "app-arch/p7zip",
           "app-arch/unzip",
           "app-editors/neovim",
           "app-editors/vim",
@@ -4177,7 +4165,6 @@
           "app-editors/nano",
           "app-misc/jq",
           "app-misc/screen",
-          "net-dns/bind-tools",
           "net-firewall/conntrack-tools",
           "net-firewall/firewalld",
           "net-firewall/iptables",
