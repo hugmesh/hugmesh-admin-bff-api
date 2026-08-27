@@ -178,6 +178,48 @@
         }
       }
     },
+    "/bff/superadmin/optional-services/{slug}" : {
+      "put" : {
+        "tags" : [ "optional-service-superadmin-controller" ],
+        "summary" : "Enable or disable an optional service",
+        "operationId" : "optionalServicesSetEnabled",
+        "parameters" : [ {
+          "name" : "slug",
+          "in" : "path",
+          "required" : true,
+          "schema" : {
+            "maxLength" : 64,
+            "minLength" : 0,
+            "type" : "string"
+          }
+        } ],
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/SetOptionalServiceEnabledRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "type" : "object",
+                  "additionalProperties" : {
+                    "type" : "object"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/bff/superadmin/games-services/offers/{domain}/{slug}" : {
       "put" : {
         "tags" : [ "games-catalog-superadmin-controller" ],
@@ -5745,6 +5787,28 @@
         }
       }
     },
+    "/bff/superadmin/optional-services" : {
+      "get" : {
+        "tags" : [ "optional-service-superadmin-controller" ],
+        "summary" : "Optional-services catalogue + toggleability",
+        "operationId" : "optionalServicesCatalogue",
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "type" : "object",
+                  "additionalProperties" : {
+                    "type" : "object"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/bff/superadmin/fleet-entitlements" : {
       "get" : {
         "tags" : [ "fleet-entitlement-superadmin-controller" ],
@@ -8852,6 +8916,20 @@
           "mode" : {
             "minLength" : 1,
             "pattern" : "unmanaged|mesh_owned",
+            "type" : "string"
+          }
+        }
+      },
+      "SetOptionalServiceEnabledRequest" : {
+        "required" : [ "enabled" ],
+        "type" : "object",
+        "properties" : {
+          "enabled" : {
+            "type" : "boolean"
+          },
+          "reason" : {
+            "maxLength" : 512,
+            "minLength" : 0,
             "type" : "string"
           }
         }

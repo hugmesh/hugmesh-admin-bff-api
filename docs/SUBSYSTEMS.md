@@ -124,9 +124,38 @@ flowchart LR
     RECON -->|advance watermark past<br/>contiguous successes only| CURSOR[("FindingCursorRepository<br/>per-surface sinceId")]
 ```
 
-## Optional-services reconciler (`net.hugmesh.adminbff.optionalservices`) — ✅ shipped, dark by default
+## Optional-services control plane (`net.hugmesh.adminbff.optionalservices`) — ✅ shipped, actuation dark by default
 
-No REST controller — this is a pure background reconciler (`OptionalServiceReconciler`,
+A SUPERADMIN REST surface **plus** a background reconciler.
+
+`OptionalServiceSuperadminController` (`/bff/superadmin/optional-services`,
+`hasRole('SUPERADMIN')` at the coarse path gate and again per method) is the runtime half of
+"an image ships with only its selected services until a superadmin enables others":
+`GET ""` returns every slug the platform knows with its live CR state AND whether it is
+actually `toggleable` (with a NAMED `notToggleableReason` when it is not), and
+`PUT /{slug}` writes `spec.enabled` + the audit `reason`/`requestedBy` onto the CR.
+Every path that cannot actuate refuses rather than no-ops: unknown slug 404;
+known-but-unactionable slug 422 with the named reason and no write; reconciler not wired to
+a cluster 503 `dark:true` with no write (`NoopOptionalServiceClient.setEnabled` throws
+instead of returning a success it cannot deliver); API-server rejection 422. Tests:
+`OptionalServiceSuperadminControllerTest` (role matrix + refusal ladder through the real
+`SecurityConfig`), `OptionalServiceSuperadminMethodGateTest` (the per-method
+`@PreAuthorize` proven with the coarse path gate removed — otherwise the annotation is
+untestable decoration), `NoopOptionalServiceClientTest`.
+
+`OptionalServiceRegistry` carries TWO halves — the MANAGED slugs the reconciler can actuate
+and the platform-known slugs it cannot, each with a named reason —
+because a registry that lists only what works cannot report what does not. That was the
+`character-forge` defect: in the CRD enum, in the seed CRs, in `apps/13a`, in the
+`installed-services` ConfigMap, and MISSING from the registry, so the toggle was accepted and
+did nothing, with no trace. `OptionalServiceRegistryParityTest` now DERIVES every side from
+vendored copies of the generator manifests (`src/test/resources/optionalservices/`) and fails
+when they disagree; an empty derivation is a hard failure rather than a vacuous pass.
+`OptionalServiceManifestDriftTest` compares those vendored copies back to a generator
+checkout when one is present (and SKIPS when it is not — so a stale fixture is a residual
+risk that only a generator-side check can fully close).
+
+The reconciler half (`OptionalServiceReconciler`,
 `@Scheduled`, `LeaderElection`-gated single-writer, gated by
 `app.optional-services.reconcile.enabled`, default `false`) that turns an
 `OptionalService` custom resource's desired state into the two build-time-rendered live
@@ -137,6 +166,27 @@ service flips one CR instead of hand-editing baked manifests ArgoCD never re-rea
 Both writers are `Noop*` by default (inert) with a `Fabric8*` real implementation
 behind the same flag. Tests: `OptionalServiceReconcilerTest`,
 `Fabric8OptionalServiceApplicationSetPatcherTest`.
+
+> **Known gaps, recorded not papered over.** (1) `app.optional-services.reconcile.enabled`
+> has no supported switch: it appears only as the `:false` default in `application.yml`, and
+> `specs/cluster/apps/31-admin-bff-api.yaml` carries `automated:{prune,selfHeal}` with no
+> `ignoreDifferences`, so a manual `kubectl set env` is reverted on the next selfHeal pass.
+> Until that changes the toggle surface is honest but inert, and answers 503.
+> (2) `apps/16` is missing `/data/character-forge`, `/data/headwind`,
+> `/data/attestation-server` and `/data/meshbridge` pointers, so those greying mirrors are
+> selfHealed back to git; `character-forge` is the one of the four that is a MANAGED slug, and
+> the catalogue/toggle responses carry an explicit `warnings` entry for it.
+> (3) `meshbridge` has a 13a element and a ConfigMap key but no CRD enum value or seed CR, so
+> it is un-toggleable from the CR API at all (it at least fails loud, at the API server).
+> (4) The `installed-services` ConfigMap (`hugmesh-policy` ns) that
+> `Fabric8InstalledServicesConfigMapWriter` writes is WRITE-ONLY: no Deployment mounts it, no
+> `configMapKeyRef` names it, and the user-facing greying reads `federation_modules` in
+> Postgres instead — so half of every reconcile pass writes an artefact with no consumer.
+> **Do not mistake the near-miss for a consumer:** `cloudbackup.ConfigMapRunningServiceProvider`
+> reads a DIFFERENTLY-NAMED, per-brand object — `hugmesh-installed-services-<domain-slug>` in
+> `hugmesh-backend` — which this writer never touches. Recorded deliberately; do NOT "fix" (4)
+> by inventing a consumer, and do not wire the two together without a design decision.
+> (1)-(4) are generator-side and out of scope for this repo.
 
 ## Federation bearer-forwarding + native-login custody exchange (`net.hugmesh.adminbff.federation`) — ✅ shipped, dark by default
 

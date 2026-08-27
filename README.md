@@ -844,6 +844,44 @@ endpoint re-point is a build-time generator act or a future reconciler; the
 calls a `NoopBackingServiceEffector` (logs only, no live effect) — see
 [Roadmap](#roadmap).
 
+### Optional cluster services (`/bff/superadmin/optional-services`, ✅ shipped, actuation ships dark)
+
+`OptionalServiceSuperadminController` (`hasRole('SUPERADMIN')` on the coarse path gate AND
+on every method) is the runtime half of "an image ships with only the services it was built
+with, **until a superadmin enables others**". The build half is the generator's baked `apps/`
+tree; this is the post-deploy lever.
+
+- `GET ""` — the CATALOGUE: **every slug the platform knows**, joined with its live
+  `OptionalService` CR state, plus `toggleable` and — when false — a NAMED
+  `notToggleableReason`. A slug the reconciler cannot action is reported as such rather than
+  listed as if it worked. Today `meshbridge` is `NOT_IN_CRD_ENUM` (it has an `apps/13a`
+  element and an `installed-services` key but no CRD `spec.slug` enum value, so the API
+  server rejects its CR outright) and `workloadConsole` / `headwind` /
+  `attestation-server` are `NO_APPLICATIONSET_ELEMENT` (ConfigMap greying booleans with no
+  Application to create or prune).
+- `PUT /{slug}` — set `enabled` with an audit `reason`, written to the CR's
+  `spec.enabled` / `spec.reason` / `spec.requestedBy` (the SUPERADMIN's JWT subject). The
+  Lease-gated `OptionalServiceReconciler` converges it onto the `apps/13a` ApplicationSet
+  element + the `installed-services` greying boolean.
+
+**Nothing here silently no-ops.** Unknown slug → 404; a known-but-unactionable slug → 422
+carrying the named reason, with **no write attempted**; the reconciler wired to no cluster
+(`app.optional-services.reconcile.enabled=false`, the shipped default) → 503 `dark: true`
+with no write, while the catalogue stays readable and says `reconcilerEnabled: false`; an
+API-server rejection → 422. A managed slug whose `/data/<slug>` pointer is missing from
+`apps/16`'s `ignoreDifferences` (today: `character-forge`) toggles for real on the
+ApplicationSet side but has its greying mirror reverted by ArgoCD `selfHeal`, and says so in
+a `warnings` entry on both the catalogue row and the toggle response.
+
+`character-forge` used to be a **silently inert toggle**: the CRD enum accepted it, a seed CR
+shipped for it, it had a 13a element and a ConfigMap key — and it was missing from
+`OptionalServiceRegistry`, so the write was accepted, `kubectl` reported `enabled: true`, and
+the reconciler logged "unknown slug — ignoring", wrote neither target and skipped the CR's
+`/status`. It is now registered, and `OptionalServiceRegistryParityTest` derives the registry,
+the CRD enum, the seed CRs, the 13a elements, the ConfigMap booleans and the `apps/16`
+pointers from vendored copies of the generator manifests and fails when any two disagree — an
+empty derivation is a hard failure, not a free pass.
+
 ### Internal (service-to-service, mTLS-bounded)
 
 - **user-bff account/session API** — `InternalAccountController` (`/bff/internal/**`,

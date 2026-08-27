@@ -45,6 +45,18 @@
          committed resources/catalog/*.json are authoritative — the copy profile only refreshes
          them when a generator checkout is present (drift test skips when it is absent). -->
     <catalog.source.dir>${project.basedir}/../hugmesh-generator/docs/catalog</catalog.source.dir>
+
+    <!-- The generator checkout dir the OPTIONAL-SERVICES manifests are VENDORED from into
+         src/test/resources/optionalservices/ (the CRD slug enum, the seed CRs, the apps/13a
+         ApplicationSet elements, the installed-services ConfigMap and apps/16's
+         ignoreDifferences pointers). OptionalServiceRegistryParityTest DERIVES every side from
+         the VENDORED copies and always runs; OptionalServiceManifestDriftTest additionally
+         compares those copies back to this directory when a generator checkout is present, and
+         skips when it is not — same posture as catalog.source.dir above. There is deliberately
+         NO copy profile: these fixtures are refreshed by hand together with the registry
+         classification they pin, so an upstream slug addition surfaces as a parity failure a
+         human must resolve rather than as a silent re-vendor. -->
+    <optionalservices.source.dir>${project.basedir}/../hugmesh-generator/specs/cluster</optionalservices.source.dir>
   </properties>
 
   <dependencies>
@@ -281,6 +293,9 @@
                Maven JVM but not the fork — same reason api.version is pushed here) so
                ImageCatalogDriftTest resolves the generator source (default, or a CI -D override). -->
           <catalog.source.dir>${catalog.source.dir}</catalog.source.dir>
+          <!-- Same reason: forward the optional-services manifest source dir to the FORKED test
+               JVM so OptionalServiceManifestDriftTest can find a generator checkout. -->
+          <optionalservices.source.dir>${optionalservices.source.dir}</optionalservices.source.dir>
         </systemPropertyVariables>
       </configuration>
     </plugin>

@@ -1,0 +1,165 @@
+# installed-services — the RUNTIME install-state mirror of the OPTIONAL services
+# (akkoma/tuwunel/phpbb/games/owncast/tube + workloadConsole/anubis), rendered from
+# specs/cluster/optional-services.yaml.
+#
+# WHY THIS EXISTS: build-time `rm -f` of a baked Application only stops the
+# ONE-TIME bootstrap seed; the live cluster's ArgoCD root app syncs apps/ from the
+# gitops REPO, not the baked copy, so it would re-create a pruned Application. The
+# durable, runtime add/remove model keys the optional-services ApplicationSet
+# (apps/13a-optional-services.yaml, a list generator) off THIS ConfigMap: flipping
+# a slug's `installed` boolean here (admin task / GitOps commit) makes ArgoCD
+# create or prune that slug's Application — one list, no baked-file surgery.
+#
+# It is ALSO the public-safe install-state source the admin console + the host's
+# greying-out predicate can read (the federation /api/federation/manifest is
+# authenticated()+visibility-filtered and cannot be used for logged-out greying;
+# see the federation-api capabilities wave).
+#
+# BUILD-TIME: _opt_render_installed_services() in the stage4 builders rewrites the
+# booleans below to match the surviving OPTIONAL_SERVICES selection, so a USB built
+# WITHOUT a slug ships with installed:"false" and the ApplicationSet never creates
+# it even on a repo-synced cluster.
+#
+# Deployed by the policy bundle (manifests/policy/kustomization.yaml ->
+# apps/16-reserved-prefixes-policy.yaml, namespace hugmesh-policy).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: installed-services
+  namespace: hugmesh-policy
+  labels:
+    app.kubernetes.io/part-of: hugmesh.net
+    hugmesh.net/registry: optional-services
+data:
+  # Per-slug install-state. "true" = installed (ApplicationSet creates its app);
+  # "false" = removed (ApplicationSet prunes it). Rendered from optional-services.yaml
+  # at build time; flip at runtime for live add/remove.
+  akkoma: "true"
+  tuwunel: "true"
+  phpbb: "true"
+  # games — DEFAULT-OFF (policy 2026-06-17): the games subdomain + casdoor-games +
+  # games app-store are OPT-IN, baked only when 'games' is explicitly selected
+  # (--enable-games / 'games' in --optional-services / OPTIONAL_SERVICES=all).
+  # _opt_render_installed_services rewrites this to "true" when selected; the literal
+  # baseline below is the SAFE DEFAULT (off) so a repo-synced cluster whose render
+  # never ran ships games dark and the ApplicationSet never re-forces it on.
+  games: "false"
+  # owncast / tube — GPU-gated x86 OPTIONAL services (DEFAULT-OFF in
+  # optional-services.yaml: each needs an amd64 GPU worker). Rendered true/false by
+  # _opt_render_installed_services from OPTIONAL_SERVICES; the literal baseline below
+  # is the SAFE DEFAULT (off) so an image built WITHOUT them ships installed:"false"
+  # and the optional-services ApplicationSet never creates them even on a repo-synced
+  # cluster. The user/admin consoles grey out the live-stream + tube panels when "false".
+  owncast: "false"
+  tube: "false"
+  # character-studio — VN character-studio frontend remote (creator + chat surface),
+  # mounted at /character-studio (ROLE_USER). DEFAULT-OFF (admin gate). Rendered
+  # true/false by _opt_render_installed_services from OPTIONAL_SERVICES; the literal
+  # baseline below is the SAFE DEFAULT (off) so an image built WITHOUT it ships
+  # installed:"false" and the optional-services ApplicationSet never creates it even
+  # on a repo-synced cluster. The host greys the /character-studio entry when "false".
+  character-studio: "false"
+  # character-forge — Character Forge (3D character maker + XR chat avatars), the
+  # MULTI-APP slug (BFF db + BFF api + UI remote at /character-forge, ROLE_USER;
+  # docs/XR-CHAT.md). DEFAULT-OFF (admin gate). Rendered true/false by
+  # _opt_render_installed_services from OPTIONAL_SERVICES; the literal baseline
+  # below is the SAFE DEFAULT (off) so an image built WITHOUT it ships
+  # installed:"false" and the optional-services ApplicationSet never creates it even
+  # on a repo-synced cluster. The host greys the /character-forge entry when "false".
+  character-forge: "false"
+  # workloadConsole — the podman/OpenShift-equivalent pod console (RBAC + route-access).
+  # DEFAULT "false" (ships dark); rendered to true/false by _opt_render_installed_services
+  # from OPTIONAL_SERVICES. The admin console greys out the Workload Console remote when
+  # this is "false". Even when "true" the admin-bff is independently dark until
+  # app.workload-console.enabled + the DB master flag + an active grant.
+  workloadConsole: "false"
+  # anubis — PUBLIC proof-of-work anti-scraper shield fronting public ingress.
+  # ENV-CONDITIONAL default (NOT a plain on/off): the generator renders this ON
+  # for PROD builds ("all shields up": fe-gateway public Ingress rerouted THROUGH
+  # Anubis :8923) and OFF for TEST builds. Explicit --optional-services
+  # anubis / -anubis overrides either way. The literal below is the SAFE TEST
+  # BASELINE; _opt_render_installed_services() (build-rpi5-stage4.sh) flips it to
+  # "true" for prod. When "false" the admin console greys out the Anubis status
+  # panel and the admin-bff's AnubisClient resolves to "unreachable" (no 503), and
+  # the public ingress routes straight to the fe-gateway (direct path).
+  anubis: "false"
+  # coturn — TURN/STUN relay for Matrix WebRTC audio/video (DEFAULT-OFF,
+  # RUNTIME-ONLY: like anubis it has NO baked bootstrap Application — the apps/13a
+  # ApplicationSet element + THIS flag are the only gate). The literal "false"
+  # baseline is the SAFE DEFAULT: the stage4 builders do NOT rewrite it (coturn is
+  # not in their hardcoded render loop), so a default build ships coturn dark and
+  # the ApplicationSet never creates it even on a repo-synced cluster. Matrix
+  # clients keep host-only ICE (iceServers:[]) — byte-identical to today's mainline.
+  # Flip to "true" (+ the 13a element) for a per-domain LIVE add; tuwunel's dark/
+  # gated turn_uris/turn_secret then take effect (no-op until coturn is up).
+  coturn: "false"
+  # meshbridge — Meshtastic LoRa mesh <-> Matrix bridge (DEFAULT-OFF,
+  # RUNTIME-ONLY: like coturn it has NO baked bootstrap Application — the
+  # apps/13a ApplicationSet element + THIS flag are the only gate). The literal
+  # "false" baseline is the SAFE DEFAULT: the stage4 builders do NOT rewrite it
+  # (meshbridge is not in their hardcoded render loop), so a default build ships
+  # the bridge dark and the ApplicationSet never creates it even on a
+  # repo-synced cluster — byte-identical to today's mainline. Flip to "true"
+  # (+ the 13a element) for a per-domain LIVE add; the register Job then posts
+  # the appservice registration into the tuwunel admin room on sync. dependsOn
+  # tuwunel (see services.json below): the console greys meshbridge out while
+  # the homeserver is off.
+  meshbridge: "false"
+  # edge-ai — GPU inference node serving an OpenAI-compatible model API to the mesh
+  # (DEFAULT-OFF, GPU-gated). Rendered true/false by _opt_render_installed_services
+  # from OPTIONAL_SERVICES; the literal baseline is the SAFE DEFAULT (off). The
+  # edge_ai node role auto-selects it; admin/user consoles grey out the AI panels
+  # (model picker, chat) when "false".
+  edge-ai: "false"
+  # edge-ai-analysis — task analysis API (image classify/hash, log triage) in front of
+  # edge-ai. DEFAULT-OFF, dependsOn edge-ai (greyed when edge-ai is "false"). Image is a
+  # separate build artifact; keep "false" until built+pushed.
+  edge-ai-analysis: "false"
+  # edge-ai-tts — Piper TTS + viseme timeline (VN voice, B3). DEFAULT-OFF, NO
+  # dependsOn (CPU-only, self-contained — schedules with or without edge-ai). Image
+  # is a separate build artifact; keep "false" until built+pushed.
+  edge-ai-tts: "false"
+  # headwind — Headwind MDM (managed phones), DEFAULT-OFF, admin-only devops
+  # service (Harbor/superadmin posture, hugmesh-pki namespace). BACKFILL: this
+  # key was missing despite headwind being present in both build scripts'
+  # _opt_render_installed_services loops since Phase 1 — the sed-based renderer
+  # here was a silent no-op for headwind until this fix. Rendered true/false by
+  # _opt_render_installed_services from OPTIONAL_SERVICES; the literal baseline
+  # below is the SAFE DEFAULT (off). No frontend remote (JSP console reached only
+  # via the superadmin-gateway routes) — mountAt null, like anubis/coturn/meshbridge.
+  headwind: "false"
+  # attestation-server — GrapheneOS AttestationServer (Hardware Trust Root),
+  # DEFAULT-OFF, admin-only devops service (Harbor/superadmin posture,
+  # hugmesh-pki namespace). Same shape as headwind: no frontend remote (its
+  # console is reached only via the superadmin-gateway /attest/api/** route) —
+  # mountAt null. Rendered true/false by _opt_render_installed_services from
+  # OPTIONAL_SERVICES; the literal baseline below is the SAFE DEFAULT (off).
+  attestation-server: "false"
+  # Per-slug metadata the admin console + greying-out predicate read (mountAt =
+  # where the federation manifest mounts the remote; namespace = its k8s ns).
+  # The games-services (app-store operator UI) capability RIDES the `games` install
+  # flag (its `dependsOn: games`): when games is "false" the app-store operator UI at
+  # /admin/games-services is greyed out too, since the whole control plane is pruned
+  # with the games slug (gate_optional_services games) case). No separate boolean is
+  # rendered — the admin console reads dependsOn -> the games flag.
+  services.json: |
+    [
+      { "slug": "akkoma",  "displayName": "Akkoma (Mastodon)", "namespace": "hugmesh-backend", "mountAt": "/social/mastodon" },
+      { "slug": "tuwunel", "displayName": "tuwunel (Matrix)",  "namespace": "hugmesh-backend", "mountAt": "/social/matrix" },
+      { "slug": "phpbb",   "displayName": "phpBB (Forum)",     "namespace": "hugmesh-forum",   "mountAt": "/social/forum" },
+      { "slug": "games",   "displayName": "HugMesh Games",  "namespace": "hugmesh-games",   "mountAt": "/games" },
+      { "slug": "games-services", "displayName": "Games App Store", "namespace": "hugmesh-games-instances", "mountAt": "/admin/games-services", "dependsOn": "games" },
+      { "slug": "owncast", "displayName": "Owncast (live streaming)", "namespace": "hugmesh-owncast", "mountAt": "/owncast" },
+      { "slug": "tube",    "displayName": "LocalTube (YouTube archive)", "namespace": "hugmesh-tube", "mountAt": "/tube" },
+      { "slug": "character-studio", "displayName": "Character Studio (VN)", "namespace": "hugmesh-frontend", "mountAt": "/character-studio" },
+      { "slug": "character-forge", "displayName": "Character Forge (3D)", "namespace": "hugmesh-backend", "mountAt": "/character-forge" },
+      { "slug": "workloadConsole", "displayName": "Workload Console", "namespace": "hugmesh-backend", "mountAt": "/admin/workloads", "hidden": true },
+      { "slug": "anubis",  "displayName": "Anubis (anti-scraper PoW gate)", "namespace": "hugmesh-frontend", "mountAt": null },
+      { "slug": "coturn",  "displayName": "coturn (TURN/STUN server)", "namespace": "hugmesh-backend", "mountAt": null, "dependsOn": "tuwunel" },
+      { "slug": "meshbridge", "displayName": "Mesh radio bridge (Meshtastic ↔ Matrix)", "namespace": "hugmesh-backend", "mountAt": null, "dependsOn": "tuwunel" },
+      { "slug": "edge-ai", "displayName": "Edge AI (inference)", "namespace": "hugmesh-inference", "mountAt": "/admin/edge-ai" },
+      { "slug": "edge-ai-analysis", "displayName": "Edge AI — analysis API", "namespace": "hugmesh-inference", "mountAt": "/admin/edge-ai-analysis", "dependsOn": "edge-ai" },
+      { "slug": "edge-ai-tts", "displayName": "Edge AI — voice synthesis (TTS)", "namespace": "hugmesh-inference", "mountAt": "/admin/edge-ai-tts" },
+      { "slug": "headwind", "displayName": "Headwind MDM (managed phones)", "namespace": "hugmesh-pki", "mountAt": null },
+      { "slug": "attestation-server", "displayName": "GrapheneOS AttestationServer (Hardware Trust Root)", "namespace": "hugmesh-pki", "mountAt": null }
+    ]

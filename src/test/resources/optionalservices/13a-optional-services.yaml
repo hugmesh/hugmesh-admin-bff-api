@@ -1,0 +1,135 @@
+# Optional-services ApplicationSet (Phase 6 runtime add/remove) — turns the
+# OPTIONAL user-level services (akkoma/tuwunel/phpbb/games/owncast/tube) from
+# hardcoded apps/30-*/50-*/52-*/53-* Applications into ONE list whose membership is
+# the install-state. Modelled on apps/13-service-catalog.yaml (the ApplicationSet
+# pattern already proven here).
+#
+# WHY: build-time `rm -f` of a baked Application only stops the bootstrap seed;
+# the live cluster's ArgoCD root app syncs apps/ from the gitops REPO and would
+# re-create a pruned file. To add/remove a service on a LIVE cluster you flip ONE
+# list — the `installed` flag on its element here (mirrored from
+# manifests/policy/installed-services ConfigMap) — and the ApplicationSet's
+# `selector` (installed=="true") makes ArgoCD prune/create that slug's Application.
+# No baked-file surgery, no redeploy.
+#
+# HOW THE SELECTOR GATES MEMBERSHIP: the list generator emits one param set per
+# slug, each carrying installed:"true|false"; the generator-level `selector`
+# (matchLabels installed:"true") keeps only the installed ones, so a slug flipped
+# to "false" is dropped from the generated set and its Application is pruned
+# (prune:true). This is the single-list flip the design calls for.
+#
+# ⚠ COEXISTENCE: while the legacy hardcoded apps/30-akkoma.yaml etc. still exist,
+# this ApplicationSet would create a DUPLICATE-named Application. It is therefore
+# scaffolded with a DISTINCT name suffix and DISABLED-by-default membership note;
+# the cut-over (delete the 4 hardcoded apps, let this own them) is a follow-up
+# documented in docs/OPTIONAL-SERVICES.md "Runtime add/remove". Until cut-over,
+# keep every element installed:"false" so it creates nothing and cannot collide.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: optional-services
+  namespace: devops
+  annotations:
+    # Build/runtime: the installed flags here are mirrored from the
+    # installed-services ConfigMap (rendered from optional-services.yaml). Flip a
+    # slug's installed value to add/remove it at runtime.
+    hugmesh.net/source-of-truth: specs/cluster/optional-services.yaml
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - list:
+        # One element per OPTIONAL service. `installed` is the toggle (mirrored
+        # from the installed-services ConfigMap). Scaffolded "false" until the
+        # cut-over from the hardcoded apps/30-*/50-* (see header) to avoid
+        # duplicate-named Applications.
+        elements:
+          - { slug: akkoma,  path: specs/cluster/manifests/akkoma,        namespace: hugmesh-backend,  installed: "false" }
+          - { slug: tuwunel, path: specs/cluster/manifests/tuwunel,       namespace: hugmesh-backend,  installed: "false" }
+          - { slug: phpbb,   path: specs/cluster/manifests/forum,         namespace: hugmesh-forum,    installed: "false" }
+          - { slug: games,   path: specs/cluster/manifests/games,         namespace: hugmesh-games,    installed: "false" }
+          # owncast / tube — GPU-gated x86 optional services (DEFAULT-OFF). Same
+          # runtime add/remove model: the installed flag here is mirrored from the
+          # installed-services ConfigMap by _opt_render_installed_services. Scaffolded
+          # "false" (DEFAULT-OFF baseline + the pre-cut-over no-collision rule).
+          - { slug: owncast, path: specs/cluster/manifests/owncast,       namespace: hugmesh-owncast,  installed: "false" }
+          - { slug: tube,    path: specs/cluster/manifests/tube,          namespace: hugmesh-tube,     installed: "false" }
+          # character-studio — VN character-studio FRONTEND remote (DEFAULT-OFF, admin
+          # gate). Same runtime add/remove model: the installed flag here is mirrored
+          # from the installed-services ConfigMap by _opt_render_installed_services.
+          # Scaffolded "false" (DEFAULT-OFF baseline + the pre-cut-over no-collision rule).
+          - { slug: character-studio, path: specs/cluster/manifests/character-studio, namespace: hugmesh-frontend, installed: "false" }
+          # character-forge — Character Forge (3D) MULTI-APP slug (DEFAULT-OFF, admin
+          # gate): BFF db + BFF api + UI remote (docs/XR-CHAT.md). Same runtime
+          # add/remove model; installed flag mirrored from the installed-services
+          # ConfigMap by _opt_render_installed_services. Scaffolded "false"
+          # (DEFAULT-OFF baseline + the pre-cut-over no-collision rule). LIMITATION
+          # (mirrors phpbb above, whose element covers only manifests/forum of its
+          # four apps): one element = one Application = ONE manifest dir — this
+          # element carries the BFF api dir; the bff-db + UI dirs ride the hardcoded
+          # apps/38b + 49c until the multi-dir cut-over.
+          - { slug: character-forge, path: specs/cluster/manifests/character-forge-bff-api, namespace: hugmesh-backend, installed: "false" }
+          # anubis — PUBLIC PoW shield. ENV-CONDITIONAL default: the generator's
+          # _opt_render_installed_services() renders the installed-services
+          # ConfigMap anubis flag ON for PROD builds ("all shields up") and OFF for
+          # TEST builds (explicit --optional-services anubis / -anubis overrides).
+          # The scaffold value here stays "false" (the safe test baseline + the
+          # pre-cut-over no-collision rule); the ConfigMap mirror is the real
+          # toggle this selector reads at runtime.
+          - { slug: anubis,  path: specs/cluster/manifests/anubis,        namespace: hugmesh-frontend, installed: "false" }
+          # coturn — TURN/STUN relay for Matrix WebRTC (DEFAULT-OFF, RUNTIME-ONLY).
+          # Like anubis, coturn ships NO baked bootstrap Application: it is wired
+          # ONLY here. installed:"false" is the SAFE DEFAULT (no pod, clients keep
+          # host-only ICE). Flip to "true" (+ the installed-services ConfigMap
+          # coturn flag) to add it on a LIVE cluster — the per-domain add/remove
+          # lever. lands in hugmesh-backend so it shares the TURN shared secret
+          # with tuwunel. PUBLIC reachability (OPT-IN): REPOINT this element's
+          # path to specs/cluster/manifests/coturn-public — the overlay renders
+          # the SAME base objects plus hostNetwork + the external-ip/turn-uris
+          # knobs + the turns: cert (the cassandra-hardening repoint idiom: one
+          # element, one Application, base and overlay can never collide). See
+          # docs/COTURN.md §5.
+          - { slug: coturn,  path: specs/cluster/manifests/coturn,        namespace: hugmesh-backend,  installed: "false" }
+          # meshbridge — Meshtastic LoRa mesh <-> Matrix bridge (DEFAULT-OFF,
+          # RUNTIME-ONLY). Like coturn/anubis, meshbridge ships NO baked bootstrap
+          # Application: it is wired ONLY here. installed:"false" is the SAFE
+          # DEFAULT (no pod, no radios, no rooms bridged). Flip to "true" (+ the
+          # installed-services ConfigMap meshbridge flag) to add it on a LIVE
+          # cluster — the per-domain add/remove lever. Lands in hugmesh-backend
+          # so the appservice speaks the in-namespace tuwunel CS API (dependsOn
+          # tuwunel — greyed in the console when the homeserver is off).
+          - { slug: meshbridge, path: specs/cluster/manifests/meshbridge,  namespace: hugmesh-backend,  installed: "false" }
+          # edge-ai — GPU inference node (OpenAI-compatible model API). DEFAULT-OFF,
+          # GPU-gated; the edge_ai node role auto-selects it. installed flag mirrored
+          # from the installed-services ConfigMap by _opt_render_installed_services.
+          - { slug: edge-ai, path: specs/cluster/manifests/edge-ai,       namespace: hugmesh-inference, installed: "false" }
+          # edge-ai-analysis — task analysis API in front of edge-ai. DEFAULT-OFF,
+          # dependsOn edge-ai. Image is a separate build artifact (keep off until built).
+          - { slug: edge-ai-analysis, path: specs/cluster/manifests/edge-ai-analysis, namespace: hugmesh-inference, installed: "false" }
+          # edge-ai-tts — Piper TTS + viseme timeline (VN voice, B3). DEFAULT-OFF, NO
+          # dependsOn (CPU-only, self-contained). Image is a separate build artifact
+          # (keep off until built).
+          - { slug: edge-ai-tts, path: specs/cluster/manifests/edge-ai-tts, namespace: hugmesh-inference, installed: "false" }
+        # Keep ONLY installed elements — a slug flipped to "false" is dropped and
+        # its Application pruned. This is the runtime add/remove lever.
+      selector:
+        matchLabels:
+          installed: "true"
+  template:
+    metadata:
+      name: "optional-{{ .slug }}"
+      labels:
+        app.kubernetes.io/part-of: hugmesh.net
+        hugmesh.net/optional-service: "{{ .slug }}"
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/hugmesh/hugmesh-generator.git
+        targetRevision: main
+        path: "{{ .path }}"
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: "{{ .namespace }}"
+      syncPolicy:
+        automated: { prune: true, selfHeal: true }
+        syncOptions: [CreateNamespace=true]

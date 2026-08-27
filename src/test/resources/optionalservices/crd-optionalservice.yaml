@@ -1,0 +1,198 @@
+# =============================================================================
+# OptionalService CRD — the platform's FIRST real CustomResourceDefinition.
+# =============================================================================
+# This is the DESIRED-STATE object for the LIVE (post-deploy) add/remove of an
+# OPTIONAL cluster service. Until now the optional set could only be chosen at
+# IMAGE-BUILD time: gate_optional_services() (build-{x86-host,rpi5}-stage4.sh)
+# prunes each unselected slug's Application/manifests/ESO/routes from the baked
+# sysroot BEFORE the ArgoCD bootstrap seed, and _opt_render_installed_services()
+# rewrites the installed-services ConfigMap booleans to match. There was NO
+# post-deploy toggle: apps/13a-optional-services.yaml is an ApplicationSet whose
+# list-generator `elements` are HARDCODED in git (only sed-mirrored at build).
+#
+# WHAT THIS ADDS: an admin/superadmin (or a GitOps commit) creates/mutates ONE
+# OptionalService per slug at RUNTIME. The admin-bff OptionalServiceReconciler
+# (Lease-gated single-writer; SHIPS DARK behind app.optional-services.reconcile.
+# enabled=false) reconciles the CRs into the SAME two build-time targets, now
+# maintained at runtime:
+#   1. apps/13a-optional-services.yaml — flips `installed` on the matching inline
+#      list-generator element; ArgoCD's ApplicationSet controller then creates or
+#      prunes `optional-<slug>` (the selector keeps only installed:"true").
+#   2. manifests/policy/installed-services-configmap.yaml — mirrors the greying/
+#      capability boolean so the admin console + host greying stay consistent.
+# See docs/OPTIONAL-SERVICES.md §7/§10.
+#
+# ⚠ THE ignoreDifferences KEYSTONE (apps/app-of-apps.yaml + apps/00-app-of-apps-
+# waved.yaml + apps/16): ArgoCD's automated recurse root (selfHeal:true) would
+# REVERT any live element/ConfigMap write back to git's inert baseline. Both
+# roots therefore carry an ignoreDifferences (+ RespectIgnoreDifferences=true) on
+# the ApplicationSet `optional-services` /spec/generators/0/list/elements, and
+# apps/16 on the installed-services ConfigMap's per-slug data keys, so the
+# controller-owned fields may diverge from git while every OTHER field stays
+# selfHeal-enforced. Without that keystone the whole mechanism is a no-op.
+#
+# SCOPE OF THE CLOSED SLUG SET (verified 2026-07-11 against
+# specs/cluster/optional-services.yaml + the installed-services ConfigMap + 13a):
+# the enum is the 12 CLUSTER-service slugs that have BOTH a 13a ApplicationSet
+# element AND an installed-services ConfigMap boolean (clean 1:1 with each write
+# target). DELIBERATELY EXCLUDED and documented in the PR:
+#   * workloadConsole — has a ConfigMap boolean but NO 13a element (its RBAC is
+#     the hardcoded apps/14-workload-console-rbac.yaml, not ApplicationSet-owned);
+#     toggling it here would half-actuate (greying only). Left build-determined.
+#   * egress-vpn / tor — NODE services (OpenRC + node reconcile agents), not
+#     cluster Applications: no 13a element, no ConfigMap boolean. A separate
+#     node-reconcile track, outside this ApplicationSet/ConfigMap mechanism.
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: optionalservices.platform.hugmesh.net
+  labels:
+    app.kubernetes.io/name: optional-services-operator
+    app.kubernetes.io/component: crd
+    app.kubernetes.io/part-of: hugmesh.net
+spec:
+  group: platform.hugmesh.net
+  scope: Namespaced
+  names:
+    kind: OptionalService
+    listKind: OptionalServiceList
+    plural: optionalservices
+    singular: optionalservice
+    shortNames:
+      - optsvc
+    categories:
+      - hugmesh
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - { name: Slug,      type: string,  jsonPath: .spec.slug }
+        - { name: Enabled,   type: boolean, jsonPath: .spec.enabled }
+        - { name: Phase,     type: string,  jsonPath: .status.phase }
+        - { name: App,       type: string,  jsonPath: .status.applicationName }
+        - { name: Installed, type: boolean, jsonPath: .status.installed }
+        - { name: Age,       type: date,    jsonPath: .metadata.creationTimestamp }
+      schema:
+        openAPIV3Schema:
+          type: object
+          required: [spec]
+          properties:
+            spec:
+              type: object
+              required: [slug, enabled]
+              properties:
+                slug:
+                  description: >-
+                    The optional-service slug. IMMUTABLE (see the CEL rule): a slug
+                    is intrinsic to the resource, 1:1 with the 13a ApplicationSet
+                    element + the installed-services ConfigMap key. The closed set
+                    is the 12 cluster-service slugs; path/namespace/mountAt are NOT
+                    settable here — the controller resolves them from its built-in
+                    OptionalServiceRegistry so an admin cannot repoint a slug at an
+                    arbitrary manifest path.
+                  # TODO: meshbridge (#374, merged after this CRD's #326) already has a
+                  # 13a ApplicationSet element + installed-services ConfigMap key (the
+                  # same 1:1 shape this enum claims is closed at 12) but was never added
+                  # here or to seed-optionalservices.yaml -- so the live CRD-driven
+                  # add/remove path (still dark by default, app.optional-services.reconcile.enabled=false)
+                  # cannot govern it once flipped on. Needs the same enum+seed-CR
+                  # treatment #326 gave the other 12 slugs.
+                  type: string
+                  enum:
+                    - akkoma
+                    - tuwunel
+                    - phpbb
+                    - games
+                    - owncast
+                    - tube
+                    - character-studio
+                    # character-forge (3D maker multi-app slug, docs/XR-CHAT.md) —
+                    # added WITH its 13a element + ConfigMap boolean + seed CR in the
+                    # same wave (the 1:1 shape this enum requires), growing the
+                    # closed set 12 -> 13. NOTE (cross-repo, like the meshbridge
+                    # TODO above): the admin-bff controller's built-in
+                    # OptionalServiceRegistry must learn the slug before the
+                    # (dark-by-default) reconciler can actuate it.
+                    - character-forge
+                    - anubis
+                    - coturn
+                    - edge-ai
+                    - edge-ai-analysis
+                    - edge-ai-tts
+                  x-kubernetes-validations:
+                    - rule: self == oldSelf
+                      message: spec.slug is immutable
+                enabled:
+                  description: >-
+                    The runtime toggle. true -> element installed:"true" +
+                    ConfigMap <slug>:"true" (ApplicationSet creates optional-<slug>);
+                    false -> element dropped by the selector -> Application pruned +
+                    ConfigMap <slug>:"false" (host greys it out). For anubis (whose
+                    build baseline is ENV-conditional prod-on/test-off) an explicit
+                    CR enabled is the authoritative runtime override.
+                  type: boolean
+                reason:
+                  description: Audit — why this service was toggled (surfaced in events/status).
+                  type: string
+                  maxLength: 512
+                requestedBy:
+                  description: Audit — the subject (superadmin/GitOps) who requested the toggle.
+                  type: string
+                  maxLength: 256
+            status:
+              type: object
+              properties:
+                observedGeneration:
+                  description: The .metadata.generation the controller last reconciled.
+                  type: integer
+                  format: int64
+                installed:
+                  description: >-
+                    Last EFFECTIVE state actually written to the 13a element (may lag
+                    spec.enabled while a reconcile is in flight or degraded).
+                  type: boolean
+                phase:
+                  description: Coarse lifecycle phase.
+                  type: string
+                  enum: [Pending, Reconciling, Enabled, Disabled, Degraded]
+                applicationName:
+                  description: The ApplicationSet-generated Application name (optional-<slug>).
+                  type: string
+                lastReconcileTime:
+                  type: string
+                  format: date-time
+                conditions:
+                  description: >-
+                    Standard metav1.Condition list. Types: Reconciled,
+                    ApplicationSetPatched, ConfigMapMirrored, ApplicationHealthy
+                    (ApplicationHealthy is a best-effort cluster-observed read,
+                    populated by a later wave).
+                  type: array
+                  items:
+                    type: object
+                    required: [type, status, lastTransitionTime, reason, message]
+                    properties:
+                      type:
+                        type: string
+                        maxLength: 316
+                      status:
+                        type: string
+                        enum: ["True", "False", "Unknown"]
+                      observedGeneration:
+                        type: integer
+                        format: int64
+                        minimum: 0
+                      lastTransitionTime:
+                        type: string
+                        format: date-time
+                      reason:
+                        type: string
+                        maxLength: 1024
+                      message:
+                        type: string
+                        maxLength: 32768
+                  x-kubernetes-list-type: map
+                  x-kubernetes-list-map-keys: [type]

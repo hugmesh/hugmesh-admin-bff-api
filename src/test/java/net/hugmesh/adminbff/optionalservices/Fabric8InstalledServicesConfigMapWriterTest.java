@@ -28,9 +28,18 @@ class Fabric8InstalledServicesConfigMapWriterTest {
     void patchCarriesExactlyTheManagedSlugs_noUnmanagedKeys() {
         Map<String, String> patch = writer().computeDataPatch(Map.of());
         assertThat(patch.keySet()).containsExactlyElementsOf(MANAGED);
-        assertThat(patch).doesNotContainKey("workloadConsole");
         assertThat(patch).doesNotContainKey("services.json");
-        assertThat(MANAGED).hasSize(12);
+        // No magic count here any more. The managed set's SIZE is not a fact this test can know:
+        // it is pinned against the CRD spec.slug enum + the seed CRs by
+        // OptionalServiceRegistryParityTest, and the literal 12 that used to sit here went stale
+        // the moment character-forge was (correctly) added. What matters HERE is the write's
+        // SHAPE: every not-toggleable slug stays out, and the slug this writer used to omit is in.
+        assertThat(patch.keySet())
+                .as("character-forge must now be written (it was a silently inert toggle)")
+                .contains("character-forge");
+        assertThat(patch.keySet())
+                .as("no platform-known-but-unactionable slug may be written")
+                .doesNotContainAnyElementsOf(new OptionalServiceRegistry().notToggleable().keySet());
     }
 
     @Test
