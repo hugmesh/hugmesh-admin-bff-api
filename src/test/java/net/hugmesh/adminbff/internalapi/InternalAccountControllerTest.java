@@ -11,6 +11,7 @@ import reactor.test.StepVerifier;
 import net.hugmesh.adminbff.account.AccountCasdoorSubService;
 import net.hugmesh.adminbff.account.AccountIssuerService;
 import net.hugmesh.adminbff.account.AccountLocalpartService;
+import net.hugmesh.adminbff.account.RegistrationDomainResolver;
 import net.hugmesh.adminbff.suspension.SuspensionService;
 import net.hugmesh.authcore.account.Account;
 import net.hugmesh.authcore.account.AccountStatus;
@@ -70,10 +71,17 @@ class InternalAccountControllerTest {
     private final MfaStepUpService mfaStepUp =
             new MfaStepUpService(accounts, true, java.time.Duration.ofMinutes(10));
 
+    /** Untenanted resolver (no {@code app.tenancy.issuers}, no pin) — its {@code fallback()}
+     *  is {@link AccountStore#DEFAULT_DOMAIN}, the domain a single-tenant install's seed and
+     *  the changeset-220 back-fill stamp. So the invite-gate assertions below read the SAME
+     *  rows as before the auth-core issue #1 fix, now through the domain-scoped overload. */
+    private final RegistrationDomainResolver registrationDomains =
+            new RegistrationDomainResolver(new net.hugmesh.commons.security.DomainRegistry("", ""), "");
+
     /** The account/session API surface (custody seams null — those endpoints aren't under test here). */
     private final InternalAccountController controller =
             new InternalAccountController(accounts, suspensions, mfaStepUp, CIPHER, oidc, 60L,
-                    localparts, casdoorSubs, accountIssuers);
+                    localparts, casdoorSubs, accountIssuers, registrationDomains);
 
     @BeforeEach
     void setUp() {
@@ -437,18 +445,56 @@ class InternalAccountControllerTest {
 
     @Test
     void allowlist_perProvider_andUnknown() {
-        when(accounts.isEmailInvited("a@x.com")).thenReturn(Mono.just(true));
-        StepVerifier.create(controller.allowlist("google", "a@x.com"))
+        // No domain supplied -> the resolver's fallback, which on this untenanted wiring is
+        // AccountStore.DEFAULT_DOMAIN. The gate is the DOMAIN-SCOPED overload either way.
+        when(accounts.isEmailInvited("a@x.com", AccountStore.DEFAULT_DOMAIN)).thenReturn(Mono.just(true));
+        StepVerifier.create(controller.allowlist("google", "a@x.com", null))
                 .assertNext(m -> assertThat(m.get("invited")).isTrue())
                 .verifyComplete();
 
-        when(accounts.isDiscordInvited("bob")).thenReturn(Mono.just(false));
-        StepVerifier.create(controller.allowlist("discord", "bob"))
+        when(accounts.isDiscordInvited("bob", AccountStore.DEFAULT_DOMAIN)).thenReturn(Mono.just(false));
+        StepVerifier.create(controller.allowlist("discord", "bob", null))
                 .assertNext(m -> assertThat(m.get("invited")).isFalse())
                 .verifyComplete();
 
-        StepVerifier.create(controller.allowlist("steam", "x"))
+        StepVerifier.create(controller.allowlist("steam", "x", null))
                 .verifyErrorSatisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode()).isEqualTo(HttpStatusCode.valueOf(400)));
+        // Never the cross-brand-permissive 1-arg overloads (auth-core issue #1).
+        verify(accounts, never()).isEmailInvited(any());
+        verify(accounts, never()).isDiscordInvited(any());
+    }
+
+    /**
+     * auth-core issue #1 at the INTERNAL call site: the trusted in-cluster caller's
+     * {@code domain} reaches the store verbatim, so brand X's invite is never consulted for a
+     * brand Y lookup. Before the fix this endpoint asked "invited in ANY domain" and the
+     * {@code domain} argument did not exist.
+     */
+    @Test
+    void allowlist_honoursCallerSuppliedDomain() {
+        when(accounts.isEmailInvited("a@x.com", "brand-a")).thenReturn(Mono.just(true));
+        when(accounts.isEmailInvited("a@x.com", "brand-b")).thenReturn(Mono.just(false));
+
+        StepVerifier.create(controller.allowlist("google", "a@x.com", "brand-a"))
+                .assertNext(m -> assertThat(m.get("invited")).isTrue())
+                .verifyComplete();
+        StepVerifier.create(controller.allowlist("google", "a@x.com", "brand-b"))
+                .assertNext(m -> assertThat(m.get("invited")).isFalse())
+                .verifyComplete();
+
+        verify(accounts).isEmailInvited("a@x.com", "brand-a");
+        verify(accounts).isEmailInvited("a@x.com", "brand-b");
+    }
+
+    /** A blank/whitespace {@code domain} is treated as OMITTED (falls back), never passed
+     *  through as a literal that would silently match no row and read as "not invited". */
+    @Test
+    void allowlist_blankDomain_fallsBack() {
+        when(accounts.isEmailInvited("a@x.com", AccountStore.DEFAULT_DOMAIN)).thenReturn(Mono.just(true));
+        StepVerifier.create(controller.allowlist("google", "a@x.com", "   "))
+                .assertNext(m -> assertThat(m.get("invited")).isTrue())
+                .verifyComplete();
+        verify(accounts).isEmailInvited("a@x.com", AccountStore.DEFAULT_DOMAIN);
     }
 
     @Test
@@ -563,7 +609,8 @@ class InternalAccountControllerTest {
     void exchange_cipherUnavailable_503() {
         // INERT cipher (no key) → fail-closed 503 BEFORE any store read.
         InternalAccountController inert = new InternalAccountController(
-                accounts, suspensions, mfaStepUp, INERT_CIPHER, oidc, 60L, localparts, casdoorSubs, accountIssuers);
+                accounts, suspensions, mfaStepUp, INERT_CIPHER, oidc, 60L, localparts, casdoorSubs,
+                accountIssuers, registrationDomains);
         StepVerifier.create(inert.exchange(new InternalAccountController.ExchangeRequest("bff_x")))
                 .verifyErrorSatisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode())
                         .isEqualTo(HttpStatusCode.valueOf(503)));
@@ -574,7 +621,8 @@ class InternalAccountControllerTest {
     void exchange_nullCipherBean_503() {
         // A null cipher bean is also fail-closed 503 (the @Nullable null-guard).
         InternalAccountController noCipher = new InternalAccountController(
-                accounts, suspensions, mfaStepUp, null, oidc, 60L, localparts, casdoorSubs, accountIssuers);
+                accounts, suspensions, mfaStepUp, null, oidc, 60L, localparts, casdoorSubs,
+                accountIssuers, registrationDomains);
         StepVerifier.create(noCipher.exchange(new InternalAccountController.ExchangeRequest("bff_x")))
                 .verifyErrorSatisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode())
                         .isEqualTo(HttpStatusCode.valueOf(503)));

@@ -33,7 +33,8 @@ import static org.mockito.Mockito.when;
  * These endpoints are permitAll, so no JWT is attached.
  */
 @WebFluxTest(controllers = AuthController.class)
-@Import({SecurityConfig.class, net.hugmesh.commons.security.DomainRegistry.class, TestDatabaseConfig.class,
+@Import({SecurityConfig.class, net.hugmesh.commons.security.DomainRegistry.class,
+        net.hugmesh.adminbff.account.RegistrationDomainResolver.class, TestDatabaseConfig.class,
         ValidationExceptionHandler.class, LocalLoginRateLimiter.class})
 class AuthControllerValidationTest {
 

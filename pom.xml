@@ -129,8 +129,18 @@
            branch. auth-core's shipped 2.4.2 carries all five rev-9 labels the note
            above describes (verified in ReservedNames: hmdm, attest, character-forge,
            games-character-forge, games-shadows-of-the-net), so the runtime guarantee
-           is unchanged and the unresolvable pin is gone. -->
-      <version>2.4.2</version>
+           is unchanged and the unresolvable pin is gone.
+           2.5.0 adds the DOMAIN-SCOPED registration gate (auth-core issue #1, PR #8):
+           AllowlistRepository.existsByProviderAndHandleAndDomain plus the
+           AccountStore.isEmailInvited(email, domain) / isDiscordInvited(handle, domain)
+           overloads, and DEPRECATES the unscoped 1-arg overloads this BFF used to call.
+           Purely additive at the source level (the 1-arg signatures are retained), but the
+           bump is load-bearing: on 2.4.2 the 2-arg overloads do not exist, so an invite
+           stamped with brand X's domain also satisfied brand Y's registration gate here.
+           Bumped in lockstep with RegistrationDomainResolver + the AuthController /
+           InternalAccountController call sites below, which now pass a SERVER-DERIVED
+           requesting domain. -->
+      <version>2.5.0</version>
     </dependency>
 
     <!-- ============================================================================

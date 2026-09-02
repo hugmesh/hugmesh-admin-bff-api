@@ -6273,6 +6273,13 @@
           "schema" : {
             "type" : "string"
           }
+        }, {
+          "name" : "domain",
+          "in" : "query",
+          "required" : false,
+          "schema" : {
+            "type" : "string"
+          }
         } ],
         "responses" : {
           "200" : {

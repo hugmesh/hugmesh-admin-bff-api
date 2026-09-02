@@ -43,8 +43,13 @@ class AccountStoreTest extends AdminBffPostgresTestSupport {
     @Test
     void seedAdminIsInvitedAndGetsAdminRole() {
         AccountStore store = newStore();
-        StepVerifier.create(store.isEmailInvited("admin@hugmesh.net"))
+        // Domain-scoped gate (auth-core issue #1): seedAdmins stamps DEFAULT_DOMAIN, so that
+        // is the domain the seeded row answers for — and only that one. The deprecated
+        // unscoped overload ("invited in ANY domain") has no callers left in this repo.
+        StepVerifier.create(store.isEmailInvited("admin@hugmesh.net", AccountStore.DEFAULT_DOMAIN))
                 .expectNext(true).verifyComplete();
+        StepVerifier.create(store.isEmailInvited("admin@hugmesh.net", "some-other-brand"))
+                .expectNext(false).verifyComplete();
         Account a = store.ensureAccount("google", "admin@hugmesh.net").block();
         assertThat(a.roles()).containsExactly("user", "admin");
         assertThat(a.isAdmin()).isTrue();

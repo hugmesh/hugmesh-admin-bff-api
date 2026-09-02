@@ -534,8 +534,17 @@ endpoints accept either the opaque BFF **session token**
 JWT principal.
 
 - `POST /bff/register/google` / `POST /bff/register/discord` — stage 1. 403 if the
-  identity was not invited by an admin; returns
-  `{token,id,provider,roles,registrationComplete}`.
+  identity was not invited by an admin **of the requesting brand**; returns
+  `{token,id,provider,roles,registrationComplete}`. The invite gate is **domain-scoped**
+  (auth-core issue #1, auth-core **2.5.0**): the `allowlist` row has carried the inviting
+  admin's domain since changeset 220, but the gate READ used to ask "invited in ANY domain",
+  so brand A's invite also admitted that identifier on brand B. A registration is
+  pre-authentication, so the domain comes from `RegistrationDomainResolver` and from
+  **server-trusted inputs only** — the forwarded token's trusted issuer, else the
+  `app.tenancy.registration-domain` per-deployment pin, else the deployment's only known
+  brand (`default` on an untenanted install, which keeps single-tenant behaviour
+  byte-identical), else **fail closed**. It is deliberately NOT a request-body field: a
+  caller-chosen domain would re-open the same hole.
 - `POST /bff/login` — sign in to an existing account (401 if none).
 - `POST /bff/register/complete` — stage 2; flips `registrationComplete` and releases
   the Matrix/Mastodon entitlement.
@@ -893,7 +902,10 @@ empty derivation is a hard failure, not a free pass.
   preferred_username > sub) is stored as the handle so account.id is bounded and stable
   across logins (changelog 181-casdoor-provider, #160); other providers pass the handle
   verbatim. `GET /accounts/{id}`,
-  `POST /accounts/{id}/complete`, `GET /allowlist/{provider}/{handle}`,
+  `POST /accounts/{id}/complete`, `GET /allowlist/{provider}/{handle}[?domain=…]`
+  (the invite gate, **domain-scoped** — on this mTLS + `X-Internal-Token` surface the
+  trusted in-cluster caller MAY name the brand; omitting it falls back to the deployment's
+  own brand),
   `GET /accounts/{id}/namespaces`, `POST /sessions`, `DELETE /sessions/{token}`, and
   `GET /sessions/{accountId}` — the per-account live-session listing (auth-core 2.2.0,
   #132). The boundary is **mTLS (cluster CA) + `X-Internal-Token`**, never a JWT role.

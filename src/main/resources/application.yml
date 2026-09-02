@@ -432,6 +432,15 @@ app:
   # When non-empty, TenancyResourceServerConfig activates; unknown issuers → 401.
   tenancy:
     issuers: "${APP_TENANCY_ISSUERS:}"
+    # The brand a PRE-AUTHENTICATION registration (POST /bff/register/**) may satisfy its
+    # invite from, for a brand-DEDICATED admin-bff whose registrations carry no token.
+    # Empty (the default) = derive it: the forwarded token's trusted issuer if there is one,
+    # else the deployment's only known brand, else "default" on an untenanted install. On a
+    # mesh serving TWO OR MORE brands from one admin-bff an untokened registration with this
+    # unset fails CLOSED (no allowlist row matches) rather than guessing a brand — see
+    # RegistrationDomainResolver. NEVER read from the request body: a caller-chosen domain
+    # would re-open the cross-brand hole this exists to close (auth-core issue #1).
+    registration-domain: "${APP_TENANCY_REGISTRATION_DOMAIN:}"
   # Gmail addresses that are admins by default (also seeds the durable allowlist).
   # The google account for one of these gets roles ["user","admin"].
   admin-emails: "${ADMIN_EMAILS:admin@hugmesh.net}"

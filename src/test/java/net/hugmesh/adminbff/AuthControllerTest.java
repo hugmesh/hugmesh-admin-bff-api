@@ -47,7 +47,8 @@ import static org.springframework.security.test.web.reactive.server.SecurityMock
  * shared durable store stays order-independent.
  */
 @WebFluxTest(controllers = AuthController.class)
-@Import({SecurityConfig.class, net.hugmesh.commons.security.DomainRegistry.class, TestDatabaseConfig.class,
+@Import({SecurityConfig.class, net.hugmesh.commons.security.DomainRegistry.class,
+        net.hugmesh.adminbff.account.RegistrationDomainResolver.class, TestDatabaseConfig.class,
         LocalLoginRateLimiter.class})
 class AuthControllerTest {
 
