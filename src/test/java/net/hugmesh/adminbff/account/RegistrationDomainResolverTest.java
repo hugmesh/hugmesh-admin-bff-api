@@ -86,10 +86,23 @@ class RegistrationDomainResolverTest {
     }
 
     @Test
-    void pin_doesNotOverrideATrustedToken() {
-        // The token is the stronger evidence: it is cryptographically validated per-request,
-        // the pin is a deployment-wide default for requests that carry none.
+    void pin_winsOverAForwardedToken_soTheCallerCannotPickTheBrand() {
+        // A validated token proves WHO the caller is, not WHICH brand this deployment
+        // registers for — and attaching one is the caller's choice. If the token won, an
+        // attacker holding a valid brand-A token could POST /bff/register to this brand-B
+        // instance, satisfy the gate from brand-A's allowlist and be minted a brand-B
+        // session: the cross-brand hole this class exists to close, re-opened by adding a
+        // header. The pin is the operator's word and is the one input a caller cannot pick.
         RegistrationDomainResolver r = resolver("", TWO_BRANDS, "brand-b");
+        assertThat(r.forRegistration(jwtFrom(BRAND_A_ISSUER))).isEqualTo("brand-b");
+        assertThat(r.forRegistration(jwtFrom(BRAND_B_ISSUER))).isEqualTo("brand-b");
+    }
+
+    @Test
+    void unpinned_aTrustedTokenStillNamesTheBrand() {
+        // Without a pin the token is the only server-trusted signal there is, so it still
+        // decides — this is the multi-brand admin-bff the resolver's step 2 serves.
+        RegistrationDomainResolver r = resolver("", TWO_BRANDS, "");
         assertThat(r.forRegistration(jwtFrom(BRAND_A_ISSUER))).isEqualTo("brand-a");
     }
 
@@ -116,6 +129,17 @@ class RegistrationDomainResolverTest {
     @Test
     void exactlyOneConfiguredBrand_isThatBrand() {
         assertThat(resolver("", BRAND_A_ISSUER + "=brand-a", "").fallback()).isEqualTo("brand-a");
+    }
+
+    @Test
+    void oneNamedBrand_isNotTheDefaultDomain_whichIsWhyTheAdminSeedMustBeMirrored() {
+        // The trap RegistrationDomainAdminSeed exists for: naming ONE brand in
+        // app.tenancy.issuers is a supported single-brand shape, but it does NOT leave the
+        // gate reading "default". auth-core's AccountStore.seedAdmins() hardcodes
+        // DEFAULT_DOMAIN, so without the mirror the bootstrap admin's row is invisible here.
+        assertThat(resolver("", BRAND_A_ISSUER + "=brand-a", "").fallback())
+                .isNotEqualTo(AccountStore.DEFAULT_DOMAIN);
+        assertThat(resolver("", "", "brand-a").fallback()).isNotEqualTo(AccountStore.DEFAULT_DOMAIN);
     }
 
     // ── 4. fail closed ─────────────────────────────────────────────────

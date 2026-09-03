@@ -439,7 +439,19 @@ app:
     # mesh serving TWO OR MORE brands from one admin-bff an untokened registration with this
     # unset fails CLOSED (no allowlist row matches) rather than guessing a brand — see
     # RegistrationDomainResolver. NEVER read from the request body: a caller-chosen domain
-    # would re-open the cross-brand hole this exists to close (auth-core issue #1).
+    # would re-open the cross-brand hole this exists to close (auth-core issue #1). When set
+    # it OUTRANKS a forwarded token's issuer: the pin is the operator's word about which brand
+    # this admin-bff registers for, and it is the one input a caller cannot choose by attaching
+    # a header.
+    #
+    # UPGRADE NOTE — invite rows written BEFORE this deployment became branded carry
+    # domain='default' (the changeset-220 back-fill), and the gate is an exact match with no
+    # 'default' widening, so they stop admitting once this (or a named app.tenancy.issuers
+    # brand) is in force. The ADMIN_EMAILS bootstrap admins are handled automatically:
+    # RegistrationDomainAdminSeed mirrors them into the resolved domain at boot, because
+    # auth-core's AccountStore.seedAdmins() can only stamp 'default'. Any OTHER pre-existing
+    # invite must be re-issued by an admin (POST /admin/allowlist stamps the acting admin's
+    # domain) or restamped in the allowlist table before the upgrade.
     registration-domain: "${APP_TENANCY_REGISTRATION_DOMAIN:}"
   # Gmail addresses that are admins by default (also seeds the durable allowlist).
   # The google account for one of these gets roles ["user","admin"].

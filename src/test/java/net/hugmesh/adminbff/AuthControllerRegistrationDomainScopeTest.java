@@ -17,6 +17,7 @@ import org.springframework.test.web.reactive.server.WebTestClient;
 import reactor.core.publisher.Mono;
 import net.hugmesh.adminbff.account.AccountLocalpartRepository;
 import net.hugmesh.adminbff.account.AccountLocalpartService;
+import net.hugmesh.adminbff.account.RegistrationDomainAdminSeed;
 import net.hugmesh.adminbff.account.RegistrationDomainResolver;
 import net.hugmesh.adminbff.config.SecurityConfig;
 import net.hugmesh.adminbff.locallogin.LocalLoginRateLimiter;
@@ -64,7 +65,8 @@ import static org.springframework.security.test.web.reactive.server.SecurityMock
  */
 @WebFluxTest(controllers = AuthController.class)
 @Import({SecurityConfig.class, net.hugmesh.commons.security.DomainRegistry.class,
-        RegistrationDomainResolver.class, TestDatabaseConfig.class, LocalLoginRateLimiter.class})
+        RegistrationDomainResolver.class, RegistrationDomainAdminSeed.class,
+        TestDatabaseConfig.class, LocalLoginRateLimiter.class})
 @TestPropertySource(properties = "app.tenancy.registration-domain=brand-b")
 class AuthControllerRegistrationDomainScopeTest {
 
@@ -184,6 +186,39 @@ class AuthControllerRegistrationDomainScopeTest {
      * invited on brand A is refused here, and starts working the moment brand B's own admin
      * invites it. Self-contained, so it does not depend on any other method's ordering.
      */
+    // ── the bootstrap admin must survive the scoping ──────────────────
+    /**
+     * THE REGRESSION THIS FIX ALMOST SHIPPED. auth-core's {@code AccountStore.seedAdmins()}
+     * (an {@code @PostConstruct}, run by {@link Cfg#accountStore}) stamps the
+     * {@code ADMIN_EMAILS} bootstrap admins with a HARDCODED {@code DEFAULT_DOMAIN}, but this
+     * deployment's gate reads {@code brand-b}. Without
+     * {@link net.hugmesh.adminbff.account.RegistrationDomainAdminSeed} this 403s and the
+     * deployment is bricked: {@code /bff/login} answers "no account — register first", and
+     * {@code POST /admin/allowlist} needs {@code hasRole('ADMIN')}, so no admin can ever be
+     * created without hand-written SQL.
+     *
+     * <p>Fails on the pre-fix tree; the assertion below IS the mutation test for the mirror.
+     */
+    @Test
+    void seededBootstrapAdmin_stillRegisters_onABrandedDeployment() {
+        assertThat(store.allowedEmails(THIS_BRAND).collectList().block())
+                .contains("admin@hugmesh.net");
+
+        registerGoogle("admin@hugmesh.net").expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.token").exists()
+                .jsonPath("$.id").isEqualTo("google:admin@hugmesh.net")
+                .jsonPath("$.roles").value(r -> assertThat(r.toString()).contains("admin"));
+    }
+
+    /** The mirror ADDS a row, it does not move one: the auth-core "default" seed survives, so
+     *  a rollback to an untenanted config (or to the unscoped gate) still finds it. */
+    @Test
+    void seededBootstrapAdmin_keepsItsDefaultDomainRowToo() {
+        assertThat(store.allowedEmails(AccountStore.DEFAULT_DOMAIN).collectList().block())
+                .contains("admin@hugmesh.net");
+    }
+
     @Test
     void sameIdentifier_refusedForOtherBrand_thenAdmittedOnceThisBrandInvites() {
         String email = "both-brands@example.test";
