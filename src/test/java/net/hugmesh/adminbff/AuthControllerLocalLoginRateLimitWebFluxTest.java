@@ -44,7 +44,8 @@ import static org.springframework.security.test.web.reactive.server.SecurityMock
  * NEVER invokes {@code verify()}.
  */
 @WebFluxTest(controllers = AuthController.class)
-@Import({SecurityConfig.class, net.hugmesh.commons.security.DomainRegistry.class})
+@Import({SecurityConfig.class, net.hugmesh.commons.security.DomainRegistry.class,
+        net.hugmesh.adminbff.account.RegistrationDomainResolver.class})
 class AuthControllerLocalLoginRateLimitWebFluxTest {
 
     @MockitoBean AccountStore store;

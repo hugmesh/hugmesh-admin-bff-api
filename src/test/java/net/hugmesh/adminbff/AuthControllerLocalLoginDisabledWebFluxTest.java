@@ -35,6 +35,7 @@ import static org.springframework.security.test.web.reactive.server.SecurityMock
  */
 @WebFluxTest(controllers = AuthController.class)
 @Import({SecurityConfig.class, net.hugmesh.commons.security.DomainRegistry.class,
+        net.hugmesh.adminbff.account.RegistrationDomainResolver.class,
         LocalLoginRateLimiter.class})
 class AuthControllerLocalLoginDisabledWebFluxTest {
 

@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 import reactor.core.publisher.Flux;
@@ -21,6 +22,7 @@ import reactor.core.publisher.Mono;
 import net.hugmesh.adminbff.account.AccountCasdoorSubService;
 import net.hugmesh.adminbff.account.AccountIssuerService;
 import net.hugmesh.adminbff.account.AccountLocalpartService;
+import net.hugmesh.adminbff.account.RegistrationDomainResolver;
 import net.hugmesh.adminbff.suspension.SuspensionService;
 import net.hugmesh.authcore.account.Account;
 import net.hugmesh.authcore.account.AccountStatus;
@@ -125,6 +127,15 @@ public class InternalAccountController {
     private final AccountIssuerService accountIssuers;
 
     /**
+     * Resolves the domain the invite gate below is evaluated against (auth-core issue #1).
+     * On THIS surface a trusted in-cluster caller may name the brand explicitly; when it does
+     * not, the resolver answers with the deployment's own brand, or fails closed on a
+     * multi-brand mesh. See {@link RegistrationDomainResolver} for why the public
+     * {@code /bff/register/**} path may not accept a caller-supplied domain.
+     */
+    private final RegistrationDomainResolver registrationDomains;
+
+    /**
      * The A5 MFA step-up freshness leg (auth-core {@code @Service}). Introspect reports
      * {@code mfaSatisfied} as the WINDOWED snapshot ({@link MfaStepUpService#freshSnapshot})
      * — {@code mfa_satisfied} AND {@code now - mfa_satisfied_at <= freshness} — NOT the raw
@@ -165,7 +176,8 @@ public class InternalAccountController {
                                      @Value("${app.bff.oidc.refresh-skew-seconds:60}") long refreshSkewSeconds,
                                      AccountLocalpartService localparts,
                                      AccountCasdoorSubService casdoorSubs,
-                                     AccountIssuerService accountIssuers) {
+                                     AccountIssuerService accountIssuers,
+                                     RegistrationDomainResolver registrationDomains) {
         this.accounts = accounts;
         this.suspensions = suspensions;
         this.mfaStepUp = mfaStepUp;
@@ -175,6 +187,7 @@ public class InternalAccountController {
         this.localparts = localparts;
         this.casdoorSubs = casdoorSubs;
         this.accountIssuers = accountIssuers;
+        this.registrationDomains = registrationDomains;
     }
 
     /**
@@ -573,12 +586,32 @@ public class InternalAccountController {
                 .map(lp -> AccountOut.of(a, lp.localpart(), lp.mastodonLocalpart()));
     }
 
-    /** The invite gate: is this provider handle on the allowlist? */
+    /**
+     * The invite gate: is this provider handle on the allowlist OF {@code domain}?
+     *
+     * <p>DOMAIN-SCOPED since the auth-core issue #1 fix. The read used to be
+     * {@code isEmailInvited(handle)} — "invited in ANY domain" — so an invite an admin of
+     * brand X issued also answered {@code invited:true} for brand Y, even though
+     * {@code AdminController.invite} has stamped the acting admin's brand onto the row since
+     * changeset 220.
+     *
+     * <p>{@code domain} is OPTIONAL and, uniquely on this surface, is HONOURED WHEN SUPPLIED:
+     * {@code /bff/internal/**} is mTLS + {@code X-Internal-Token} guarded and carries no
+     * untrusted principal, so the trusted in-cluster caller (user-bff, which holds the
+     * validated token this hop does not) names the brand — the same "scoping is the CALLER's
+     * responsibility" rationale the session-listing read below already documents. Omitting it
+     * degrades to {@link RegistrationDomainResolver#fallback()} (the deployment's own single
+     * brand, or the fail-closed sentinel on a multi-brand mesh), so a caller that does not yet
+     * send one keeps today's single-brand answer. It is NOT a caller-chosen domain on the
+     * public {@code /bff/register/**} path — see {@link RegistrationDomainResolver}.
+     */
     @GetMapping("/allowlist/{provider}/{handle}")
-    public Mono<Map<String, Boolean>> allowlist(@PathVariable String provider, @PathVariable String handle) {
+    public Mono<Map<String, Boolean>> allowlist(@PathVariable String provider, @PathVariable String handle,
+                                                @RequestParam(required = false) @Nullable String domain) {
+        String scope = registrationDomains.forInternalCaller(domain);
         Mono<Boolean> invited = switch (provider) {
-            case "google" -> accounts.isEmailInvited(handle);
-            case "discord" -> accounts.isDiscordInvited(handle);
+            case "google" -> accounts.isEmailInvited(handle, scope);
+            case "discord" -> accounts.isDiscordInvited(handle, scope);
             default -> Mono.error(new ResponseStatusException(HttpStatus.BAD_REQUEST, "unknown provider"));
         };
         return invited.map(b -> Map.of("invited", b));

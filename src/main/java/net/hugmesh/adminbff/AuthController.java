@@ -16,6 +16,7 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
 import net.hugmesh.adminbff.account.AccountLocalpartService;
+import net.hugmesh.adminbff.account.RegistrationDomainResolver;
 import net.hugmesh.authcore.account.Account;
 import net.hugmesh.authcore.account.AccountStore;
 import net.hugmesh.authcore.casdoor.CasdoorAdminClient;
@@ -101,6 +102,13 @@ public class AuthController {
      *  ALWAYS present (cheap, no I/O): harmless when local-login ships dark, since
      *  {@code loginLocal} already 401s before it would be consulted. */
     private final LocalLoginRateLimiter localLoginRateLimiter;
+    /** Resolves the REQUESTING DOMAIN the two-stage registration gate is evaluated against
+     *  (auth-core issue #1). The invite row has been domain-stamped since changeset 220, but
+     *  the gate READ was not, so an invite an admin of brand X issued also admitted that
+     *  identifier here on brand Y. A registration is PRE-AUTHENTICATION, so there is no
+     *  {@code PrincipalDomain} to thread — see the resolver's class doc for why the domain is
+     *  derived ONLY from server-trusted inputs (a body field would re-open the same hole). */
+    private final RegistrationDomainResolver registrationDomains;
 
     public AuthController(AccountStore store, ServiceTokenBroker broker, UsageService usage,
                           SuspensionService suspensions, ProfileForwarder profiles,
@@ -108,7 +116,8 @@ public class AuthController {
                           MfaChallengeService mfaChallenge,
                           @Nullable LocalSecretVerifier localSecretVerifier,
                           LocalLoginRateLimiter localLoginRateLimiter,
-                          AccountLocalpartService localparts) {
+                          AccountLocalpartService localparts,
+                          RegistrationDomainResolver registrationDomains) {
         this.store = store;
         this.broker = broker;
         this.usage = usage;
@@ -120,6 +129,7 @@ public class AuthController {
         this.localSecretVerifier = localSecretVerifier;
         this.localLoginRateLimiter = localLoginRateLimiter;
         this.localparts = localparts;
+        this.registrationDomains = registrationDomains;
     }
 
     // ── Registration stage 1: create an invited Casdoor account ────────
@@ -129,9 +139,14 @@ public class AuthController {
     @Operation(summary = "Register google", operationId = "authRegisterGoogle")
     @PostMapping("/register/google")
     public Mono<Map<String, Object>> registerGoogle(@Valid @RequestBody RegisterEmailRequest body,
+                                                    @Nullable Authentication auth,
                                                     ServerWebExchange exchange) {
         String email = str(body.email()).toLowerCase();
-        return store.isEmailInvited(email)
+        // DOMAIN-SCOPED GATE (auth-core issue #1): only an invite stamped with THIS
+        // request's brand admits the registration. `auth` is null/anonymous on the ordinary
+        // untokened registration and the resolver falls back to the deployment's own brand;
+        // it never reads a caller-supplied domain. See RegistrationDomainResolver.
+        return store.isEmailInvited(email, registrationDomains.forRegistration(auth))
                 .flatMap(invited -> {
                     if (!invited) return Mono.error(ApiException.forbidden("email not invited by an admin"));
                     return store.ensureAccount("google", email)
@@ -145,9 +160,11 @@ public class AuthController {
     @Operation(summary = "Register discord", operationId = "authRegisterDiscord")
     @PostMapping("/register/discord")
     public Mono<Map<String, Object>> registerDiscord(@Valid @RequestBody RegisterDiscordRequest body,
+                                                     @Nullable Authentication auth,
                                                      ServerWebExchange exchange) {
         String handle = str(body.username()).toLowerCase();
-        return store.isDiscordInvited(handle)
+        // DOMAIN-SCOPED GATE (auth-core issue #1) — see registerGoogle above.
+        return store.isDiscordInvited(handle, registrationDomains.forRegistration(auth))
                 .flatMap(invited -> {
                     if (!invited) return Mono.error(ApiException.forbidden("discord username not invited by an admin"));
                     return store.ensureAccount("discord", handle)
