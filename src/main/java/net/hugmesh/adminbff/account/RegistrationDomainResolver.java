@@ -52,21 +52,28 @@ import java.util.Set;
  * <h2>Resolution order</h2>
  *
  * <ol>
- *   <li><b>The forwarded token's issuer</b>, when the gateway forwarded one. Admitted ONLY on
- *       strict membership of the CONFIGURED, NON-EMPTY {@link DomainRegistry#trustedIssuers()}
+ *   <li><b>{@code app.tenancy.registration-domain}</b> — the per-deployment pin, when set. It
+ *       is checked FIRST, ahead of any forwarded token: the pin is the operator's statement of
+ *       which brand this admin-bff registers for, and it is the one input a caller cannot
+ *       choose. A token would otherwise let the caller pick the gate's domain merely by
+ *       attaching one (see {@link #forRegistration}).</li>
+ *   <li><b>The forwarded token's issuer</b>, when unpinned and the gateway forwarded one.
+ *       Admitted ONLY on strict membership of the CONFIGURED, NON-EMPTY
+ *       {@link DomainRegistry#trustedIssuers()}
  *       set — deliberately not {@link DomainRegistry#isTrusted(String)}, which delegates to
  *       {@code domainOf} and short-circuits to {@code "default"} <em>without inspecting its
  *       argument</em> when the registry map is empty (i.e. answers "trusted" for any string).
  *       Same reasoning, and the same strict-membership shape, as {@link AccountIssuerService}.</li>
- *   <li><b>{@code app.tenancy.registration-domain}</b> — the per-deployment pin, for a
- *       brand-dedicated admin-bff whose registrations never carry a token. Operator-set
- *       configuration, never request data.</li>
  *   <li><b>The deployment's only brand</b>, when the registry knows exactly one. This is what
  *       keeps the single-tenant install byte-identical: with no tenancy config
  *       {@link DomainRegistry#knownDomains()} is empty and this resolves
  *       {@link AccountStore#DEFAULT_DOMAIN} — precisely the domain {@code AccountStore.seedAdmins}
  *       stamps and the changeset-220 back-fill wrote onto every pre-existing row; in
- *       single-issuer back-compat mode the registry's one known domain IS {@code "default"}.</li>
+ *       ISSUER-URI-ONLY back-compat mode the registry's one known domain is likewise
+ *       {@code "default"}. Note the one known domain is NOT {@code "default"} when
+ *       {@code app.tenancy.issuers} names a single brand — it is that brand — which is why
+ *       {@link RegistrationDomainAdminSeed} mirrors the bootstrap admin invites into whatever
+ *       this method returns.</li>
  *   <li><b>Fail closed</b> — {@link PrincipalDomain#NO_DOMAIN}. A multi-brand deployment that
  *       reached here has an untokened registration and no pin, so there is no honest answer.
  *       The sentinel begins with a space and can never equal a
@@ -107,6 +114,17 @@ public class RegistrationDomainResolver {
      *             gateway forwarded one
      */
     public String forRegistration(@Nullable Authentication auth) {
+        // The PIN OUTRANKS A FORWARDED TOKEN, deliberately. A validated JWT proves who the
+        // caller is; it does not prove which brand THIS deployment registers for — and the
+        // caller chooses whether to attach one and which one to attach. On a pinned
+        // deployment that also trusts a sibling brand's issuer (the ordinary multi-issuer
+        // shape), preferring the token would let an attacker holding a valid brand-A token
+        // satisfy the gate from brand-A's allowlist and be minted a brand-B session: the
+        // exact cross-brand hole this class exists to close, re-opened by adding a header.
+        // The pin is operator configuration, so it is the one input the caller cannot pick.
+        if (!pinnedDomain.isEmpty()) {
+            return pinnedDomain;
+        }
         String fromToken = domainOfTrustedIssuer(auth);
         return fromToken != null ? fromToken : fallback();
     }
