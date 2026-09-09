@@ -7,6 +7,7 @@ import org.springframework.boot.data.r2dbc.test.autoconfigure.DataR2dbcTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.r2dbc.core.DatabaseClient;
 import org.springframework.test.context.ActiveProfiles;
+import reactor.core.publisher.Mono;
 import net.hugmesh.adminbff.device.Device;
 import net.hugmesh.adminbff.device.DeviceRegistryRepository;
 import net.hugmesh.adminbff.device.DeviceRegistryService;
@@ -120,9 +121,9 @@ class NodeStorageReconcilerTest {
     static final class RecordingWriter implements NodeStorageConfigMapWriter {
         final List<List<StorageAssignmentElement>> renders = new ArrayList<>();
         boolean failNext = false;
-        @Override public boolean writeAssignments(List<StorageAssignmentElement> elements) {
+        @Override public Mono<Boolean> writeAssignments(List<StorageAssignmentElement> elements) {
             renders.add(List.copyOf(elements));
-            return !failNext;
+            return Mono.just(!failNext);
         }
         @Override public boolean isReal() { return true; }
         List<StorageAssignmentElement> last() { return renders.get(renders.size() - 1); }

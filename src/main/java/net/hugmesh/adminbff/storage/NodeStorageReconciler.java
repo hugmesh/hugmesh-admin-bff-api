@@ -156,14 +156,19 @@ public class NodeStorageReconciler {
      */
     private Mono<Void> renderAndReconcile(List<Rendered> rendered) {
         List<StorageAssignmentElement> elements = rendered.stream().map(Rendered::element).toList();
-        boolean ok = writer.writeAssignments(elements);
-        String prop = ok ? ServiceAssignment.PROP_APPLIED : ServiceAssignment.PROP_FAILED;
-        if (writer.isReal()) {
-            log.info("[node-storage-reconciler] rendered {} active assignment(s) -> {}",
-                    elements.size(), prop);
-        }
-        return Flux.fromIterable(rendered)
-                .concatMap(r -> assignments.updatePropagationState(r.assignmentId(), prop))
-                .then();
+        // The write is a Mono (the games GameInstanceReconciler#renderDomain shape): composed,
+        // not called inline. The previous inline call ran the blocking fabric8 round-trip on
+        // the reactive thread that delivered collectList()'s signal.
+        return writer.writeAssignments(elements)
+                .flatMap(ok -> {
+                    String prop = ok ? ServiceAssignment.PROP_APPLIED : ServiceAssignment.PROP_FAILED;
+                    if (writer.isReal()) {
+                        log.info("[node-storage-reconciler] rendered {} active assignment(s) -> {}",
+                                elements.size(), prop);
+                    }
+                    return Flux.fromIterable(rendered)
+                            .concatMap(r -> assignments.updatePropagationState(r.assignmentId(), prop))
+                            .then();
+                });
     }
 }

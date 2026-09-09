@@ -21,7 +21,7 @@ class JobLauncherTest {
     void noopLauncher_isNotReal_andReturnsSyntheticName() {
         JobLauncher launcher = new NoopJobLauncher();
         assertThat(launcher.isReal()).isFalse();
-        assertThat(launcher.apply("apiVersion: batch/v1\nkind: Job\n", "run-9"))
+        assertThat(launcher.apply("apiVersion: batch/v1\nkind: Job\n", "run-9").block())
                 .isEqualTo("hugmesh-test-runner-run-9");
     }
 
@@ -37,7 +37,7 @@ class JobLauncherTest {
         Fabric8JobLauncher launcher = new Fabric8JobLauncher(
                 () -> { throw new KubernetesClientException("forbidden: jobs is forbidden"); },
                 "hugmesh-backend");
-        assertThatThrownBy(() -> launcher.apply("kind: Job\n", "run-1"))
+        assertThatThrownBy(() -> launcher.apply("kind: Job\n", "run-1").block())
                 .isInstanceOf(ApiException.class)
                 .satisfies(e -> assertThat(((ApiException) e).status().value()).isEqualTo(502))
                 .hasMessageContaining("could not launch test-runner Job");
@@ -47,7 +47,7 @@ class JobLauncherTest {
     void fabric8Launcher_genericError_mapsToBadGateway() {
         Fabric8JobLauncher launcher = new Fabric8JobLauncher(
                 () -> { throw new RuntimeException("boom"); }, "hugmesh-backend");
-        assertThatThrownBy(() -> launcher.apply("kind: Job\n", "run-1"))
+        assertThatThrownBy(() -> launcher.apply("kind: Job\n", "run-1").block())
                 .isInstanceOf(ApiException.class)
                 .satisfies(e -> assertThat(((ApiException) e).status().value()).isEqualTo(502));
     }

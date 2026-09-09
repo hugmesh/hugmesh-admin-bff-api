@@ -96,7 +96,7 @@ class ImageGenKindE2eTest {
 
         Fabric8ImageJobLauncher launcher = new Fabric8ImageJobLauncher(
                 () -> new KubernetesClientBuilder().build(), NS);
-        String jobName = launcher.apply(manifest, buildId);
+        String jobName = launcher.apply(manifest, buildId).block();
 
         try (KubernetesClient client = new KubernetesClientBuilder().build()) {
             try {
@@ -161,7 +161,7 @@ class ImageGenKindE2eTest {
             return new KubernetesClientBuilder().withConfig(cfg).build();
         }, NS);
 
-        assertThatThrownBy(() -> ungranted.apply(manifest, buildId))
+        assertThatThrownBy(() -> ungranted.apply(manifest, buildId).block())
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("could not launch image-gen Job");
 
