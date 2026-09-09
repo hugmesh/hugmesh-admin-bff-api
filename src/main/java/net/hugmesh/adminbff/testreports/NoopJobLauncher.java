@@ -2,6 +2,7 @@ package net.hugmesh.adminbff.testreports;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import reactor.core.publisher.Mono;
 
 /**
  * Cluster-less {@link JobLauncher} — the default whenever
@@ -17,10 +18,13 @@ public class NoopJobLauncher implements JobLauncher {
     private static final Logger log = LoggerFactory.getLogger(NoopJobLauncher.class);
 
     @Override
-    public String apply(String manifest, String runId) {
-        log.info("[test-reports] (seam) would apply test-runner k8s Job for run {} ({} bytes); "
-                + "set testreports.launch.enabled=true to apply for real", runId, manifest.length());
-        return "hugmesh-test-runner-" + runId;
+    public Mono<String> apply(String manifest, String runId) {
+        // fromCallable, not just(): the log line belongs to the subscribe, not the assembly.
+        return Mono.fromCallable(() -> {
+            log.info("[test-reports] (seam) would apply test-runner k8s Job for run {} ({} bytes); "
+                    + "set testreports.launch.enabled=true to apply for real", runId, manifest.length());
+            return "hugmesh-test-runner-" + runId;
+        });
     }
 
     @Override

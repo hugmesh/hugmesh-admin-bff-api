@@ -1,5 +1,7 @@
 package net.hugmesh.adminbff.testreports;
 
+import reactor.core.publisher.Mono;
+
 /**
  * The seam that submits the rendered test-runner Job manifest to Kubernetes.
  *
@@ -23,13 +25,20 @@ package net.hugmesh.adminbff.testreports;
 public interface JobLauncher {
 
     /**
-     * Apply the rendered Job YAML and return the created Job's metadata.name.
+     * Apply the rendered Job YAML and emit the created Job's metadata.name.
+     *
+     * <p>Reactive by contract (the games
+     * {@link net.hugmesh.adminbff.gamesservices.InstanceConfigMapWriter} precedent): the
+     * fabric8 implementation does blocking I/O, so the seam returns a {@code Mono} that
+     * carries its own {@code boundedElastic} offload instead of making every call site
+     * remember to wrap it. A cluster-side rejection arrives as an {@code onError} carrying
+     * the 502 {@code ApiException} (it used to be thrown synchronously).
      *
      * @param manifest the fully-substituted Job YAML
      * @param runId    the test_run id (for the synthetic no-op name / logging)
      * @return the applied Job name (never null)
      */
-    String apply(String manifest, String runId);
+    Mono<String> apply(String manifest, String runId);
 
     /** True when this launcher actually talks to a cluster (the runtime seam signal). */
     boolean isReal();

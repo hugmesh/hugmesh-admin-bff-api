@@ -11,6 +11,7 @@ import net.hugmesh.adminbff.web.dto.TestRunIngestRequest;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import reactor.core.publisher.Mono;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -39,10 +40,12 @@ class TestRunOrchestratorTest {
         private final boolean real;
         private final RuntimeException boom;
         CapturingLauncher(boolean real, RuntimeException boom) { this.real = real; this.boom = boom; }
-        @Override public String apply(String manifest, String runId) {
-            manifests.add(manifest);
-            if (boom != null) throw boom;
-            return "hugmesh-test-runner-" + runId;
+        @Override public Mono<String> apply(String manifest, String runId) {
+            return Mono.fromCallable(() -> {
+                manifests.add(manifest);
+                if (boom != null) throw boom;
+                return "hugmesh-test-runner-" + runId;
+            });
         }
         @Override public boolean isReal() { return real; }
     }

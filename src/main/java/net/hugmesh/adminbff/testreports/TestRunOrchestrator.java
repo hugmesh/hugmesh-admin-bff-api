@@ -8,7 +8,6 @@ import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.publisher.Sinks;
-import reactor.core.scheduler.Schedulers;
 import net.hugmesh.adminbff.web.dto.TestRunIngestRequest;
 
 import java.io.IOException;
@@ -68,11 +67,11 @@ public class TestRunOrchestrator {
     public Mono<Void> launch(TestRun run) {
         sinks.computeIfAbsent(run.id(),
                 k -> Sinks.many().replay().limit(replayBuffer));
-        return Mono.fromCallable(() -> {
-                    String manifest = renderManifest(run);
-                    return launcher.apply(manifest, run.id());
-                })
-                .subscribeOn(Schedulers.boundedElastic())
+        // renderManifest is pure string templating; the launcher seam now carries its own
+        // boundedElastic offload for the blocking fabric8 round-trip (Mono.usingWhen inside
+        // Fabric8JobLauncher), so this composes it instead of wrapping it.
+        return Mono.fromCallable(() -> renderManifest(run))
+                .flatMap(manifest -> launcher.apply(manifest, run.id()))
                 .flatMap(jobName -> repo.markRunning(run.id(), jobName)
                         .doOnSuccess(v -> emit(run.id(), TestRunEvent.progress(run.id(), 0,
                                 "test-runner Job '" + jobName + "' launched (tier=" + run.tier() + ")"))))
