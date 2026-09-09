@@ -8,6 +8,7 @@ import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.publisher.Sinks;
+import reactor.core.scheduler.Schedulers;
 import net.hugmesh.adminbff.web.dto.TestRunIngestRequest;
 
 import java.io.IOException;
@@ -67,10 +68,16 @@ public class TestRunOrchestrator {
     public Mono<Void> launch(TestRun run) {
         sinks.computeIfAbsent(run.id(),
                 k -> Sinks.many().replay().limit(replayBuffer));
-        // renderManifest is pure string templating; the launcher seam now carries its own
-        // boundedElastic offload for the blocking fabric8 round-trip (Mono.usingWhen inside
-        // Fabric8JobLauncher), so this composes it instead of wrapping it.
+        // renderManifest is NOT pure string templating: it re-reads jobs/test-runner-job.yaml
+        // out of the app jar on EVERY call (ClassPathResource#getInputStream, uncached), which
+        // is blocking I/O. launch() is composed downstream of an R2DBC insert
+        // (TestReportsService: repo.insert(...).flatMap(run -> orchestrator.launch(run)...)),
+        // so the subscribing thread is an R2DBC/Netty event loop — the render MUST keep its
+        // own boundedElastic offload. The launcher seam carries a SECOND, independent offload
+        // for the blocking fabric8 round-trip (Mono.usingWhen inside Fabric8JobLauncher);
+        // neither substitutes for the other.
         return Mono.fromCallable(() -> renderManifest(run))
+                .subscribeOn(Schedulers.boundedElastic())
                 .flatMap(manifest -> launcher.apply(manifest, run.id()))
                 .flatMap(jobName -> repo.markRunning(run.id(), jobName)
                         .doOnSuccess(v -> emit(run.id(), TestRunEvent.progress(run.id(), 0,
