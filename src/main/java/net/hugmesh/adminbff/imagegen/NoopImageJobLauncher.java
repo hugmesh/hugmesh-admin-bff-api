@@ -2,6 +2,7 @@ package net.hugmesh.adminbff.imagegen;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import reactor.core.publisher.Mono;
 
 /**
  * Cluster-less {@link ImageJobLauncher} — the DEFAULT whenever
@@ -17,10 +18,13 @@ public class NoopImageJobLauncher implements ImageJobLauncher {
     private static final Logger log = LoggerFactory.getLogger(NoopImageJobLauncher.class);
 
     @Override
-    public String apply(String manifest, String buildId) {
-        log.info("[imagegen] (seam) would apply image-gen k8s Job for build {} ({} bytes); "
-                + "set imagegen.launch.enabled=true to apply for real", buildId, manifest.length());
-        return "hugmesh-image-gen-" + buildId;
+    public Mono<String> apply(String manifest, String buildId) {
+        // fromCallable, not just(): the log line belongs to the subscribe, not the assembly.
+        return Mono.fromCallable(() -> {
+            log.info("[imagegen] (seam) would apply image-gen k8s Job for build {} ({} bytes); "
+                    + "set imagegen.launch.enabled=true to apply for real", buildId, manifest.length());
+            return "hugmesh-image-gen-" + buildId;
+        });
     }
 
     @Override

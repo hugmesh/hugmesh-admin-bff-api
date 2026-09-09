@@ -5,6 +5,8 @@ import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.KubernetesClientException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 import net.hugmesh.commons.web.ApiException;
 
 import java.io.ByteArrayInputStream;
@@ -27,7 +29,11 @@ import java.util.List;
  * <p>The {@code KubernetesClient} is supplied by a provider so the bean can be
  * constructed (and the seam signal published) even though the client itself is
  * created lazily on first apply — a transient API-server blip at startup must not
- * fail the BFF boot.
+ * fail the BFF boot. Its acquire/apply/close lifecycle is expressed with
+ * {@code Mono.usingWhen} (acquire lazily, apply, ALWAYS close — success, error, or
+ * cancellation — mirroring what try-with-resources guaranteed), offloaded onto
+ * {@code Schedulers.boundedElastic()} since the fabric8 client does blocking I/O; the
+ * games {@code Fabric8InstanceConfigMapWriter} is the in-repo precedent.
  */
 public class Fabric8JobLauncher implements JobLauncher {
 
@@ -48,10 +54,50 @@ public class Fabric8JobLauncher implements JobLauncher {
     }
 
     @Override
-    public String apply(String manifest, String runId) {
-        // TODO reactive: consider Mono.usingWhen(Mono.fromCallable(clientFactory::get), ...) for the KubernetesClient lifecycle
-        try (KubernetesClient client = clientFactory.get();
-             var stream = new ByteArrayInputStream(manifest.getBytes(StandardCharsets.UTF_8))) {
+    public Mono<String> apply(String manifest, String runId) {
+        // Reactive resource lifecycle: Mono.usingWhen acquires the client LAZILY
+        // (clientFactory::get), applies the manifest, and ALWAYS closes the client
+        // afterwards — success, error, or cancellation — the same always-closes guarantee
+        // try-with-resources gave, expressed reactively. subscribeOn(boundedElastic) keeps
+        // both the acquire (a DNS lookup / API-server handshake) and the blocking apply off
+        // whichever thread subscribes, so the offload is a property of the SEAM rather than
+        // something each call site has to remember.
+        return Mono.usingWhen(
+                        Mono.fromCallable(() -> requireClient(clientFactory.get())),
+                        client -> Mono.fromCallable(() -> applyBlocking(client, manifest, runId)),
+                        client -> Mono.fromRunnable(client::close))
+                .subscribeOn(Schedulers.boundedElastic())
+                .onErrorMap(KubernetesClientException.class, e -> {
+                    // A cluster-side rejection (RBAC, admission, conflict) is an operator-
+                    // facing 502 — never a 500 that leaks a stack trace to the admin-ui.
+                    log.warn("[test-reports] k8s apply for run {} failed: {}", runId, e.getMessage());
+                    return ApiException.badGateway("could not launch test-runner Job: " + e.getMessage());
+                })
+                .onErrorMap(e -> !(e instanceof ApiException), e -> {
+                    log.warn("[test-reports] k8s apply for run {} errored: {}", runId, e.toString());
+                    return ApiException.badGateway("could not launch test-runner Job");
+                });
+    }
+
+    /**
+     * FAIL CLOSED on a null client. {@code Mono.usingWhen} treats an EMPTY resource publisher as
+     * "no resource": the closure is never invoked and the whole Mono completes EMPTY — which
+     * downstream reads as a SILENT SUCCESS (no error, no status update, no log). A
+     * {@code ClientFactory} that returns null produces exactly that empty publisher via
+     * {@code Mono.fromCallable}. The pre-reactive body NPE'd inside try-with-resources and
+     * surfaced through the error mapping, so we reassert that contract explicitly here.
+     */
+    private static KubernetesClient requireClient(KubernetesClient client) {
+        if (client == null) {
+            throw new IllegalStateException("kubernetes client factory returned null");
+        }
+        return client;
+    }
+
+    /** The blocking fabric8 round-trip; the client's lifecycle is owned by {@link #apply}. */
+    private String applyBlocking(KubernetesClient client, String manifest, String runId)
+            throws java.io.IOException {
+        try (var stream = new ByteArrayInputStream(manifest.getBytes(StandardCharsets.UTF_8))) {
             List<HasMetadata> applied = client.load(stream).inNamespace(namespace).create();
             String name = applied.stream()
                     .filter(r -> "Job".equals(r.getKind()))
@@ -62,14 +108,6 @@ public class Fabric8JobLauncher implements JobLauncher {
             log.info("[test-reports] applied test-runner Job '{}' (run {}) in namespace {}",
                     name, runId, namespace);
             return name;
-        } catch (KubernetesClientException e) {
-            // A cluster-side rejection (RBAC, admission, conflict) is an operator-
-            // facing 502 — never a 500 that leaks a stack trace to the admin-ui.
-            log.warn("[test-reports] k8s apply for run {} failed: {}", runId, e.getMessage());
-            throw ApiException.badGateway("could not launch test-runner Job: " + e.getMessage());
-        } catch (Exception e) {
-            log.warn("[test-reports] k8s apply for run {} errored: {}", runId, e.toString());
-            throw ApiException.badGateway("could not launch test-runner Job");
         }
     }
 

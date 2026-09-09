@@ -71,7 +71,7 @@ class Fabric8ImageJobLauncherFailurePathTest {
         // NO expectation for the Job POST: were it attempted, the mock would answer 404 and
         // the request would still be recorded — the count/path assertions below catch it.
 
-        assertThatThrownBy(() -> launcher().apply(specManifest(), BUILD_ID))
+        assertThatThrownBy(() -> launcher().apply(specManifest(), BUILD_ID).block())
                 .isInstanceOf(ApiException.class)
                 .satisfies(e -> assertThat(((ApiException) e).status().value()).isEqualTo(502))
                 .hasMessageContaining("could not launch image-gen Job");
@@ -97,7 +97,7 @@ class Fabric8ImageJobLauncherFailurePathTest {
                 .andReturn(200, new StatusBuilder().withCode(200).build())
                 .once();
 
-        assertThatThrownBy(() -> launcher().apply(specManifest(), BUILD_ID))
+        assertThatThrownBy(() -> launcher().apply(specManifest(), BUILD_ID).block())
                 .isInstanceOf(ApiException.class)
                 .satisfies(e -> assertThat(((ApiException) e).status().value()).isEqualTo(502));
 
@@ -132,6 +132,6 @@ class Fabric8ImageJobLauncherFailurePathTest {
                         .withMessage("configmap gone").build())
                 .always();
 
-        assertThat(launcher().apply(specManifest(), BUILD_ID)).isEqualTo(JOB_NAME);
+        assertThat(launcher().apply(specManifest(), BUILD_ID).block()).isEqualTo(JOB_NAME);
     }
 }

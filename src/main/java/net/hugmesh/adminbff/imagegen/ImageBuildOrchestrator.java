@@ -68,11 +68,17 @@ public class ImageBuildOrchestrator {
     public Mono<Void> launch(ImageBuild build) {
         sinks.computeIfAbsent(build.id(),
                 k -> Sinks.many().replay().limit(replayBuffer));
-        return Mono.fromCallable(() -> {
-                    String manifest = renderManifest(build);
-                    return launcher.apply(manifest, build.id());
-                })
+        // renderManifest is NOT pure string templating: it re-reads jobs/image-gen-job.yaml
+        // out of the app jar on EVERY call (ClassPathResource#getInputStream, uncached), which
+        // is blocking I/O. launch() is composed downstream of an R2DBC insert
+        // (ImageBuildService: builds.insert(...).flatMap(b -> orchestrator.launch(b)...)), so
+        // the subscribing thread is an R2DBC/Netty event loop — the render MUST keep its own
+        // boundedElastic offload. The launcher seam carries a SECOND, independent offload for
+        // the blocking fabric8 round-trip (Mono.usingWhen inside Fabric8ImageJobLauncher);
+        // neither substitutes for the other.
+        return Mono.fromCallable(() -> renderManifest(build))
                 .subscribeOn(Schedulers.boundedElastic())
+                .flatMap(manifest -> launcher.apply(manifest, build.id()))
                 .flatMap(jobName -> repo.updateStatus(build.id(), ImageBuild.STATUS_RUNNING)
                         .doOnSuccess(v -> emit(build.id(), ImageBuildEvent.progress(build.id(), 0,
                                 "image-gen Job '" + jobName + "' launched (type=" + build.imageType()

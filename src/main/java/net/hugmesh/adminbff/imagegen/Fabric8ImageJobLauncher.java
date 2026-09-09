@@ -10,6 +10,8 @@ import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.KubernetesClientException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 import net.hugmesh.commons.web.ApiException;
 
 import java.io.ByteArrayInputStream;
@@ -51,7 +53,13 @@ import java.util.List;
  *
  * <p>The {@code KubernetesClient} is supplied lazily by a {@link ClientFactory} so the bean
  * can be constructed (and the seam signal published) even though the client itself is created
- * on first apply — a transient API-server blip at startup must not fail the BFF boot.
+ * on first apply — a transient API-server blip at startup must not fail the BFF boot. Its
+ * acquire/apply/close lifecycle is expressed with {@code Mono.usingWhen} (acquire lazily,
+ * apply, ALWAYS close — success, error, or cancellation — mirroring what try-with-resources
+ * guaranteed), offloaded onto {@code Schedulers.boundedElastic()} since the fabric8 client
+ * does blocking I/O; the games {@code Fabric8InstanceConfigMapWriter} is the in-repo precedent.
+ * The three-step ordering above is UNAFFECTED: all three steps run inside one blocking
+ * callable, so the sequencing and the best-effort rollback are exactly as before.
  */
 public class Fabric8ImageJobLauncher implements ImageJobLauncher {
 
@@ -72,10 +80,52 @@ public class Fabric8ImageJobLauncher implements ImageJobLauncher {
     }
 
     @Override
-    public String apply(String manifest, String buildId) {
-        // TODO reactive: consider Mono.usingWhen(Mono.fromCallable(clientFactory::get), ...) for the KubernetesClient lifecycle
-        try (KubernetesClient client = clientFactory.get();
-             var stream = new ByteArrayInputStream(manifest.getBytes(StandardCharsets.UTF_8))) {
+    public Mono<String> apply(String manifest, String buildId) {
+        // Reactive resource lifecycle: Mono.usingWhen acquires the client LAZILY
+        // (clientFactory::get), runs the EXPLICITLY SEQUENTIAL three-step applyBlocking, and
+        // ALWAYS closes the client afterwards — success, error, or cancellation — the same
+        // always-closes guarantee try-with-resources gave, expressed reactively.
+        // subscribeOn(boundedElastic) keeps both the acquire (a DNS lookup / API-server
+        // handshake) and the blocking applies off whichever thread subscribes, so the
+        // offload is a property of the SEAM rather than something each call site must
+        // remember. The ordering + rollback contract is unchanged: it all still happens
+        // inside one blocking callable, so step 2 cannot begin before step 1 returns.
+        return Mono.usingWhen(
+                        Mono.fromCallable(() -> requireClient(clientFactory.get())),
+                        client -> Mono.fromCallable(() -> applyBlocking(client, manifest, buildId)),
+                        client -> Mono.fromRunnable(client::close))
+                .subscribeOn(Schedulers.boundedElastic())
+                .onErrorMap(KubernetesClientException.class, e -> {
+                    // A cluster-side rejection (RBAC, admission, conflict) is an operator-facing
+                    // 502 — never a 500 that leaks a stack trace to the admin-ui.
+                    log.warn("[imagegen] k8s apply for build {} failed: {}", buildId, e.getMessage());
+                    return ApiException.badGateway("could not launch image-gen Job: " + e.getMessage());
+                })
+                .onErrorMap(e -> !(e instanceof ApiException), e -> {
+                    log.warn("[imagegen] k8s apply for build {} errored: {}", buildId, e.toString());
+                    return ApiException.badGateway("could not launch image-gen Job");
+                });
+    }
+
+    /**
+     * FAIL CLOSED on a null client. {@code Mono.usingWhen} treats an EMPTY resource publisher as
+     * "no resource": the closure is never invoked and the whole Mono completes EMPTY — which
+     * downstream reads as a SILENT SUCCESS (no error, no status update, no log). A
+     * {@code ClientFactory} that returns null produces exactly that empty publisher via
+     * {@code Mono.fromCallable}. The pre-reactive body NPE'd inside try-with-resources and
+     * surfaced through the error mapping, so we reassert that contract explicitly here.
+     */
+    private static KubernetesClient requireClient(KubernetesClient client) {
+        if (client == null) {
+            throw new IllegalStateException("kubernetes client factory returned null");
+        }
+        return client;
+    }
+
+    /** The blocking three-step apply; the client's lifecycle is owned by {@link #apply}. */
+    private String applyBlocking(KubernetesClient client, String manifest, String buildId)
+            throws java.io.IOException {
+        try (var stream = new ByteArrayInputStream(manifest.getBytes(StandardCharsets.UTF_8))) {
             // Parse only — load(...).items() unmarshals the docs locally, no API call yet.
             List<HasMetadata> items = client.load(stream).items();
             ConfigMap specConfigMap = null;
@@ -125,14 +175,6 @@ public class Fabric8ImageJobLauncher implements ImageJobLauncher {
                     createdConfigMap == null ? "none (legacy)" : createdConfigMap.getMetadata().getName(),
                     namespace);
             return name;
-        } catch (KubernetesClientException e) {
-            // A cluster-side rejection (RBAC, admission, conflict) is an operator-facing 502 —
-            // never a 500 that leaks a stack trace to the admin-ui.
-            log.warn("[imagegen] k8s apply for build {} failed: {}", buildId, e.getMessage());
-            throw ApiException.badGateway("could not launch image-gen Job: " + e.getMessage());
-        } catch (Exception e) {
-            log.warn("[imagegen] k8s apply for build {} errored: {}", buildId, e.toString());
-            throw ApiException.badGateway("could not launch image-gen Job");
         }
     }
 

@@ -2,6 +2,7 @@ package net.hugmesh.adminbff.storage;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import reactor.core.publisher.Mono;
 
 import java.util.List;
 
@@ -22,11 +23,11 @@ public class NoopNodeStorageConfigMapWriter implements NodeStorageConfigMapWrite
     private static final Logger log = LoggerFactory.getLogger(NoopNodeStorageConfigMapWriter.class);
 
     @Override
-    public boolean writeAssignments(List<StorageAssignmentElement> elements) {
+    public Mono<Boolean> writeAssignments(List<StorageAssignmentElement> elements) {
         log.debug("[node-storage-reconciler] (noop) would render {} active assignment element(s) "
                 + "into the node-storage-assignments ConfigMap",
                 elements == null ? 0 : elements.size());
-        return true;
+        return Mono.just(true);
     }
 
     @Override
