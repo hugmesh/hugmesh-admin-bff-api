@@ -57,7 +57,7 @@ class ImageGenConfigTest {
     void noopLauncher_isNotReal_andReturnsSyntheticName() {
         ImageJobLauncher launcher = new NoopImageJobLauncher();
         assertThat(launcher.isReal()).isFalse();
-        assertThat(launcher.apply("apiVersion: batch/v1\nkind: Job\n", "b-9"))
+        assertThat(launcher.apply("apiVersion: batch/v1\nkind: Job\n", "b-9").block())
                 .isEqualTo("hugmesh-image-gen-b-9");
     }
 
@@ -67,7 +67,7 @@ class ImageGenConfigTest {
                 () -> { throw new KubernetesClientException("forbidden: jobs is forbidden"); },
                 "hugmesh-backend");
         assertThat(launcher.isReal()).isTrue();
-        assertThatThrownBy(() -> launcher.apply("kind: Job\n", "b-1"))
+        assertThatThrownBy(() -> launcher.apply("kind: Job\n", "b-1").block())
                 .isInstanceOf(ApiException.class)
                 .satisfies(e -> assertThat(((ApiException) e).status().value()).isEqualTo(502))
                 .hasMessageContaining("could not launch image-gen Job");

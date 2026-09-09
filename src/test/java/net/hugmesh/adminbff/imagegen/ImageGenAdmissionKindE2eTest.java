@@ -265,7 +265,7 @@ class ImageGenAdmissionKindE2eTest {
         // best-effort ownerReference patch all pass through the pin.
         Fabric8ImageJobLauncher launcher = new Fabric8ImageJobLauncher(
                 ImageGenAdmissionKindE2eTest::adminBffClient, NS);
-        String jobName = launcher.apply(manifest, buildId);
+        String jobName = launcher.apply(manifest, buildId).block();
 
         try (KubernetesClient admin = new KubernetesClientBuilder().build()) {
             try {

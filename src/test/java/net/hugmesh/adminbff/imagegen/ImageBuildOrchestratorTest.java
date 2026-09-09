@@ -13,6 +13,7 @@ import net.hugmesh.adminbff.web.dto.ImageBuildProgressRequest;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import reactor.core.publisher.Mono;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -39,10 +40,12 @@ class ImageBuildOrchestratorTest {
         private final boolean real;
         private final RuntimeException boom;
         CapturingLauncher(boolean real, RuntimeException boom) { this.real = real; this.boom = boom; }
-        @Override public String apply(String manifest, String buildId) {
-            manifests.add(manifest);
-            if (boom != null) throw boom;
-            return "hugmesh-image-gen-" + buildId;
+        @Override public Mono<String> apply(String manifest, String buildId) {
+            return Mono.fromCallable(() -> {
+                manifests.add(manifest);
+                if (boom != null) throw boom;
+                return "hugmesh-image-gen-" + buildId;
+            });
         }
         @Override public boolean isReal() { return real; }
     }

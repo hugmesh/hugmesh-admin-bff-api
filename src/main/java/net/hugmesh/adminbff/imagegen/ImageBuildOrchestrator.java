@@ -8,7 +8,6 @@ import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.publisher.Sinks;
-import reactor.core.scheduler.Schedulers;
 import net.hugmesh.adminbff.sshterminal.ImageBuild;
 import net.hugmesh.adminbff.sshterminal.ImageBuildRepository;
 
@@ -68,11 +67,11 @@ public class ImageBuildOrchestrator {
     public Mono<Void> launch(ImageBuild build) {
         sinks.computeIfAbsent(build.id(),
                 k -> Sinks.many().replay().limit(replayBuffer));
-        return Mono.fromCallable(() -> {
-                    String manifest = renderManifest(build);
-                    return launcher.apply(manifest, build.id());
-                })
-                .subscribeOn(Schedulers.boundedElastic())
+        // renderManifest is pure string templating; the launcher seam now carries its own
+        // boundedElastic offload for the blocking fabric8 round-trip (Mono.usingWhen inside
+        // Fabric8ImageJobLauncher), so this composes it instead of wrapping it.
+        return Mono.fromCallable(() -> renderManifest(build))
+                .flatMap(manifest -> launcher.apply(manifest, build.id()))
                 .flatMap(jobName -> repo.updateStatus(build.id(), ImageBuild.STATUS_RUNNING)
                         .doOnSuccess(v -> emit(build.id(), ImageBuildEvent.progress(build.id(), 0,
                                 "image-gen Job '" + jobName + "' launched (type=" + build.imageType()

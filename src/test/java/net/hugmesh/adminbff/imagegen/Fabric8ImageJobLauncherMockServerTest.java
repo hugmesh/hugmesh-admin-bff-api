@@ -55,7 +55,7 @@ class Fabric8ImageJobLauncherMockServerTest {
         String spec = "{\"role\":\"gateway\",\"platform\":\"rpi5\",\"hostname\":\"gw\"}";
         String manifest = renderer.renderManifest(build(spec));
 
-        String jobName = launcher().apply(manifest, BUILD_ID);
+        String jobName = launcher().apply(manifest, BUILD_ID).block();
 
         assertThat(jobName).isEqualTo("hugmesh-image-gen-" + BUILD_ID);
         Job job = client.batch().v1().jobs().inNamespace(NS).withName(jobName).get();
@@ -80,7 +80,7 @@ class Fabric8ImageJobLauncherMockServerTest {
     void legacyBuild_appliesJobOnly_noConfigMap() {
         String manifest = renderer.renderManifest(build(null));
 
-        String jobName = launcher().apply(manifest, BUILD_ID);
+        String jobName = launcher().apply(manifest, BUILD_ID).block();
 
         assertThat(jobName).isEqualTo("hugmesh-image-gen-" + BUILD_ID);
         assertThat(client.batch().v1().jobs().inNamespace(NS).withName(jobName).get()).isNotNull();
