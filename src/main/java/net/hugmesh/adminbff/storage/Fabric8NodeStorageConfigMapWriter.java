@@ -76,7 +76,7 @@ public class Fabric8NodeStorageConfigMapWriter implements NodeStorageConfigMapWr
         // the reconciler's reactive thread; the previous synchronous body ran the whole
         // fabric8 round-trip on whichever thread delivered the upstream signal.
         return Mono.usingWhen(
-                        Mono.fromCallable(clientFactory::get),
+                        Mono.fromCallable(() -> requireClient(clientFactory.get())),
                         client -> Mono.fromCallable(() -> {
                             ConfigMap cm = new ConfigMapBuilder()
                                     .withNewMetadata()
@@ -105,6 +105,21 @@ public class Fabric8NodeStorageConfigMapWriter implements NodeStorageConfigMapWr
                             e.toString());
                     return Mono.just(Boolean.FALSE);
                 });
+    }
+
+    /**
+     * FAIL CLOSED on a null client. {@code Mono.usingWhen} treats an EMPTY resource publisher as
+     * "no resource": the closure is never invoked and the whole Mono completes EMPTY — which
+     * downstream reads as a SILENT SUCCESS (no error, no status update, no log). A
+     * {@code ClientFactory} that returns null produces exactly that empty publisher via
+     * {@code Mono.fromCallable}. The pre-reactive body NPE'd inside try-with-resources and
+     * surfaced through the error mapping, so we reassert that contract explicitly here.
+     */
+    private static KubernetesClient requireClient(KubernetesClient client) {
+        if (client == null) {
+            throw new IllegalStateException("kubernetes client factory returned null");
+        }
+        return client;
     }
 
     @Override

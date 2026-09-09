@@ -63,7 +63,7 @@ public class Fabric8JobLauncher implements JobLauncher {
         // whichever thread subscribes, so the offload is a property of the SEAM rather than
         // something each call site has to remember.
         return Mono.usingWhen(
-                        Mono.fromCallable(clientFactory::get),
+                        Mono.fromCallable(() -> requireClient(clientFactory.get())),
                         client -> Mono.fromCallable(() -> applyBlocking(client, manifest, runId)),
                         client -> Mono.fromRunnable(client::close))
                 .subscribeOn(Schedulers.boundedElastic())
@@ -77,6 +77,21 @@ public class Fabric8JobLauncher implements JobLauncher {
                     log.warn("[test-reports] k8s apply for run {} errored: {}", runId, e.toString());
                     return ApiException.badGateway("could not launch test-runner Job");
                 });
+    }
+
+    /**
+     * FAIL CLOSED on a null client. {@code Mono.usingWhen} treats an EMPTY resource publisher as
+     * "no resource": the closure is never invoked and the whole Mono completes EMPTY — which
+     * downstream reads as a SILENT SUCCESS (no error, no status update, no log). A
+     * {@code ClientFactory} that returns null produces exactly that empty publisher via
+     * {@code Mono.fromCallable}. The pre-reactive body NPE'd inside try-with-resources and
+     * surfaced through the error mapping, so we reassert that contract explicitly here.
+     */
+    private static KubernetesClient requireClient(KubernetesClient client) {
+        if (client == null) {
+            throw new IllegalStateException("kubernetes client factory returned null");
+        }
+        return client;
     }
 
     /** The blocking fabric8 round-trip; the client's lifecycle is owned by {@link #apply}. */

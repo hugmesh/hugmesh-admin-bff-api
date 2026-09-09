@@ -91,7 +91,7 @@ public class Fabric8ImageJobLauncher implements ImageJobLauncher {
         // remember. The ordering + rollback contract is unchanged: it all still happens
         // inside one blocking callable, so step 2 cannot begin before step 1 returns.
         return Mono.usingWhen(
-                        Mono.fromCallable(clientFactory::get),
+                        Mono.fromCallable(() -> requireClient(clientFactory.get())),
                         client -> Mono.fromCallable(() -> applyBlocking(client, manifest, buildId)),
                         client -> Mono.fromRunnable(client::close))
                 .subscribeOn(Schedulers.boundedElastic())
@@ -105,6 +105,21 @@ public class Fabric8ImageJobLauncher implements ImageJobLauncher {
                     log.warn("[imagegen] k8s apply for build {} errored: {}", buildId, e.toString());
                     return ApiException.badGateway("could not launch image-gen Job");
                 });
+    }
+
+    /**
+     * FAIL CLOSED on a null client. {@code Mono.usingWhen} treats an EMPTY resource publisher as
+     * "no resource": the closure is never invoked and the whole Mono completes EMPTY — which
+     * downstream reads as a SILENT SUCCESS (no error, no status update, no log). A
+     * {@code ClientFactory} that returns null produces exactly that empty publisher via
+     * {@code Mono.fromCallable}. The pre-reactive body NPE'd inside try-with-resources and
+     * surfaced through the error mapping, so we reassert that contract explicitly here.
+     */
+    private static KubernetesClient requireClient(KubernetesClient client) {
+        if (client == null) {
+            throw new IllegalStateException("kubernetes client factory returned null");
+        }
+        return client;
     }
 
     /** The blocking three-step apply; the client's lifecycle is owned by {@link #apply}. */
