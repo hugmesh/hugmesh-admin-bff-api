@@ -132,13 +132,45 @@ public class RegistrationDomainResolver {
     /**
      * The domain the mTLS + {@code X-Internal-Token} guarded internal invite read evaluates.
      * The trusted in-cluster caller (user-bff, which HAS the validated token this hop lost)
-     * MAY name the brand explicitly; an omitted value degrades to {@link #fallback()}, so a
-     * caller that does not send one keeps the single-brand behaviour it has today.
+     * MAY name the brand explicitly — but ONLY a brand THIS deployment serves (issue #47):
+     *
+     * <ul>
+     *   <li>strict membership of the CONFIGURED {@link DomainRegistry#knownDomains()} set, via
+     *       {@link DomainRegistry#isKnownDomain(String)} — the same strict-membership shape
+     *       {@link #domainOfTrustedIssuer} uses for issuers; or</li>
+     *   <li>the deployment's own {@link #fallback()} answer — the per-deployment pin, or the
+     *       legacy {@code "default"} brand of an unconfigured / issuer-uri-only registry, which
+     *       {@code isKnownDomain} deliberately rejects as a back-compat sentinel. This keeps a
+     *       single-tenant install accepting the one name it actually stamps on its rows.</li>
+     * </ul>
+     *
+     * <p>Anything else FAILS CLOSED to {@link PrincipalDomain#NO_DOMAIN} (matches no allowlist
+     * row) rather than degrading to {@link #fallback()}: a supplied-but-unknown brand is a
+     * caller bug, and answering with the deployment's own brand would both hide the bug and,
+     * on a multi-brand mesh, widen the answer. The value is compared EXACTLY (the registry's
+     * names are already {@code [a-z0-9-]}-sanitized, so a differently-cased or decorated
+     * spelling cannot match a row and is refused, never normalised into a match). An
+     * omitted/blank value still degrades to {@link #fallback()}, so a caller that does not
+     * send one keeps the single-brand behaviour it has today.
      *
      * @param supplied the caller-supplied {@code domain}, or {@code null}/blank when omitted
      */
     public String forInternalCaller(@Nullable String supplied) {
-        return supplied == null || supplied.isBlank() ? fallback() : supplied.trim();
+        if (supplied == null || supplied.isBlank()) {
+            return fallback();
+        }
+        String candidate = supplied.trim();
+        if (domains.isKnownDomain(candidate)) {
+            return candidate;
+        }
+        String own = fallback();
+        if (!PrincipalDomain.NO_DOMAIN.equals(own) && own.equals(candidate)) {
+            return candidate;
+        }
+        log.warn("[registration-gate] internal caller named domain '{}', which this deployment "
+                + "does not serve — failing closed (no allowlist row can match)",
+                candidate.replaceAll("[^\\x20-\\x7e]", "?"));
+        return PrincipalDomain.NO_DOMAIN;
     }
 
     /**

@@ -195,8 +195,11 @@ login flow has moved off a custom BFF login:
   stays in `admin-bff-db`**: user-bff reaches it via this service's **`/bff/internal`**
   account/session API (`InternalAccountController`, #113) over **mTLS + an
   `X-Internal-Token`** header, with the **BFF-JWT-custody tail** (`/bff/internal/custody/stamp`
-  & `/session/exchange`, band-180, auth-core 2.1.0 — #114) **shipped dark** so admin-bff
-  custodies the Casdoor JWT once user-bff's OIDC login flips on. The legacy user-facing
+  & `/session/exchange`, band-180, auth-core 2.1.0 — #114) **dark by default here, lit
+  in-cluster**: user-bff's OIDC login (`SsoAuthController`) is routed at the gateway
+  (`/bff/login` → user-bff ahead of the `/bff/**` catch-all, generator@912524b8), the gateway's
+  `bff_`→JWT exchange is on (generator@c85a1283, hugmesh/hugmesh-generator#177), and this service's Deployment sets
+  `APP_BFF_OIDC_ENABLED` + `APP_BFF_CUSTODY_KEY` (generator@50021c55) — see #2. The legacy user-facing
   `AuthController` paths (`/bff/login`, `/bff/register/**`, `/bff/me`, `/bff/provision/**`)
   described under [User flow](#user-flow-base-bff) are the contract being moved — treat
   their *ownership* as in-transition (see [Roadmap](#roadmap)); the durable allowlist /
@@ -249,7 +252,7 @@ flowchart TD
     PHONE -.lock legs all dark.-> MDMEXT["Headwind DPC /<br/>headscale mesh-deny /<br/>Azure Intune Graph"]
 
     subgraph roadmap["Roadmap (🔭 / 🚧)"]
-        RELOC["user-bff OIDC login + gateway bff_-exchange<br/>flip on (admin-bff /internal + custody dark-shipped)"]:::planned
+        RELOC["retire the legacy AuthController user paths<br/>(user-bff OIDC login + gateway bff_-exchange<br/>are ON in-cluster — #2)"]:::planned
         MFA["Casdoor MFA enforcement flip-on<br/>(substrate + step-up satisfiers shipped dark)"]:::planned
         EXTCH["Notification external channels<br/>Matrix / Akkoma / phpBB / email"]:::planned
         ASET["domain_registry → per-brand<br/>ArgoCD ApplicationSet (signed export shipped)"]:::planned
@@ -904,8 +907,9 @@ empty derivation is a hard failure, not a free pass.
   verbatim. `GET /accounts/{id}`,
   `POST /accounts/{id}/complete`, `GET /allowlist/{provider}/{handle}[?domain=…]`
   (the invite gate, **domain-scoped** — on this mTLS + `X-Internal-Token` surface the
-  trusted in-cluster caller MAY name the brand; omitting it falls back to the deployment's
-  own brand),
+  trusted in-cluster caller MAY name the brand, but only a brand this deployment serves: an
+  unknown brand fails closed to `invited:false` (#47); omitting it falls back to the
+  deployment's own brand),
   `GET /accounts/{id}/namespaces`, `POST /sessions`, `DELETE /sessions/{token}`, and
   `GET /sessions/{accountId}` — the per-account live-session listing (auth-core 2.2.0,
   #132). The boundary is **mTLS (cluster CA) + `X-Internal-Token`**, never a JWT role.
