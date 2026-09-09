@@ -904,8 +904,9 @@ empty derivation is a hard failure, not a free pass.
   verbatim. `GET /accounts/{id}`,
   `POST /accounts/{id}/complete`, `GET /allowlist/{provider}/{handle}[?domain=…]`
   (the invite gate, **domain-scoped** — on this mTLS + `X-Internal-Token` surface the
-  trusted in-cluster caller MAY name the brand; omitting it falls back to the deployment's
-  own brand),
+  trusted in-cluster caller MAY name the brand, but only a brand this deployment serves: an
+  unknown brand fails closed to `invited:false` (#47); omitting it falls back to the
+  deployment's own brand),
   `GET /accounts/{id}/namespaces`, `POST /sessions`, `DELETE /sessions/{token}`, and
   `GET /sessions/{accountId}` — the per-account live-session listing (auth-core 2.2.0,
   #132). The boundary is **mTLS (cluster CA) + `X-Internal-Token`**, never a JWT role.

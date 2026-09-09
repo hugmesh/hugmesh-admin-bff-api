@@ -599,11 +599,17 @@ public class InternalAccountController {
      * {@code /bff/internal/**} is mTLS + {@code X-Internal-Token} guarded and carries no
      * untrusted principal, so the trusted in-cluster caller (user-bff, which holds the
      * validated token this hop does not) names the brand — the same "scoping is the CALLER's
-     * responsibility" rationale the session-listing read below already documents. Omitting it
-     * degrades to {@link RegistrationDomainResolver#fallback()} (the deployment's own single
-     * brand, or the fail-closed sentinel on a multi-brand mesh), so a caller that does not yet
-     * send one keeps today's single-brand answer. It is NOT a caller-chosen domain on the
-     * public {@code /bff/register/**} path — see {@link RegistrationDomainResolver}.
+     * responsibility" rationale the session-listing read below already documents. It is
+     * honoured ONLY when it names a brand this deployment serves (a configured
+     * {@code DomainRegistry} brand, or the deployment's own pin / legacy {@code default});
+     * any other value FAILS CLOSED to {@code PrincipalDomain.NO_DOMAIN} — the
+     * {@code invited:false} answer — rather than degrading to the deployment's own brand
+     * (issue #47: the transport guard is no longer the ONLY thing keeping a holder of the
+     * internal credential from naming a brand it does not serve). Omitting it degrades to
+     * {@link RegistrationDomainResolver#fallback()} (the deployment's own single brand, or the
+     * fail-closed sentinel on a multi-brand mesh), so a caller that does not yet send one keeps
+     * today's single-brand answer. It is NOT a caller-chosen domain on the public
+     * {@code /bff/register/**} path — see {@link RegistrationDomainResolver#forInternalCaller}.
      */
     @GetMapping("/allowlist/{provider}/{handle}")
     public Mono<Map<String, Boolean>> allowlist(@PathVariable String provider, @PathVariable String handle,

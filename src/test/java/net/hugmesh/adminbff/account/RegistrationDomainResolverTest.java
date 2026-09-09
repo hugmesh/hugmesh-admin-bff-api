@@ -165,4 +165,63 @@ class RegistrationDomainResolverTest {
         assertThat(r.forInternalCaller(null)).isEqualTo(AccountStore.DEFAULT_DOMAIN);
         assertThat(r.forInternalCaller("   ")).isEqualTo(AccountStore.DEFAULT_DOMAIN);
     }
+
+    // ── issue #47: a supplied brand is honoured ONLY when this deployment serves it ──
+    @Test
+    void internalCaller_unknownBrand_failsClosed_neverDegradesToFallback() {
+        // The holder of the internal credential names a brand this mesh does not serve. Before
+        // #47 the value passed through verbatim into the repository predicate; degrading to
+        // fallback() instead would hide the caller bug AND (on a single-brand mesh) answer with
+        // the deployment's own brand. Neither: the sentinel matches no allowlist row.
+        RegistrationDomainResolver two = resolver("", TWO_BRANDS, "");
+        assertThat(two.forInternalCaller("brand-x")).isEqualTo(PrincipalDomain.NO_DOMAIN);
+
+        RegistrationDomainResolver one = resolver("", BRAND_A_ISSUER + "=brand-a", "");
+        assertThat(one.fallback()).isEqualTo("brand-a");
+        assertThat(one.forInternalCaller("brand-x")).isEqualTo(PrincipalDomain.NO_DOMAIN);
+
+        RegistrationDomainResolver legacy = resolver("", "", "");
+        assertThat(legacy.fallback()).isEqualTo(AccountStore.DEFAULT_DOMAIN);
+        assertThat(legacy.forInternalCaller("brand-x")).isEqualTo(PrincipalDomain.NO_DOMAIN);
+    }
+
+    @Test
+    void internalCaller_defaultBrand_isAcceptedOnlyWhereItIsTheDeploymentsOwnAnswer() {
+        // DomainRegistry.isKnownDomain("default") is deliberately FALSE (a back-compat
+        // sentinel, not a per-brand Casdoor). But on the legacy single-tenant install and in
+        // issuer-uri-only mode "default" IS the one brand the rows carry — the same answer
+        // fallback() gives — so naming it must not be refused there...
+        assertThat(resolver("", "", "").forInternalCaller("default"))
+                .isEqualTo(AccountStore.DEFAULT_DOMAIN);
+        assertThat(resolver("https://id.hugmesh.test", "", "").forInternalCaller("default"))
+                .isEqualTo(AccountStore.DEFAULT_DOMAIN);
+        // ...while on a multi-brand mesh, or one that names a single non-default brand,
+        // "default" is NOT a brand this deployment serves and fails closed.
+        assertThat(resolver("", TWO_BRANDS, "").forInternalCaller("default"))
+                .isEqualTo(PrincipalDomain.NO_DOMAIN);
+        assertThat(resolver("", BRAND_A_ISSUER + "=brand-a", "").forInternalCaller("default"))
+                .isEqualTo(PrincipalDomain.NO_DOMAIN);
+    }
+
+    @Test
+    void internalCaller_pinnedBrand_isAccepted_evenWhenNotInTheRegistry() {
+        // The pin is the operator's own statement of which brand this admin-bff serves, so a
+        // caller naming it is naming the deployment's brand — accepted whether or not the
+        // registry lists it (an unconfigured registry + a pin is a supported shape).
+        assertThat(resolver("", "", "brand-b").forInternalCaller("brand-b")).isEqualTo("brand-b");
+        RegistrationDomainResolver pinnedTwo = resolver("", TWO_BRANDS, "brand-b");
+        assertThat(pinnedTwo.forInternalCaller("brand-b")).isEqualTo("brand-b"); // the pin
+        assertThat(pinnedTwo.forInternalCaller("brand-a")).isEqualTo("brand-a"); // still known
+        assertThat(pinnedTwo.forInternalCaller("brand-z")).isEqualTo(PrincipalDomain.NO_DOMAIN);
+    }
+
+    @Test
+    void internalCaller_valueIsComparedExactly_neverNormalisedIntoAMatch() {
+        // Registry names are [a-z0-9-]-sanitized; a differently-cased or decorated spelling can
+        // match no row, and must be refused rather than "helpfully" lower-cased into a brand.
+        RegistrationDomainResolver r = resolver("", TWO_BRANDS, "");
+        assertThat(r.forInternalCaller("Brand-A")).isEqualTo(PrincipalDomain.NO_DOMAIN);
+        assertThat(r.forInternalCaller("brand-a'; --")).isEqualTo(PrincipalDomain.NO_DOMAIN);
+        assertThat(r.forInternalCaller(PrincipalDomain.NO_DOMAIN)).isEqualTo(PrincipalDomain.NO_DOMAIN);
+    }
 }
