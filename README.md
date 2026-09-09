@@ -197,9 +197,9 @@ login flow has moved off a custom BFF login:
   `X-Internal-Token`** header, with the **BFF-JWT-custody tail** (`/bff/internal/custody/stamp`
   & `/session/exchange`, band-180, auth-core 2.1.0 — #114) **dark by default here, lit
   in-cluster**: user-bff's OIDC login (`SsoAuthController`) is routed at the gateway
-  (`/bff/login` → user-bff ahead of the `/bff/**` catch-all, generator #156), the gateway's
-  `bff_`→JWT exchange is on (generator #177), and this service's Deployment sets
-  `APP_BFF_OIDC_ENABLED` + `APP_BFF_CUSTODY_KEY` (generator #318) — see #2. The legacy user-facing
+  (`/bff/login` → user-bff ahead of the `/bff/**` catch-all, generator@912524b8), the gateway's
+  `bff_`→JWT exchange is on (generator@c85a1283, hugmesh/hugmesh-generator#177), and this service's Deployment sets
+  `APP_BFF_OIDC_ENABLED` + `APP_BFF_CUSTODY_KEY` (generator@50021c55) — see #2. The legacy user-facing
   `AuthController` paths (`/bff/login`, `/bff/register/**`, `/bff/me`, `/bff/provision/**`)
   described under [User flow](#user-flow-base-bff) are the contract being moved — treat
   their *ownership* as in-transition (see [Roadmap](#roadmap)); the durable allowlist /
