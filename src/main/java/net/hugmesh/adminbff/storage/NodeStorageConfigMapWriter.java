@@ -1,5 +1,7 @@
 package net.hugmesh.adminbff.storage;
 
+import reactor.core.publisher.Mono;
+
 import java.util.List;
 
 /**
@@ -31,11 +33,16 @@ public interface NodeStorageConfigMapWriter {
      * Render the given ACTIVE assignment elements into the {@code node-storage-assignments}
      * ConfigMap (replacing the previous contents — the ConfigMap IS the desired set). An EMPTY
      * list yields an EMPTY ConfigMap (the inert default: zero placements, today's behaviour).
-     * Returns true on a successful apply.
+     * Emits true on a successful apply.
+     *
+     * <p>Reactive by contract (the games {@link InstanceConfigMapWriter#writeDomainConfigMap}
+     * precedent): the fabric8 implementation does blocking I/O, so the seam returns a
+     * {@code Mono} that carries its own {@code boundedElastic} offload rather than blocking
+     * whichever reactive thread the Lease-gated reconciler happens to be running on.
      *
      * @param elements the current ACTIVE assignment elements (may be empty -> empty ConfigMap)
      */
-    boolean writeAssignments(List<StorageAssignmentElement> elements);
+    Mono<Boolean> writeAssignments(List<StorageAssignmentElement> elements);
 
     /** True when this writer actually talks to a cluster (the runtime seam signal). */
     boolean isReal();
