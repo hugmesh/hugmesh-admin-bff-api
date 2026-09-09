@@ -10,9 +10,12 @@ import net.hugmesh.adminbff.sshterminal.ImageBuildRepository;
 import net.hugmesh.adminbff.support.TestDatabaseConfig;
 import net.hugmesh.adminbff.web.dto.ImageBuildProgressRequest;
 
+import net.hugmesh.adminbff.support.SubscribingThread;
+
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
 import reactor.core.publisher.Mono;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -260,5 +263,36 @@ class ImageBuildOrchestratorTest {
         orch.launch(build).block(Duration.ofSeconds(5));   // returns normally (error not propagated)
         ImageBuild after = repo.findById(build.id()).block();
         assertThat(after.status()).isEqualTo(ImageBuild.STATUS_ERROR);
+    }
+
+    /**
+     * renderManifest is NOT pure string templating: it re-reads {@code jobs/image-gen-job.yaml}
+     * out of the app jar on EVERY call ({@code ClassPathResource#getInputStream}, uncached), so
+     * it is blocking I/O. In production {@code launch()} is subscribed from an R2DBC/Netty event
+     * loop ({@code ImageBuildService}:
+     * {@code builds.insert(queued).flatMap(b -> orchestrator.launch(b).thenReturn(b))}), so the
+     * render needs its OWN boundedElastic offload — the launcher seam's offload only covers the
+     * fabric8 round-trip that happens after it, and cannot retroactively move the render.
+     */
+    @Test
+    void launch_rendersTheManifestOffTheSubscribingThread() {
+        AtomicReference<String> renderThread = new AtomicReference<>();
+        ImageBuildOrchestrator orch = new ImageBuildOrchestrator(
+                repo, new CapturingLauncher(true, null), 64) {
+            @Override
+            String renderManifest(ImageBuild b) {
+                renderThread.set(Thread.currentThread().getName());
+                return super.renderManifest(b);
+            }
+        };
+        ImageBuild build = queued();
+
+        SubscribingThread.runExpectingSuccess(() -> orch.launch(build).block(Duration.ofSeconds(30)));
+
+        assertThat(renderThread.get())
+                .as("the classpath read in renderManifest must not run on the subscribing "
+                        + "(R2DBC/Netty) thread")
+                .isNotEqualTo(SubscribingThread.NAME)
+                .startsWith("boundedElastic-");
     }
 }

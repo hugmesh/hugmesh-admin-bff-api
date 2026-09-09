@@ -5,12 +5,14 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.r2dbc.test.autoconfigure.DataR2dbcTest;
 import org.springframework.context.annotation.Import;
 import reactor.test.StepVerifier;
+import net.hugmesh.adminbff.support.SubscribingThread;
 import net.hugmesh.adminbff.support.TestDatabaseConfig;
 import net.hugmesh.adminbff.web.dto.TestRunIngestRequest;
 
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
 import reactor.core.publisher.Mono;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -154,5 +156,36 @@ class TestRunOrchestratorTest {
         TestRun after = repo.find(run.id()).block();
         assertThat(after.status()).isEqualTo(TestRun.STATUS_ERROR);
         assertThat(after.error()).contains("cluster says no");
+    }
+
+    /**
+     * renderManifest is NOT pure string templating: it re-reads {@code jobs/test-runner-job.yaml}
+     * out of the app jar on EVERY call ({@code ClassPathResource#getInputStream}, uncached), so
+     * it is blocking I/O. In production {@code launch()} is subscribed from an R2DBC/Netty event
+     * loop ({@code TestReportsService}:
+     * {@code repo.insert(...).flatMap(run -> orchestrator.launch(run).thenReturn(run.id()))}), so
+     * the render needs its OWN boundedElastic offload — the launcher seam's offload only covers
+     * the fabric8 round-trip that happens after it, and cannot retroactively move the render.
+     */
+    @Test
+    void launch_rendersTheManifestOffTheSubscribingThread() {
+        AtomicReference<String> renderThread = new AtomicReference<>();
+        TestRunOrchestrator orch = new TestRunOrchestrator(
+                repo, new CapturingLauncher(true, null), 64) {
+            @Override
+            String renderManifest(TestRun r) {
+                renderThread.set(Thread.currentThread().getName());
+                return super.renderManifest(r);
+            }
+        };
+        TestRun run = repo.insert("admin@x", TestRun.TIER_LEAN, TestRun.SOURCE_ADMIN, null).block();
+
+        SubscribingThread.runExpectingSuccess(() -> orch.launch(run).block(Duration.ofSeconds(30)));
+
+        assertThat(renderThread.get())
+                .as("the classpath read in renderManifest must not run on the subscribing "
+                        + "(R2DBC/Netty) thread")
+                .isNotEqualTo(SubscribingThread.NAME)
+                .startsWith("boundedElastic-");
     }
 }
