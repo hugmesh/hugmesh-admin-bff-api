@@ -46,20 +46,27 @@ import net.hugmesh.adminbff.web.dto.ServiceCurationRequest;
  * </ul>
  * {@code curated_by_subject} is stamped from the SUPERADMIN's {@code jwt.getSubject()}.
  *
- * <h3>Step-up on the MUTATING verbs</h3>
- * ON TOP of the role gate, {@link #offer} and {@link #withdraw} require a valid
- * {@code X-ServiceStore-StepUp} token ({@link ServiceStoreStepUpGate}, A5-unified with a fresh
- * Casdoor-MFA stamp) — the same posture {@link ServiceStoreWizardController}'s scaffold/federate
- * writes take. {@code list} is a read and stays role-only.
+ * <h3>Step-up on {@link #offer} ONLY</h3>
+ * ON TOP of the role gate, {@link #offer} requires a valid {@code X-ServiceStore-StepUp} token
+ * ({@link ServiceStoreStepUpGate}, A5-unified with a fresh Casdoor-MFA stamp) — the same posture
+ * {@link ServiceStoreWizardController}'s scaffold/federate writes take. {@code list} is a read and
+ * stays role-only.
  *
- * <p><b>Why {@code withdraw} is gated too.</b> It is the reversible half, and the
- * superadmin-service-catalog-ui #4 plan recommended leaving it role-only ("gating it means a
- * step-up to REMOVE a service from a domain, which may be the wrong friction"). That is recorded
- * as the operator's open call. It is gated here because the issue of record scopes all three verbs
- * (hugmesh-admin-bff-api #51, and the 2026-09-02 comment on catalog-ui #4), so NOT gating it would
- * be the scope change — and withdrawing a service from a live domain is an availability event for
- * that brand's users. The UI already speaks step-up on withdraw either way, so reverting to
- * role-only is this one {@code @RequestHeader}/gate block plus the openapi re-dump.
+ * <p><b>{@code withdraw} is ROLE-ONLY, by the operator's decision.</b> It was gated alongside
+ * {@code offer} when hugmesh-admin-bff-api #51 landed, over the objection recorded in the
+ * superadmin-service-catalog-ui #4 plan ("gating it means a step-up to REMOVE a service from a
+ * domain, which may be the wrong friction"). The question was put to the operator on
+ * hugmesh-generator #347 and answered <b>"role only"</b> on 2026-09-10, so the gate is gone:
+ * {@code @PreAuthorize("hasRole('SUPERADMIN')")} plus the coarse {@code /bff/superadmin/**} gate
+ * is the whole protection on this verb, and it takes no step-up header, session cookie or
+ * {@code Authorization} parameter at all.
+ *
+ * <p>The UI needs nothing for this. hugmesh-superadmin-service-catalog-ui PR #11 only ever
+ * REACTS to a "requires step-up" 403 ({@code service-catalog-curation.component.ts act()}); with
+ * no such denial the withdraw call takes the ordinary success path, and its generated client
+ * ({@code fn/service-curation-controller/service-curation-withdraw.ts}) never declared the header
+ * in the first place — the token rides an {@code HttpContext} + interceptor seam. A previously
+ * confirmed token is simply ignored on the wire here.
  */
 @RestController
 @RequestMapping("/bff/superadmin/service-store")
@@ -126,34 +133,21 @@ public class ServiceCurationController {
         return consume.then(service.offer(domain, body.serviceKey(), actor));
     }
 
-    // ── Withdraw a service_key from a {domain}'s offered catalog (SUPERADMIN; step-up) ──
+    // ── Withdraw a service_key from a {domain}'s offered catalog (SUPERADMIN; ROLE-ONLY) ──
+    // No step-up: operator decision "role only" (hugmesh-generator #347, 2026-09-10). The
+    // signature deliberately carries no step-up header / cookie / Authorization parameter, so the
+    // dumped openapi contract shows this verb as role-protected rather than merely lenient.
     @PreAuthorize("hasRole('SUPERADMIN')")
     @Operation(summary = "Withdraw", operationId = "serviceCurationWithdraw")
     @PostMapping("/{domain}/withdraw")
     public Mono<ServiceCuration> withdraw(
             @PathVariable @NotBlank @Size(max = 253) String domain,
             @Valid @RequestBody ServiceCurationRequest body,
-            @RequestHeader(value = ServiceStoreStepUpGate.STEP_UP_HEADER, required = false) String stepUpToken,
-            @CookieValue(name = SessionCookieWebFilter.SESSION_COOKIE, required = false) String sessionCookie,
-            @RequestHeader(name = HttpHeaders.AUTHORIZATION, required = false) String authHeader,
             Authentication auth) {
         String actor = subject(auth);
         if (actor == null || actor.isBlank()) {
             return Mono.error(ApiException.unauthorized("no subject on token"));
         }
-        String sessionToken = SessionCookieWebFilter.bffTokenFrom(sessionCookie, authHeader);
-        return mfaStepUp.isFresh(sessionToken)
-                .flatMap(mfaFresh -> withdrawIfStepUpSatisfied(mfaFresh, actor, stepUpToken, sessionToken,
-                        domain, body));
-    }
-
-    private Mono<ServiceCuration> withdrawIfStepUpSatisfied(boolean mfaFresh, String actor,
-            String stepUpToken, String sessionToken, String domain, ServiceCurationRequest body) {
-        if (!stepUp.isSatisfied(actor, stepUpToken, mfaFresh)) {
-            return Mono.error(StepUpRequiredException.forRetryHeader(
-                    ServiceStoreStepUpGate.STEP_UP_HEADER, "withdrawing a service"));
-        }
-        Mono<Void> consume = mfaFresh ? mfaStepUp.consume(sessionToken) : Mono.empty();
-        return consume.then(service.withdraw(domain, body.serviceKey(), actor));
+        return service.withdraw(domain, body.serviceKey(), actor);
     }
 }

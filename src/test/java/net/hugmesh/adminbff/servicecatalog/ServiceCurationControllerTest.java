@@ -45,11 +45,20 @@ import static org.springframework.security.test.web.reactive.server.SecurityMock
  *   <li>MOD / USER — DENY (403) on EVERY endpoint + never reaches the service.</li>
  * </ul>
  *
- * <p>Since the step-up gate landed on the two MUTATING verbs, the SUPERADMIN role is necessary but
- * no longer sufficient for offer/withdraw: a superadmin with no {@code X-ServiceStore-StepUp} token
- * and no fresh MFA stamp is refused with the "requires step-up" 403 the merged catalog-ui slice
- * keys its {@code <hug-step-up-challenge>} on, and the service is never called. {@code list} stays
- * role-only — it is a read.
+ * <p>Since the step-up gate landed on {@code offer}, the SUPERADMIN role is necessary but no
+ * longer sufficient THERE: a superadmin with no {@code X-ServiceStore-StepUp} token and no fresh
+ * MFA stamp is refused with the "requires step-up" 403 the merged catalog-ui slice keys its
+ * {@code <hug-step-up-challenge>} on, and the service is never called.
+ *
+ * <p><b>{@code withdraw} is ROLE-ONLY</b> — operator decision "role only" (hugmesh-generator #347,
+ * 2026-09-10), reversing the gate that landed with #51. The tests below assert the ABSENCE of the
+ * gate positively rather than by omission: a superadmin with the gate mock refusing everything
+ * still gets a 200 and a real write, no {@code X-Step-Up-Required} header is minted, and neither
+ * {@code ServiceStoreStepUpGate} nor {@code MfaStepUpService} is consulted at all. That last
+ * assertion is the one that fails if anyone re-adds the gate — an allow-path test that merely
+ * sends a valid token would keep passing either way. {@code list} stays role-only too — it is a
+ * read. Because the role is now the WHOLE protection on withdraw, the deny matrix below covers
+ * admin, mod AND user on that verb, not just admin.
  */
 @WebFluxTest(controllers = ServiceCurationController.class)
 @Import({SecurityConfig.class, DomainRegistry.class, ValidationExceptionHandler.class, ApiExceptionHandler.class})
@@ -137,18 +146,57 @@ class ServiceCurationControllerTest {
         verify(service).offer("acme.test", "owncast", SUBJECT);
     }
 
+    /** ROLE-ONLY withdraw, stated the way that can actually fail: the step-up gate mock refuses
+     *  EVERYTHING and no token is sent, and the write still happens. The subject is still stamped
+     *  from the JWT, and the domain still comes from the path. */
     @Test
-    void withdraw_asSuperadmin_withStepUp_isAllowed() {
-        when(stepUp.isSatisfied(any(), eq(TOKEN))).thenReturn(true);
+    void withdraw_asSuperadmin_isAllowed_withNoStepUpTokenAndTheGateRefusingEverything() {
+        when(stepUp.isSatisfied(any(), any())).thenReturn(false);
+        when(stepUp.isSatisfied(anyString(), any(), anyBoolean())).thenReturn(false);
         ServiceCuration withdrawn = new ServiceCuration("cur-1", "acme.test", "owncast",
                 ServiceCuration.STATE_WITHDRAWN, SUBJECT, Instant.now(), Instant.now());
         when(service.withdraw(eq("acme.test"), eq("owncast"), eq(SUBJECT)))
                 .thenReturn(Mono.just(withdrawn));
         asSuperadmin().post().uri("/bff/superadmin/service-store/acme.test/withdraw")
                 .contentType(MediaType.APPLICATION_JSON).bodyValue(OFFER_BODY)
-                .header(STEP_UP, TOKEN)
                 .exchange().expectStatus().isOk()
+                .expectHeader().doesNotExist("X-Step-Up-Required")
                 .expectBody().jsonPath("$.state").isEqualTo("withdrawn");
+        // domain from the PATH, subject from the TOKEN — never the body.
+        verify(service).withdraw("acme.test", "owncast", SUBJECT);
+    }
+
+    /** The structural half of the same decision, and the assertion a re-added gate trips FIRST:
+     *  the withdraw path must not TOUCH the step-up machinery. A gate re-added in any shape has to
+     *  ask one of these two collaborators something, so this fails even for a gate that would let
+     *  the request through. */
+    @Test
+    void withdraw_asSuperadmin_neverConsultsTheStepUpGateOrTheMfaStamp() {
+        when(service.withdraw(eq("acme.test"), eq("owncast"), eq(SUBJECT)))
+                .thenReturn(Mono.just(new ServiceCuration("cur-1", "acme.test", "owncast",
+                        ServiceCuration.STATE_WITHDRAWN, SUBJECT, Instant.now(), Instant.now())));
+        asSuperadmin().post().uri("/bff/superadmin/service-store/acme.test/withdraw")
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(OFFER_BODY)
+                .exchange().expectStatus().isOk();
+        verify(service).withdraw("acme.test", "owncast", SUBJECT);
+        verify(stepUp, never()).isSatisfied(anyString(), any(), anyBoolean());
+        verify(mfaStepUp, never()).isFresh(any());
+        verify(mfaStepUp, never()).consume(any());
+    }
+
+    /** A token the operator confirmed for an EARLIER offer challenge is still sent by the merged
+     *  catalog-ui on every later call from that view. It must be inert here, not a 400 for an
+     *  unexpected header and not a second gate. */
+    @Test
+    void withdraw_asSuperadmin_ignoresAStaleStepUpTokenOnTheWire() {
+        when(stepUp.isSatisfied(any(), any())).thenReturn(false);
+        when(service.withdraw(eq("acme.test"), eq("owncast"), eq(SUBJECT)))
+                .thenReturn(Mono.just(new ServiceCuration("cur-1", "acme.test", "owncast",
+                        ServiceCuration.STATE_WITHDRAWN, SUBJECT, Instant.now(), Instant.now())));
+        asSuperadmin().post().uri("/bff/superadmin/service-store/acme.test/withdraw")
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(OFFER_BODY)
+                .header(STEP_UP, "a-stale-token-from-an-earlier-offer")
+                .exchange().expectStatus().isOk();
         verify(service).withdraw("acme.test", "owncast", SUBJECT);
     }
 
@@ -180,16 +228,22 @@ class ServiceCurationControllerTest {
         verify(service, never()).offer(anyString(), anyString(), anyString());
     }
 
+    /** The inverse of the offer test above, and the exact behaviour the operator asked for: on
+     *  withdraw the SAME token-less superadmin request that offer refuses must SUCCEED, and must
+     *  NOT carry the challenge contract the catalog-ui keys on — otherwise the UI would render a
+     *  challenge for an operation that no longer has one. */
     @Test
-    void withdraw_asSuperadmin_withoutStepUp_is403WithTheChallengeContract_andNeverWrites() {
+    void withdraw_asSuperadmin_withoutStepUp_isNOT403_andCarriesNoChallengeContract() {
         when(stepUp.isSatisfied(any(), any())).thenReturn(false);
+        when(service.withdraw(eq("acme.test"), eq("owncast"), eq(SUBJECT)))
+                .thenReturn(Mono.just(new ServiceCuration("cur-1", "acme.test", "owncast",
+                        ServiceCuration.STATE_WITHDRAWN, SUBJECT, Instant.now(), Instant.now())));
         asSuperadmin().post().uri("/bff/superadmin/service-store/acme.test/withdraw")
                 .contentType(MediaType.APPLICATION_JSON).bodyValue(OFFER_BODY)
-                .exchange().expectStatus().isForbidden()
-                .expectHeader().valueEquals("X-Step-Up-Required", STEP_UP)
-                .expectBody().jsonPath("$.error").value(org.hamcrest.Matchers.matchesPattern(
-                        "(?i).*requires step-up.*"));
-        verify(service, never()).withdraw(anyString(), anyString(), anyString());
+                .exchange().expectStatus().isOk()
+                .expectHeader().doesNotExist("X-Step-Up-Required")
+                .expectBody().jsonPath("$.state").isEqualTo("withdrawn");
+        verify(service).withdraw("acme.test", "owncast", SUBJECT);
     }
 
     @Test
@@ -247,12 +301,12 @@ class ServiceCurationControllerTest {
         verify(service, never()).offer(anyString(), anyString(), anyString());
     }
 
+    /** withdraw is role-only, so the role gate is the ENTIRE protection — no token is sent here,
+     *  because there is no longer a second gate that could be the thing doing the denying. */
     @Test
     void withdraw_asAdmin_isForbidden_andNeverWrites() {
-        when(stepUp.isSatisfied(any(), eq(TOKEN))).thenReturn(true);   // the ROLE is what denies
         asAdmin().post().uri("/bff/superadmin/service-store/acme.test/withdraw")
                 .contentType(MediaType.APPLICATION_JSON).bodyValue(OFFER_BODY)
-                .header(STEP_UP, TOKEN)
                 .exchange().expectStatus().isForbidden();
         verify(service, never()).withdraw(anyString(), anyString(), anyString());
     }
@@ -267,6 +321,16 @@ class ServiceCurationControllerTest {
                 .header(STEP_UP, TOKEN)
                 .exchange().expectStatus().isForbidden();
         verify(service, never()).offer(anyString(), anyString(), anyString());
+    }
+
+    /** Role-only means the whole non-superadmin matrix has to be covered on this verb, not just
+     *  admin — there is no step-up gate left to catch a role check that regressed. */
+    @Test
+    void withdraw_asMod_isForbidden_andNeverWrites() {
+        asMod().post().uri("/bff/superadmin/service-store/acme.test/withdraw")
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(OFFER_BODY)
+                .exchange().expectStatus().isForbidden();
+        verify(service, never()).withdraw(anyString(), anyString(), anyString());
     }
 
     @Test
@@ -285,6 +349,14 @@ class ServiceCurationControllerTest {
                 .header(STEP_UP, TOKEN)
                 .exchange().expectStatus().isForbidden();
         verify(service, never()).offer(anyString(), anyString(), anyString());
+    }
+
+    @Test
+    void withdraw_asUser_isForbidden_andNeverWrites() {
+        asUser().post().uri("/bff/superadmin/service-store/acme.test/withdraw")
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(OFFER_BODY)
+                .exchange().expectStatus().isForbidden();
+        verify(service, never()).withdraw(anyString(), anyString(), anyString());
     }
 
     @Test
