@@ -1,13 +1,18 @@
 package net.hugmesh.adminbff.desktop.terminal;
 
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import net.hugmesh.adminbff.desktop.DesktopRemoteInstallService;
 import net.hugmesh.adminbff.device.DeviceRegistryRepository;
 import net.hugmesh.commons.security.DomainRegistry;
 import net.hugmesh.adminbff.sshterminal.DeviceSshDialRepository;
 import net.hugmesh.adminbff.workload.WorkloadStepUpService;
+
+import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
@@ -69,6 +74,42 @@ class DeviceTerminalDialWiringTest {
             assertThat(f.canDial()).isTrue();
             assertThat(ctx).doesNotHaveBean(UnconfiguredDeviceSshChannelFactory.class);
         });
+    }
+
+    /**
+     * The wiring ANNOUNCES the explicit algorithm policy (hugmesh-admin-bff-api#11 H3) at STARTUP,
+     * the same "learn it now, not at 3am on the first dial" treatment the mesh-wide-key hint gets.
+     * Without this, "the operator can see which algorithms the dial negotiates" would be a claim no
+     * test measures — and a wiring that silently stopped logging it would look identical.
+     */
+    @Test
+    void dialEnabled_announcesTheExplicitAlgorithmPolicy_atStartup() {
+        ch.qos.logback.classic.Logger logger =
+                (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(DeviceTerminalConfig.class);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            runner.withPropertyValues("app.device-terminal.dial.enabled=true").run(ctx ->
+                    assertThat(ctx.getBean(DeviceSshChannelFactory.class).canDial()).isTrue());
+
+            String logged = appender.list.stream()
+                    .map(ILoggingEvent::getFormattedMessage)
+                    .collect(Collectors.joining("\n"));
+            assertThat(logged)
+                    .contains("dial algorithm policy")
+                    .contains("curve25519-sha256")
+                    .contains("ssh-ed25519")
+                    .contains("aes256-gcm@openssh.com")
+                    .contains("hmac-sha2-512-etm@openssh.com");
+            // sshj's defaults are NOT what is announced (nor negotiated).
+            assertThat(logged).doesNotContain("ssh-rsa").doesNotContain("arcfour");
+            // Every policy algorithm resolves on this build, so the ERROR half must stay silent.
+            assertThat(logged).doesNotContain("DIAL ALGORITHM POLICY UNAVAILABLE");
+        } finally {
+            logger.detachAppender(appender);
+            appender.stop();
+        }
     }
 
     @Test

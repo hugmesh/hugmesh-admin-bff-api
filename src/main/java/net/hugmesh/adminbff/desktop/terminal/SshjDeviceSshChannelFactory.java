@@ -97,6 +97,15 @@ import java.util.regex.Pattern;
  * mistake must not take the whole BFF down — but the dial itself is dead until per-device Secrets
  * are mounted.
  *
+ * <h3>THE ALGORITHM SET IS THIS PROJECT'S, NOT sshj's DEFAULT</h3>
+ * Every client is built by {@link #newPolicyClient()} with {@link DeviceDialAlgorithmPolicy} —
+ * X25519 key exchange, Ed25519 host keys (RSA-SHA2 retained only so an RSA dial KEY can still
+ * authenticate), AEAD ciphers, encrypt-then-MAC SHA-2 MACs — mirroring the {@code hardened.conf}
+ * every hugmesh device image ships. {@code new SSHClient()} (sshj's {@code DefaultConfig}, which
+ * still admits SHA-1 key exchange, {@code ssh-rsa}/{@code ssh-dss} host keys, RC4, 3DES, CBC and
+ * MD5 MACs) appears NOWHERE in this file, and {@code DeviceDialAlgorithmPolicyTest} fails the build
+ * if it comes back. See that class for the full inclusion/exclusion rationale.
+ *
  * <h3>{@link #exec} is BOUNDED in MEMORY and in WALL-CLOCK TIME</h3>
  * A one-shot exec RETAINS at most {@link #MAX_EXEC_OUTPUT_BYTES} of stdout, DRAINS stderr on a
  * daemon thread, and runs the whole capture-plus-join under ONE hard deadline
@@ -279,7 +288,7 @@ public class SshjDeviceSshChannelFactory implements DeviceSshChannelFactory {
         // Key readability BEFORE the socket: a mis-mounted Secret must not cost a full handshake.
         preflightDialKey(dial);
         long deadlineMs = execDeadlineMillis();
-        var ssh = new SSHClient();
+        var ssh = newPolicyClient();
         ssh.addHostKeyVerifier(new PinnedHostKeyVerifier(deviceId, dial.hostKeyFp()));
         ssh.setConnectTimeout((int) props.getConnectTimeout().toMillis());
         // NOTE: ssh.setTimeout() is deliberately NOT called — it is INERT as a read bound here.
@@ -473,13 +482,28 @@ public class SshjDeviceSshChannelFactory implements DeviceSshChannelFactory {
         return true;
     }
 
+    /**
+     * The ONE place an {@link SSHClient} is constructed, and it is NEVER {@code new SSHClient()}:
+     * every dial carries the EXPLICIT {@link DeviceDialAlgorithmPolicy} instead of sshj's
+     * {@code DefaultConfig} (hugmesh-admin-bff-api#11 H3). Both verbs go through here so the policy
+     * can never be applied to one and forgotten on the other, exactly as {@link #refusalReason} is
+     * the one precondition list and {@link #resolveDialKeyPath} the one key resolver.
+     *
+     * <p>Package-private ONLY so the test can read back the config the client actually carries: a
+     * live handshake is unreachable in a unit test, so without a direct call the policy would be
+     * asserted about a Config object nobody proved this factory uses.
+     */
+    static SSHClient newPolicyClient() {
+        return new SSHClient(DeviceDialAlgorithmPolicy.newConfig());
+    }
+
     /** Blocking: connect + pin-verify host key + auth with the per-device dial key + alloc PTY +
      *  start shell. Runs on {@link #ioScheduler}. */
     private Channel dial(String deviceId, String hostname, DeviceSshDial dial, int cols, int rows)
             throws IOException {
         // Key readability BEFORE the socket: a mis-mounted Secret must not cost a full handshake.
         preflightDialKey(dial);
-        var ssh = new SSHClient();
+        var ssh = newPolicyClient();
         // FAIL-CLOSED host-key pin — the ONLY verifier. No known-hosts, no PromiscuousVerifier.
         ssh.addHostKeyVerifier(new PinnedHostKeyVerifier(deviceId, dial.hostKeyFp()));
         ssh.setConnectTimeout((int) props.getConnectTimeout().toMillis());

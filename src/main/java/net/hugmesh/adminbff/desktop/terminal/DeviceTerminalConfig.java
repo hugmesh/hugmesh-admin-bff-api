@@ -18,6 +18,7 @@ import net.hugmesh.commons.security.DomainRegistry;
 import net.hugmesh.adminbff.sshterminal.DeviceSshDialRepository;
 import net.hugmesh.adminbff.workload.WorkloadStepUpService;
 
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -105,6 +106,14 @@ public class DeviceTerminalConfig {
                 + "host-key PINNED, no TOFU; PER-DEVICE dial key from {}/<k8s_secret_name>/{}) "
                 + "— REQUIRES security re-review before enablement",
                 dialProps.getKeyMountPath(), dialProps.getKeyFile());
+        log.info("[device-terminal] (sshj) dial algorithm policy (NOT sshj's DefaultConfig): {}",
+                DeviceDialAlgorithmPolicy.describe());
+        List<String> unavailable = DeviceDialAlgorithmPolicy.unavailableAlgorithms();
+        if (!unavailable.isEmpty()) {
+            log.error("[device-terminal] DIAL ALGORITHM POLICY UNAVAILABLE — this sshj build does "
+                    + "not provide {} — every dial will FAIL CLOSED rather than negotiate an "
+                    + "unreviewed algorithm set (hugmesh-admin-bff-api#11 H3)", unavailable);
+        }
         String meshWide = SshjDeviceSshChannelFactory.meshWideKeyHint(dialProps);
         if (!meshWide.isEmpty()) {
             log.error("[device-terminal] MESH-WIDE DIAL KEY DETECTED — this deployment will NOT "
