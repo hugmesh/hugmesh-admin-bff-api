@@ -1,0 +1,155 @@
+# casdoor-domains ApplicationSet (issue #47, Domain.idp=own — the SINGLE-MESH
+# lane) — one Application "casdoor-<slug>" per domain whose Domains-table row
+# chose its OWN Casdoor, each instantiating the env-parameterized base
+# specs/cluster/manifests/casdoor-domain into that domain's <nsPrefix>-pki
+# namespace. Modelled on 13a-optional-services.yaml (the proven runtime
+# add/remove list-generator: membership IS the desired state) with the
+# second-IdP wiring of 06-casdoor-games.yaml (sync-wave "1" so the JWKS/realm
+# exists before consumers).
+#
+# WHO WRITES THE ELEMENT LIST (the 13a single-writer model, docs/OPTIONAL-
+# SERVICES.md §7.1 — a CRD-driven in-cluster reconciler, EXPLICITLY NOT a
+# git-committing one):
+#   * build time — the stage4 builders render the KEYS-manifest domains[] (with
+#     their idp field, PR #71) into this list at bake, beside
+#     _opt_render_installed_services (follow-up; see docs/DOMAIN-IDP.md);
+#   * runtime — the admin-bff DomainReconciler (cross-repo, clone of
+#     OptionalServiceReconciler, ships dark) mirrors the #118 domain-registry
+#     rows here. Both roots carry the matching ignoreDifferences +
+#     RespectIgnoreDifferences KEYSTONE for /spec/generators/0/list/elements —
+#     without it selfHeal reverts every runtime write (§7/§10).
+#
+# SCAFFOLD RULE (same as 13a): ships with ZERO elements, so this creates
+# NOTHING until a writer supplies a domain. The selector keeps only idp=="own"
+# elements — a domain removed from the list, or flipped back to
+# idp=superdomain, has its casdoor-<slug> Application PRUNED (prune:true).
+# GC ORDERING (docs/DOMAIN-IDP.md removal runbook): the writer must retire the
+# domain's APP_TENANCY_ISSUERS/_HOSTS registry pair BEFORE dropping the element
+# — never a live registry mapping to a pruned issuer. The instance's PVC is
+# annotated Prune=false (identity data survives an accidental de-list) and the
+# Vault path secret/<slug>/casdoor is untouched — both are named MANUAL purge
+# steps.
+#
+# ELEMENT SCHEMA (goTemplate, missingkey=error — every field is REQUIRED):
+#   slug            DNS-label domain slug; names the Application (casdoor-<slug>)
+#                   and the Vault path (secret/<slug>/casdoor — the
+#                   PHASE5-DECISIONS #3 base-segment convention)
+#   clusterDomain   the domain's DNS name; issuer = https://id.<clusterDomain>
+#   casdoorOrg      the Casdoor organization for the domain's users/roles
+#   nsPrefix        tenant namespace prefix; destination = <nsPrefix>-pki
+#   selinuxLevel    MCS category for the casdoor pod   — MUST be unique
+#   selinuxLevelPg  MCS category for its Postgres pod  — MUST be unique
+#                   (docs/SECURITY.md §3: no two workloads share a category;
+#                   the element writer owns the allocation)
+#   idp             "own" | "superdomain" — the selector gate below
+#
+# TOKENLESS-KIND CONTRACT (issue #48 / PR #58): the literal repoURL
+# https://github.com/hugmesh/hugmesh-generator.git + targetRevision: main below
+# are what bootstrap-kind.sh's apply_core_app sed retargets at the in-cluster
+# git daemon — this file is in the KIND_PROFILE=sso curated set for exactly
+# that reason. Do not reword either literal.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: casdoor-domains
+  namespace: devops
+  annotations:
+    # Applied early by the root (with the generated children at wave "1", the
+    # 06-casdoor-games IdP-before-consumers rule).
+    argocd.argoproj.io/sync-wave: "1"
+    # Build/runtime: the elements here mirror the KEYS-manifest domains list /
+    # the admin-bff #118 domain registry (docs/DOMAIN-IDP.md).
+    hugmesh.net/source-of-truth: admin-bff domain registry (#118) / KEYS-manifest domains
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - list:
+        # One element per idp=own domain — see ELEMENT SCHEMA above. EMPTY in
+        # git (the 13a scaffold rule): the build-time bake / the runtime
+        # DomainReconciler are the writers, and the roots' ignoreDifferences
+        # keystone is what lets their writes survive selfHeal.
+        elements: []
+      selector:
+        matchLabels:
+          idp: "own"
+  template:
+    metadata:
+      name: "casdoor-{{ .slug }}"
+      labels:
+        app.kubernetes.io/part-of: hugmesh.net
+        hugmesh.net/domain: "{{ .slug }}"
+      annotations:
+        # IdP before consumers (the 06-casdoor-games rule): the domain's
+        # JWKS/realm must exist before anything validating its JWTs syncs.
+        argocd.argoproj.io/sync-wave: "1"
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/hugmesh/hugmesh-generator.git
+        targetRevision: main
+        path: specs/cluster/manifests/casdoor-domain
+        kustomize:
+          # The per-domain namespace — the tenant convention (PHASE5-DECISIONS
+          # #2 gives nsPrefix the slot; the base pins no namespace itself).
+          namespace: "{{ .nsPrefix }}-pki"
+          patches:
+            # The one per-domain value surface (params-configmap.yaml).
+            - target: { version: v1, kind: ConfigMap, name: casdoor-domain-params }
+              patch: |-
+                - op: replace
+                  path: /data/CASDOOR_ORIGIN
+                  value: "https://id.{{ .clusterDomain }}"
+                - op: replace
+                  path: /data/CASDOOR_ORG
+                  value: "{{ .casdoorOrg }}"
+                - op: replace
+                  path: /data/CASDOOR_DOMAIN
+                  value: "{{ .clusterDomain }}"
+                - op: replace
+                  path: /data/CASDOOR_APP_NAME
+                  value: "{{ .casdoorOrg }}-app"
+                - op: replace
+                  path: /data/CASDOOR_CLIENT_ID
+                  value: "{{ .slug }}-client"
+            # Vault path secret/<slug>/casdoor (decision-#3 base-segment
+            # convention) for all three credential properties.
+            - target: { group: external-secrets.io, kind: ExternalSecret, name: casdoor-domain-db }
+              patch: |-
+                - op: replace
+                  path: /spec/data/0/remoteRef/key
+                  value: "{{ .slug }}/casdoor"
+            - target: { group: external-secrets.io, kind: ExternalSecret, name: casdoor-domain-admin }
+              patch: |-
+                - op: replace
+                  path: /spec/data/0/remoteRef/key
+                  value: "{{ .slug }}/casdoor"
+            - target: { group: external-secrets.io, kind: ExternalSecret, name: casdoor-domain-app }
+              patch: |-
+                - op: replace
+                  path: /spec/data/0/remoteRef/key
+                  value: "{{ .slug }}/casdoor"
+            # Per-domain MCS categories (docs/SECURITY.md §3 — unique per
+            # workload; the element writer allocates them).
+            - target: { group: apps, kind: Deployment, name: casdoor-domain }
+              patch: |-
+                - op: replace
+                  path: /spec/template/spec/securityContext/seLinuxOptions/level
+                  value: "{{ .selinuxLevel }}"
+            - target: { group: apps, kind: Deployment, name: casdoor-domain-pg }
+              patch: |-
+                - op: replace
+                  path: /spec/template/spec/securityContext/seLinuxOptions/level
+                  value: "{{ .selinuxLevelPg }}"
+            # The published issuer host (ingress.yaml's placeholder).
+            - target: { group: networking.k8s.io, kind: Ingress, name: casdoor-domain }
+              patch: |-
+                - op: replace
+                  path: /spec/rules/0/host
+                  value: "id.{{ .clusterDomain }}"
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: "{{ .nsPrefix }}-pki"
+      syncPolicy:
+        automated: { prune: true, selfHeal: true }
+        syncOptions: [CreateNamespace=true]
