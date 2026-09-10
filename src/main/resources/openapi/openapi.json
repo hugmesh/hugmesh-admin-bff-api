@@ -1456,6 +1456,27 @@
             "minLength" : 0,
             "type" : "string"
           }
+        }, {
+          "name" : "X-ServiceStore-StepUp",
+          "in" : "header",
+          "required" : false,
+          "schema" : {
+            "type" : "string"
+          }
+        }, {
+          "name" : "bff_session",
+          "in" : "cookie",
+          "required" : false,
+          "schema" : {
+            "type" : "string"
+          }
+        }, {
+          "name" : "Authorization",
+          "in" : "header",
+          "required" : false,
+          "schema" : {
+            "type" : "string"
+          }
         } ],
         "requestBody" : {
           "content" : {
@@ -1553,6 +1574,27 @@
           "schema" : {
             "maxLength" : 253,
             "minLength" : 0,
+            "type" : "string"
+          }
+        }, {
+          "name" : "X-ServiceStore-StepUp",
+          "in" : "header",
+          "required" : false,
+          "schema" : {
+            "type" : "string"
+          }
+        }, {
+          "name" : "bff_session",
+          "in" : "cookie",
+          "required" : false,
+          "schema" : {
+            "type" : "string"
+          }
+        }, {
+          "name" : "Authorization",
+          "in" : "header",
+          "required" : false,
+          "schema" : {
             "type" : "string"
           }
         } ],
@@ -1670,6 +1712,27 @@
           "schema" : {
             "maxLength" : 36,
             "minLength" : 0,
+            "type" : "string"
+          }
+        }, {
+          "name" : "X-ServiceStore-StepUp",
+          "in" : "header",
+          "required" : false,
+          "schema" : {
+            "type" : "string"
+          }
+        }, {
+          "name" : "bff_session",
+          "in" : "cookie",
+          "required" : false,
+          "schema" : {
+            "type" : "string"
+          }
+        }, {
+          "name" : "Authorization",
+          "in" : "header",
+          "required" : false,
+          "schema" : {
             "type" : "string"
           }
         } ],
