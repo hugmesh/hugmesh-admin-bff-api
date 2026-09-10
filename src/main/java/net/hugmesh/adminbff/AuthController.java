@@ -59,6 +59,98 @@ import java.util.Map;
  * {@code /me/namespaces} and {@code /provision/**} are {@code authenticated} at
  * the gateway+resource server and additionally validated against the durable BFF
  * session here.
+ *
+ * <h2>RETIREMENT AUDIT, 2026-09-10 — NONE of the five "shadowed" paths could be
+ * retired (issue #2)</h2>
+ * The operator answered "retire" for the legacy user-facing paths. Measured
+ * BEFORE deleting anything, and the answer could not be carried out: ZERO of the
+ * five candidates — {@code POST /register/google}, {@code POST /register/discord},
+ * {@code GET /me/namespaces}, {@code POST /provision/matrix},
+ * {@code POST /provision/mastodon} — is safe to remove, because "shadowed" holds
+ * on ONE deployment lane only and every one of them still has a live caller.
+ *
+ * <h3>The same five paths route differently on the three lanes</h3>
+ * <ul>
+ *   <li><b>kind / cluster — SHADOWED.</b> The DEPLOYED ConfigMap
+ *       {@code hugmesh-frontend/hugmesh-fe-gateway-routes} (read live off the running
+ *       cluster on 2026-09-10, not just the repo file) declares
+ *       {@code Path=/bff/register/**}, {@code Path=/bff/me/**} and
+ *       {@code Path=/bff/provision/**} to user-bff BEFORE the {@code /bff/**}
+ *       admin-bff catch-all, and Spring Cloud Gateway matches in declared order. All
+ *       five therefore reach user-bff — which implements NONE of them: its
+ *       {@code SsoAuthController} is the ONLY controller at the {@code /bff} root and
+ *       maps exactly {@code POST /login}, {@code POST /register},
+ *       {@code DELETE /session}, {@code GET /me}, {@code GET /session}
+ *       (verified on hugmesh-user-bff-api origin/main). So on a cluster these calls
+ *       404 TODAY. That is a routing defect in the generator's gateway table, NOT a
+ *       reason to delete the handler that still serves the other two lanes.</li>
+ *   <li><b>compose test stack — NOT SHADOWED.</b>
+ *       {@code hugmesh-generator tests/stack/gateway-routes/fe/application-routes.yml:274}
+ *       lists user-bff's paths EXACTLY
+ *       ({@code Path=/bff/login,/bff/register,/bff/session,/bff/session/**,/bff/me,/bff/user/**,…}),
+ *       with no {@code /bff/provision} entry at all. {@code /bff/register/google},
+ *       {@code /bff/register/discord}, {@code /bff/me/namespaces} and
+ *       {@code /bff/provision/*} consequently fall through to the {@code /bff/**}
+ *       admin-bff catch-all and are served BY THIS CLASS. Retiring them breaks the
+ *       compose lane and its e2e suite outright.</li>
+ *   <li><b>device images — NO GATEWAY AT ALL.</b>
+ *       {@code hugmesh-generator tests/qemu/seed-accounts.sh:408,464} curls
+ *       {@code POST ${BFF}/bff/register/google} straight at
+ *       {@code http://127.0.0.1:8403} (admin-bff on the node) as the bootstrap
+ *       fallback taken when a fresh mesh has no admin account yet. No route table can
+ *       shadow that call.</li>
+ * </ul>
+ *
+ * <h3>Live callers, each read off origin/main of its own repo</h3>
+ * <ul>
+ *   <li>{@code POST /provision/matrix} + {@code POST /provision/mastodon} —
+ *       hugmesh-login-ui {@code src/app/bff.service.ts:387-399}
+ *       ({@code provisionServiceTokens()}), invoked from {@code login()},
+ *       {@code loginLocal()} and {@code completeRegistration()} on EVERY successful
+ *       sign-in. Also {@code hugmesh-generator tests/stack/seed-e2e.sh:547} and
+ *       {@code tests/stack/mock-bff.mjs:318}.</li>
+ *   <li>{@code GET /me/namespaces} — hugmesh-admin-ui
+ *       {@code src/app/bff.service.ts:77} ({@code myNamespaces()}, a plain
+ *       {@code fetch}). Also {@code tests/stack/mock-bff.mjs:433} and the e2e
+ *       {@code tests/e2e/specs/17-rbac-user-and-pending.spec.ts:49}.</li>
+ *   <li>{@code POST /register/google} — {@code tests/qemu/seed-accounts.sh:408,464},
+ *       direct-to-admin-bff as described above.</li>
+ *   <li>{@code POST /register/discord} — the WEAKEST case: no hand-written caller
+ *       was found in any UI (only the generated {@code src/app/api/fn/auth-controller/}
+ *       clients in login-ui, admin-ui and superadmin-service-catalog-ui). It still
+ *       stays, because it is not shadowed on the compose or device lanes either, so
+ *       "unreachable" is not established for it — only "uncalled by a UI".</li>
+ * </ul>
+ *
+ * <p>Two neighbouring paths that were never retirement candidates were re-measured at
+ * the same time, because the 2026-09-04 audit on #2 overstated both: {@code POST
+ * /login/local} is called by hugmesh-login-ui {@code src/app/bff.service.ts:314}, and
+ * {@code POST /sessionOut} by hugmesh-login-ui {@code src/app/session.service.ts:444}
+ * ({@code clear()} awaits it before dropping local state). The audit's "admin-ui" for
+ * both is wrong: admin-ui origin/main has NO production caller for either — only the
+ * generated client — so its counts were counting {@code openapi.json} and
+ * {@code src/app/api/} entries, not call sites.
+ *
+ * <h3>What was probed live, and what a probe still cannot settle</h3>
+ * All five were GET-probed (GET only — a GET onto a {@code @PostMapping} cannot
+ * mutate) through the REAL running front door,
+ * {@code curl -sk -H 'Host: hugmesh.net' https://172.18.0.2<path>}: every one
+ * answered <b>401</b>, as did {@code /bff/register}, {@code /bff/me},
+ * {@code /bff/session} and {@code /bff/register/complete}, while the controls
+ * {@code GET /bff/login} answered 405 and {@code GET /bff/public/theme} answered 200.
+ * The gateway's coarse {@code anyExchange().authenticated()} floor fires BEFORE
+ * routing for every path outside {@code SecurityConfig.PUBLIC_PATHS} (which ends at
+ * {@code /bff/login}), so an anonymous probe cannot reveal which service answers.
+ * Settling that live needs a request carrying a valid {@code bff_} session — i.e. a
+ * real sign-in, which mutates — or an in-cluster call straight at the two BFF
+ * Services, which serve TLS with {@code client-auth=need}.
+ *
+ * <p><b>What would unblock the retirement</b>, per path: a user-bff implementation
+ * (or a deliberate product decision to drop the feature) for the three lanes to agree
+ * on, the compose route table narrowed or widened to match the cluster's, the two
+ * {@code bff.service.ts} call sites migrated, and {@code seed-accounts.sh} moved off
+ * {@code /bff/register/google}. Until then every mapping below stays; see
+ * {@code LegacyUserPathRetirementGuardTest}.
  */
 @RestController
 @RequestMapping("/bff")
