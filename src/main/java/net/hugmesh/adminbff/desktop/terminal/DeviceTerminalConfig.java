@@ -85,18 +85,31 @@ public class DeviceTerminalConfig {
      *
      * <p>Even with this bean wired, a connect is only possible when an ACTIVE {@code device_ssh_dial}
      * row exists for the device (the factory refuses otherwise) AND the presented host key matches
-     * the pinned {@code host_key_fp} (no TOFU). The per-device dial PRIVATE key is read at dial time
-     * from the ESO-synced K8s Secret mount and never logged/persisted. This is the bean that turns
-     * {@link DeviceSshChannelFactory#canDial()} true — so enabling it requires a mandatory security
-     * re-review.
+     * the pinned {@code host_key_fp} (no TOFU). The dial PRIVATE key is read at dial time from THAT
+     * DEVICE's own ESO-synced K8s Secret — {@code <key-mount-path>/<k8s_secret_name>/<key-file>},
+     * per the operator's 2026-09-10 "per device" decision on hugmesh-admin-bff-api#11 — and never
+     * logged/persisted. This is the bean that turns {@link DeviceSshChannelFactory#canDial()} true
+     * — so enabling it requires a mandatory security re-review.
+     *
+     * <p>A MESH-WIDE dial key is no longer a valid configuration. If one is still mounted flat at
+     * the mount root, this logs an ERROR naming the file at STARTUP (the dial would otherwise fail
+     * closed only on its first use, which is a worse moment to learn). It does NOT refuse to build
+     * the bean: this dial is one feature on a control-plane BFF that serves many others, so a mount
+     * mistake fails the DIAL closed, not the whole pod.
      */
     @Bean
     @ConditionalOnProperty(name = "app.device-terminal.dial.enabled", havingValue = "true")
     DeviceSshChannelFactory sshjDeviceSshChannelFactory(DeviceSshDialRepository dials,
                                                         DeviceTerminalDialProperties dialProps) {
         log.warn("[device-terminal] channel factory = SshjDeviceSshChannelFactory (REAL DIAL, "
-                + "host-key PINNED, no TOFU; dial key from ESO secret mount={}) — REQUIRES security "
-                + "re-review before enablement", dialProps.getKeyMountPath());
+                + "host-key PINNED, no TOFU; PER-DEVICE dial key from {}/<k8s_secret_name>/{}) "
+                + "— REQUIRES security re-review before enablement",
+                dialProps.getKeyMountPath(), dialProps.getKeyFile());
+        String meshWide = SshjDeviceSshChannelFactory.meshWideKeyHint(dialProps);
+        if (!meshWide.isEmpty()) {
+            log.error("[device-terminal] MESH-WIDE DIAL KEY DETECTED — this deployment will NOT "
+                    + "dial any device until per-device Secrets are mounted{}", meshWide);
+        }
         return new SshjDeviceSshChannelFactory(dials, dialProps);
     }
 

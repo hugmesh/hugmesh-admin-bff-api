@@ -698,15 +698,18 @@ app:
     # with the transport enabled above. Flipping dial.enabled=true wires the host-key-PINNED
     # SshjDeviceSshChannelFactory (sshj): it refuses unless an ACTIVE device_ssh_dial row exists for
     # the device AND the device's presented host key matches the pinned host_key_fp (TOFU FORBIDDEN
-    # — no PromiscuousVerifier, no auto-accept), and it authenticates with the per-device dial
-    # PRIVATE key read at dial time from the ESO-synced K8s Secret mounted at key-mount-path (the
-    # Secret is named per device by device_ssh_dial.k8s_secret_name). The key bytes are NEVER
-    # logged/persisted. Enabling this REQUIRES a mandatory security re-review.
+    # — no PromiscuousVerifier, no auto-accept), and it authenticates with THAT DEVICE'S OWN dial
+    # PRIVATE key, read at dial time from <key-mount-path>/<k8s_secret_name>/<key-file>. KEY
+    # MATERIAL IS PER DEVICE (operator decision 2026-09-10, hugmesh-admin-bff-api#11): a single
+    # mesh-wide key mounted flat at <key-mount-path>/<key-file> is NOT a valid configuration — it
+    # is never read, the dial fails closed on both verbs, and startup logs an ERROR naming it. The
+    # key bytes are NEVER logged/persisted. Enabling this REQUIRES a mandatory security re-review.
     dial:
       enabled: "${DEVICE_TERMINAL_DIAL_ENABLED:false}"
-      # Mount dir of the per-device ESO-synced K8s Secret holding the private dial key. A PATH only.
+      # PARENT dir the per-device ESO-synced K8s Secrets are mounted under — ONE subdirectory per
+      # device, named by that device's device_ssh_dial.k8s_secret_name. A PATH only, never bytes.
       key-mount-path: "${DEVICE_TERMINAL_DIAL_KEY_MOUNT:/var/run/secrets/device-ssh-dial}"
-      # File within key-mount-path that holds the PEM/OpenSSH private dial key.
+      # File within EACH per-device Secret mount that holds the PEM/OpenSSH private dial key.
       key-file: "${DEVICE_TERMINAL_DIAL_KEY_FILE:id_dial}"
       # The node sshd port the BFF dials.
       port: "${DEVICE_TERMINAL_DIAL_PORT:22}"

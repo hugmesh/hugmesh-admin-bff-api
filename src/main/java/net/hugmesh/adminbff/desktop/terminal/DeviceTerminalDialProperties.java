@@ -19,10 +19,13 @@ import java.time.Duration;
  * toggle). The connect-time authorization gates in {@code DeviceSshTerminalWebSocketHandler} are
  * unaffected by any of these knobs — they ALWAYS run.
  *
- * <p>SECURITY: {@link #keyMountPath} points at the FILE the ESO-synced K8s Secret (named per device
- * by {@code device_ssh_dial.k8s_secret_name}) is mounted into. The factory reads the private dial
- * key from that mount AT DIAL TIME and NEVER logs, persists, or {@code toString}s it. The path is a
- * filesystem location only — never the key bytes — so it is safe to bind here / log on startup.
+ * <p>SECURITY: {@link #keyMountPath} is the DIRECTORY the per-device ESO-synced K8s Secrets are
+ * mounted under. Key material is PER DEVICE (operator decision, 2026-09-10, hugmesh-admin-bff-api#11):
+ * the factory reads {@code <keyMountPath>/<device_ssh_dial.k8s_secret_name>/<keyFile>} AT DIAL TIME
+ * and NEVER logs, persists, or {@code toString}s it. A single mesh-wide key mounted flat at
+ * {@code <keyMountPath>/<keyFile>} is NOT a valid configuration and is never read — see
+ * {@code SshjDeviceSshChannelFactory}. Both values are filesystem locations only — never key bytes
+ * — so they are safe to bind here / log on startup.
  */
 @ConfigurationProperties(prefix = "app.device-terminal.dial")
 public class DeviceTerminalDialProperties {
@@ -34,13 +37,15 @@ public class DeviceTerminalDialProperties {
      *  {@link SshjDeviceSshChannelFactory}. */
     private boolean enabled = false;
 
-    /** Directory the per-device ESO-synced K8s Secret is mounted into. The private dial key is
-     *  read from {@code <keyMountPath>/<keyFile>} at dial time. A PATH only — never key bytes —
-     *  so it is safe to bind/log. The Secret is named per device by
-     *  {@code device_ssh_dial.k8s_secret_name}; the deployment mounts that Secret here. */
+    /** PARENT directory the per-device ESO-synced K8s Secrets are mounted under — ONE
+     *  subdirectory per device, named by that device's {@code device_ssh_dial.k8s_secret_name}.
+     *  The private dial key is read from {@code <keyMountPath>/<k8sSecretName>/<keyFile>} at dial
+     *  time. A PATH only — never key bytes — so it is safe to bind/log. NOTE this is a PARENT of
+     *  the Secret mounts, not a Secret mount itself: a key placed directly at
+     *  {@code <keyMountPath>/<keyFile>} is a retired mesh-wide key and is NEVER used. */
     private String keyMountPath = "/var/run/secrets/device-ssh-dial";
 
-    /** The file within {@link #keyMountPath} that holds the PEM/OpenSSH private dial key. */
+    /** The file within EACH per-device Secret mount that holds the PEM/OpenSSH private dial key. */
     private String keyFile = "id_dial";
 
     /** The TCP port the BFF dials the mesh node's sshd on. */

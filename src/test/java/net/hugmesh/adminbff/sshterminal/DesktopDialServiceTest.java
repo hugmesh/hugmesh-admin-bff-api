@@ -57,6 +57,14 @@ class DesktopDialServiceTest {
                 DeviceSshDial.STATUS_PENDING, 1L, null, null);
     }
 
+    /** A PENDING row that is otherwise activatable (SHA256 pin, non-root dial user) and differs
+     *  ONLY in its k8s_secret_name, so a refusal is attributable to the per-device key rule. */
+    private DeviceSshDial pendingWithSecret(String deviceId, String k8sSecretName) {
+        return new DeviceSshDial(null, deviceId, "snapops", "ssh-ed25519 AAAA...", "SHA256:hostfp",
+                "SHA256:dialfp", "vault://kv/dial/" + deviceId, k8sSecretName, null,
+                DeviceSshDial.STATUS_PENDING, 1L, null, null);
+    }
+
     private DeviceSshDialRepository repo() {
         return new DeviceSshDialRepository(net.hugmesh.adminbff.testutil.R2dbcRepos.of(db, net.hugmesh.adminbff.sshterminal.DeviceSshDialR2dbcRepository.class));
     }
@@ -130,6 +138,53 @@ class DesktopDialServiceTest {
             repo().insert(pending("dev-1", "SHA256:hostfp", "root")).block();
             StepVerifier.create(service(true).activate("dev-1", "super-1"))
                     .expectError(DesktopDialService.DialPolicyException.class)
+                    .verify();
+            assertThat(repo().findByDeviceId("dev-1").block().status())
+                    .isEqualTo(DeviceSshDial.STATUS_PENDING);
+        }
+
+        /** Key material is PER DEVICE (operator decision, 2026-09-10, issue #11 B1): the factory
+         *  reads &lt;key-mount-path&gt;/&lt;k8s_secret_name&gt;/&lt;key-file&gt;, so a row that
+         *  names no Secret can never dial — refuse it at activation, the moment the operator can
+         *  fix it, the same both-sides treatment the MD5-pin and never-root rules already get.
+         *
+         *  <p>MEASURED, so this test does not overclaim what it reaches. {@code k8s_secret_name}
+         *  is {@code NOT NULL} (changelog {@code 170-device-ssh-keys.xml:89}), so a NULL name
+         *  cannot be persisted at all; {@code varchar(253) NOT NULL} does accept a BLANK string,
+         *  which is what this seeds — DIRECTLY, via the repository. Through the image-build
+         *  ingest neither is reachable, because {@code ImageBuildService.seedDial} runs the value
+         *  through {@code blankToNull} and the resulting NULL fails the INSERT. So this pins
+         *  defence in depth against a row written by anything other than that ingest; the NULL
+         *  branch is covered at the unit level in {@code SshjDeviceSshChannelFactoryTest} against
+         *  a mocked repository. The sibling test below pins the half that IS reachable from the
+         *  ingest today — a MALFORMED name, which that DTO bounds only by length. */
+        @Test
+        void refusesRowWithBlankK8sSecretName_neverBecomesActive() {
+            seedDevice("dev-1", "brandx");
+            repo().insert(pendingWithSecret("dev-1", "")).block();
+            StepVerifier.create(service(true).activate("dev-1", "super-1"))
+                    .expectErrorSatisfies(e -> {
+                        assertThat(e).isInstanceOf(DesktopDialService.DialPolicyException.class);
+                        assertThat(e.getMessage())
+                                .contains("names no k8s_secret_name")
+                                .contains("mesh-wide dial key is no longer a valid configuration");
+                    })
+                    .verify();
+            assertThat(repo().findByDeviceId("dev-1").block().status())
+                    .isEqualTo(DeviceSshDial.STATUS_PENDING);
+        }
+
+        /** Same rule, malformed rather than absent: the name is a PATH SEGMENT under the dial key
+         *  mount, so only a real DNS-1123 Secret name may become ACTIVE. */
+        @Test
+        void refusesRowWithATraversingK8sSecretName_neverBecomesActive() {
+            seedDevice("dev-1", "brandx");
+            repo().insert(pendingWithSecret("dev-1", "../../etc/ssl")).block();
+            StepVerifier.create(service(true).activate("dev-1", "super-1"))
+                    .expectErrorSatisfies(e -> {
+                        assertThat(e).isInstanceOf(DesktopDialService.DialPolicyException.class);
+                        assertThat(e.getMessage()).contains("malformed k8s_secret_name");
+                    })
                     .verify();
             assertThat(repo().findByDeviceId("dev-1").block().status())
                     .isEqualTo(DeviceSshDial.STATUS_PENDING);

@@ -8,6 +8,7 @@ import net.schmizz.sshj.connection.channel.direct.Session;
 import net.schmizz.sshj.userauth.keyprovider.FileKeyProvider;
 import net.schmizz.sshj.userauth.keyprovider.KeyFormat;
 import net.schmizz.sshj.userauth.keyprovider.KeyProvider;
+import net.schmizz.sshj.userauth.keyprovider.KeyPairWrapper;
 import net.schmizz.sshj.userauth.keyprovider.KeyProviderUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -25,11 +26,13 @@ import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.KeyPair;
 import java.util.Collections;
 import java.util.Locale;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.regex.Pattern;
 
 /**
  * The REAL, host-key-PINNED sshj {@link DeviceSshChannelFactory} — the concrete dial that replaces
@@ -49,10 +52,11 @@ import java.util.concurrent.atomic.AtomicBoolean;
  *       {@link PinnedHostKeyVerifier} built from {@code device_ssh_dial.host_key_fp}. A mismatch (or
  *       absent pin) makes sshj abort the transport before auth — we NEVER use
  *       {@code PromiscuousVerifier} and NEVER auto-accept.</li>
- *   <li><b>Authenticate with the per-device dial PRIVATE key.</b> Read at dial time from the
- *       ESO-synced K8s Secret mounted at {@code app.device-terminal.dial.key-mount-path}; the Secret
- *       is named per device by {@code device_ssh_dial.k8s_secret_name}. The key bytes are loaded
- *       into sshj and NEVER logged, persisted, returned, or {@code toString}'d.</li>
+ *   <li><b>Authenticate with the PER-DEVICE dial PRIVATE key.</b> Read at dial time from THIS
+ *       DEVICE's own ESO-synced K8s Secret, at
+ *       {@code <key-mount-path>/<device_ssh_dial.k8s_secret_name>/<key-file>}
+ *       ({@link #resolveDialKeyPath}). The key bytes are loaded into sshj and NEVER logged,
+ *       persisted, returned, or {@code toString}'d.</li>
  * </ol>
  *
  * <h3>Fail-closed preconditions, checked BEFORE a socket is opened</h3>
@@ -61,9 +65,37 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * it must carry a pinned {@code host_key_fp}, and its {@code dial_user} must NOT be {@code root} (or
  * blank). The BFF never takes a ROOT shell on a device: a control-plane pod that can become root on
  * every mesh node with an ACTIVE row is a blast radius the platform does not accept — the node-side
- * dial user is a dedicated non-root account with scoped sudo. Beyond those, the dial private key is
+ * dial user is a dedicated non-root account with scoped sudo, and the row must name its OWN K8s
+ * Secret ({@code k8s_secret_name}) — see below. Beyond those, that device's dial private key is
  * checked for readability BEFORE {@code connect} ({@link #preflightDialKey}) so a mis-mounted
  * deployment fails without performing a full SSH transport handshake against the device first.
+ *
+ * <h3>KEY MATERIAL IS PER DEVICE — a mesh-wide dial key is not a valid configuration</h3>
+ * Operator decision of 2026-09-10 on hugmesh-admin-bff-api#11, answering that issue's B1
+ * (<i>"per device"</i>). Until then {@code preflightDialKey}/{@code loadDialKey} both read ONE fixed
+ * {@code Path.of(key-mount-path, key-file)} for every device while every doc claimed per-device
+ * material: one mesh-wide BFF dial key, so a single compromise reached every node with an ACTIVE
+ * row and rotating one device's credential was impossible.
+ *
+ * <p>Now the device's own {@code k8s_secret_name} is a REQUIRED path segment
+ * ({@link #resolveDialKeyPath}), and BOTH readers resolve through that one helper with NO path
+ * parameter, so no caller can inject a shared path and the two cannot drift apart.
+ *
+ * <p><b>What happens to a deployment that has a mesh-wide key today:</b> it FAILS CLOSED, loudly,
+ * and never dials. Two moments, both message-carrying, neither of them a silent fallback:
+ * <ul>
+ *   <li><b>At wiring time</b>, {@link DeviceTerminalConfig} logs an ERROR naming the legacy file
+ *       ({@link #meshWideKeyHint}) — so a deployment that flips the flag with the old single-Secret
+ *       mount learns at startup, not on its first dial.</li>
+ *   <li><b>At dial time</b>, both verbs refuse. A row with no {@code k8s_secret_name} (the shape a
+ *       mesh-wide deployment has) is refused by {@link #refusalReason} before ANY dispatch; a row
+ *       that names a Secret whose directory is not mounted is refused by {@link #preflightDialKey}
+ *       before any socket, and the refusal SAYS a mesh-wide key was found at the mount root when
+ *       one is. The old flat path is never read as a fallback.</li>
+ * </ul>
+ * The pod keeps serving — this gate is one feature among many on a control-plane BFF and a mount
+ * mistake must not take the whole BFF down — but the dial itself is dead until per-device Secrets
+ * are mounted.
  *
  * <h3>{@link #exec} is BOUNDED in MEMORY and in WALL-CLOCK TIME</h3>
  * A one-shot exec RETAINS at most {@link #MAX_EXEC_OUTPUT_BYTES} of stdout, DRAINS stderr on a
@@ -121,6 +153,17 @@ public class SshjDeviceSshChannelFactory implements DeviceSshChannelFactory {
 
     /** The ONLY host-key fingerprint algorithm a live dial accepts (see {@link #refusalReason}). */
     private static final String SHA256_PIN_LABEL = "SHA256";
+
+    /** A K8s Secret name is a DNS-1123 SUBDOMAIN. {@code device_ssh_dial.k8s_secret_name} becomes a
+     *  PATH SEGMENT under the dial key mount, so it is matched against the real Kubernetes rule
+     *  rather than merely scanned for {@code ".."} — this admits nothing that is not a legal Secret
+     *  name, and therefore no separator, no traversal, no whitespace, no empty segment. */
+    private static final Pattern SECRET_NAME =
+            Pattern.compile("[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*");
+
+    /** The Kubernetes limit on a Secret name (DNS-1123 subdomain), mirrored by the {@code @Size} on
+     *  the image-build ingest DTO that seeds the column. */
+    private static final int MAX_SECRET_NAME_LENGTH = 253;
 
     private final DeviceSshDialRepository dials;
     private final DeviceTerminalDialProperties props;
@@ -186,6 +229,15 @@ public class SshjDeviceSshChannelFactory implements DeviceSshChannelFactory {
             return "device_ssh_dial for device=" + deviceId + " has dial_user='" + dial.dialUser()
                     + "' — refusing to " + verb + " as root (the BFF never takes a root shell)";
         }
+        String keyIdentity = dialKeyIdentityRefusal(dial);
+        if (keyIdentity != null) {
+            // PER-DEVICE KEY MATERIAL (operator decision, 2026-09-10): the row must name its OWN
+            // K8s Secret. Checked HERE, in the one shared list, so both verbs refuse a row with no
+            // per-device key BEFORE any dispatch — and checked again in resolveDialKeyPath, which
+            // is the only thing that can produce a key path at all.
+            return "device_ssh_dial for device=" + deviceId + " " + keyIdentity
+                    + " — refusing to " + verb;
+        }
         return null;
     }
 
@@ -225,7 +277,7 @@ public class SshjDeviceSshChannelFactory implements DeviceSshChannelFactory {
     private ExecResult execBlocking(String deviceId, String hostname, DeviceSshDial dial, String command)
             throws IOException {
         // Key readability BEFORE the socket: a mis-mounted Secret must not cost a full handshake.
-        Path keyPath = preflightDialKey(dial);
+        preflightDialKey(dial);
         long deadlineMs = execDeadlineMillis();
         var ssh = new SSHClient();
         ssh.addHostKeyVerifier(new PinnedHostKeyVerifier(deviceId, dial.hostKeyFp()));
@@ -235,7 +287,7 @@ public class SshjDeviceSshChannelFactory implements DeviceSshChannelFactory {
         // parks on an untimed wait(). captureBounded's watchdog is the real deadline.
         try {
             ssh.connect(hostname, props.getPort());
-            KeyProvider keys = loadDialKey(ssh, dial, keyPath);
+            KeyProvider keys = loadDialKey(ssh, dial);
             ssh.authPublickey(dial.dialUser(), keys);
             Session session = ssh.startSession();
             Session.Command cmd = session.exec(command);
@@ -426,7 +478,7 @@ public class SshjDeviceSshChannelFactory implements DeviceSshChannelFactory {
     private Channel dial(String deviceId, String hostname, DeviceSshDial dial, int cols, int rows)
             throws IOException {
         // Key readability BEFORE the socket: a mis-mounted Secret must not cost a full handshake.
-        Path keyPath = preflightDialKey(dial);
+        preflightDialKey(dial);
         var ssh = new SSHClient();
         // FAIL-CLOSED host-key pin — the ONLY verifier. No known-hosts, no PromiscuousVerifier.
         ssh.addHostKeyVerifier(new PinnedHostKeyVerifier(deviceId, dial.hostKeyFp()));
@@ -435,7 +487,7 @@ public class SshjDeviceSshChannelFactory implements DeviceSshChannelFactory {
             ssh.connect(hostname, props.getPort());
             // Per-device dial PRIVATE key from the ESO-synced mount. Loaded into sshj and never
             // logged/persisted/returned. loadDialKey reads the mounted file's bytes only here.
-            KeyProvider keys = loadDialKey(ssh, dial, keyPath);
+            KeyProvider keys = loadDialKey(ssh, dial);
             ssh.authPublickey(dial.dialUser(), keys);
 
             Session session = ssh.startSession();
@@ -454,29 +506,129 @@ public class SshjDeviceSshChannelFactory implements DeviceSshChannelFactory {
     }
 
     /**
-     * PRE-CONNECT check that the ESO-synced dial key is actually mounted and readable, so a
-     * mis-mounted deployment fails BEFORE a socket is opened and a full SSH transport handshake
-     * (host-key verification included) is performed against the device. Returns the key path for
-     * {@link #loadDialKey}; the bytes are NOT read here.
+     * Resolve the ONE key file this device's dial may use:
+     * {@code <key-mount-path>/<device_ssh_dial.k8s_secret_name>/<key-file>}.
+     *
+     * <p>This is the WHOLE of the "per-device key material" decision (operator, 2026-09-10, on
+     * hugmesh-admin-bff-api#11: <i>"per device"</i>). Before it, both
+     * {@link #preflightDialKey} and {@link #loadDialKey} read one fixed
+     * {@code Path.of(keyMountPath, keyFile)} for EVERY device — one mesh-wide BFF dial key, so a
+     * single compromise reached every node with an ACTIVE row and rotating one device's credential
+     * was impossible. The device's own {@code k8s_secret_name} is now a REQUIRED path segment, so
+     * a mesh-wide key is not merely discouraged: there is no code path that can reach one.
+     *
+     * <p>Both callers resolve THROUGH HERE and neither accepts a path from its caller, so the two
+     * cannot drift apart and no caller can inject a mount-root path.
+     *
+     * @throws IOException (fail-closed) when the row carries no usable {@code k8s_secret_name}, or
+     *     when the resolved path would escape the mount root.
      */
-    private Path preflightDialKey(DeviceSshDial dial) throws IOException {
-        Path keyPath = Path.of(props.getKeyMountPath(), props.getKeyFile());
-        if (!Files.isReadable(keyPath)) {
-            // Path/provenance only — never the (absent) bytes. k8s_secret_name is the mount hint.
-            throw new IOException("dial private key not present at mount for device="
-                    + dial.deviceId() + " (k8sSecret=" + dial.k8sSecretName() + ")");
+    static Path resolveDialKeyPath(DeviceTerminalDialProperties props, DeviceSshDial dial)
+            throws IOException {
+        String refusal = dialKeyIdentityRefusal(dial);
+        if (refusal != null) {
+            throw new IOException("device_ssh_dial for device=" + dial.deviceId() + " " + refusal
+                    + " — refusing to resolve a dial key");
+        }
+        Path mountRoot = Path.of(props.getKeyMountPath()).normalize();
+        Path keyPath = mountRoot.resolve(dial.k8sSecretName()).resolve(props.getKeyFile())
+                .normalize();
+        // Belt-and-braces, INDEPENDENT of the name syntax rule above: whatever the row or the
+        // key-file setting says, the resolved file must still live under the configured mount.
+        if (!keyPath.startsWith(mountRoot)) {
+            throw new IOException("resolved dial key path escapes the mount for device="
+                    + dial.deviceId() + " (k8sSecret=" + dial.k8sSecretName() + ") — refusing");
         }
         return keyPath;
     }
 
     /**
-     * Read the per-device dial PRIVATE key from the ESO-synced K8s Secret mount and hand it to sshj
-     * as a {@link KeyProvider}, parsed ENTIRELY IN MEMORY (never re-read from / written to disk after
-     * this single read). The key text is held only in a transient {@code char[]} that is wiped in a
-     * {@code finally}. NOTHING here logs, returns, or persists the key bytes.
+     * The per-device KEY-IDENTITY precondition, shared by {@link #refusalReason} (so BOTH verbs
+     * refuse before any dispatch) and by {@link #resolveDialKeyPath} (so the path helper itself can
+     * never produce a mount-root path). Returns the refusal reason, or {@code null} when the row
+     * names usable per-device key material.
+     *
+     * <p>A row with NO {@code k8s_secret_name} is exactly the shape a mesh-wide-key deployment has;
+     * it is refused rather than silently falling back to a shared key.
+     *
+     * <p>Returns a REASON PHRASE ("names no k8s_secret_name (...)"), not a whole sentence, so each
+     * caller can name its own subject and verb — and so the three call sites cannot disagree about
+     * the rule while wording it differently. {@code public} only because
+     * {@code DesktopDialService.policyRefusal} (another package) applies the SAME predicate on the
+     * activation path, the way the MD5-pin and never-root rules are already applied on both sides.
      */
-    private static KeyProvider loadDialKey(SSHClient ssh, DeviceSshDial dial, Path keyPath)
+    public static String dialKeyIdentityRefusal(DeviceSshDial dial) {
+        String secret = dial.k8sSecretName();
+        if (secret == null || secret.isBlank()) {
+            return "names no k8s_secret_name (per-device dial key material is REQUIRED; a single"
+                    + " mesh-wide dial key is no longer a valid configuration)";
+        }
+        if (secret.length() > MAX_SECRET_NAME_LENGTH || !SECRET_NAME.matcher(secret).matches()) {
+            // A Secret NAME is not a secret, so it is safe to echo — and an operator debugging a
+            // bad ingest needs to see the value that was rejected.
+            return "has a malformed k8s_secret_name='" + secret + "' (must be ONE DNS-1123 Secret"
+                    + " name; it is used as a path segment under the dial key mount)";
+        }
+        return null;
+    }
+
+    /**
+     * PRE-CONNECT check that THIS DEVICE's ESO-synced dial key is actually mounted and readable, so
+     * a mis-mounted deployment fails BEFORE a socket is opened and a full SSH transport handshake
+     * (host-key verification included) is performed against the device. The bytes are NOT read here
+     * — {@link #loadDialKey} does that, and re-resolves the same path from the same helper.
+     *
+     * <p>When the key is missing AND a legacy mesh-wide key is sitting at the mount ROOT, the
+     * refusal SAYS SO: that is the deployment shape the per-device decision retired, and an
+     * operator who only sees "not present" while a key file is plainly there would look in the
+     * wrong place.
+     */
+    private void preflightDialKey(DeviceSshDial dial) throws IOException {
+        Path keyPath = resolveDialKeyPath(props, dial);
+        if (!Files.isReadable(keyPath)) {
+            // Path/provenance only — never the (absent) bytes. k8s_secret_name is the mount hint.
+            throw new IOException("per-device dial private key not present at mount for device="
+                    + dial.deviceId() + " (k8sSecret=" + dial.k8sSecretName() + ", expected "
+                    + keyPath + ")" + meshWideKeyHint(props));
+        }
+    }
+
+    /**
+     * The " — a MESH-WIDE dial key is mounted at ..." clause, or {@code ""} when the mount root
+     * holds no legacy flat key. Also used at wiring time ({@link DeviceTerminalConfig}) so a
+     * deployment that still mounts one mesh-wide key is told at STARTUP, not at 3am on the first
+     * dial. Returns a PATH, never bytes.
+     */
+    static String meshWideKeyHint(DeviceTerminalDialProperties props) {
+        Path legacy = Path.of(props.getKeyMountPath(), props.getKeyFile());
+        if (!Files.isReadable(legacy)) {
+            return "";
+        }
+        return " — a MESH-WIDE dial key is mounted at " + legacy + "; mesh-wide dial keys are NO"
+                + " LONGER a valid configuration: mount ONE Secret per device at "
+                + Path.of(props.getKeyMountPath(), "<k8s_secret_name>", props.getKeyFile());
+    }
+
+    /**
+     * Read THIS DEVICE's dial PRIVATE key from its own ESO-synced K8s Secret mount and hand it to
+     * sshj as a {@link KeyProvider}, parsed ENTIRELY IN MEMORY (never re-read from / written to disk
+     * after this single read). The key text is held only in a transient {@code char[]} that is wiped
+     * in a {@code finally}. NOTHING here logs, returns, or persists the key bytes.
+     *
+     * <p>It takes NO path argument on purpose: it resolves the device's own key through
+     * {@link #resolveDialKeyPath}, so there is no seam through which a mesh-wide path could be
+     * handed in, and a regression in {@link #preflightDialKey} alone cannot make this read a shared
+     * key.
+     *
+     * <p>The parse is FORCED here rather than left to sshj, because sshj's {@code FileKeyProvider}
+     * is lazy and this method wipes the buffer it would have read from — see the inline comment.
+     */
+    // Package-private, not private, ONLY so SshjDeviceSshChannelFactoryTest can pin that THIS
+    // reader (not just preflightDialKey) resolves the device's own key: a live dial cannot be
+    // reached in a unit test, so without a direct call a regression here would go unmeasured.
+    KeyProvider loadDialKey(SSHClient ssh, DeviceSshDial dial)
             throws IOException {
+        Path keyPath = resolveDialKeyPath(props, dial);
         byte[] raw = Files.readAllBytes(keyPath);
         char[] pem = new String(raw, StandardCharsets.UTF_8).toCharArray();
         java.util.Arrays.fill(raw, (byte) 0);
@@ -505,7 +657,17 @@ public class SshjDeviceSshChannelFactory implements DeviceSshChannelFactory {
             // key would fail to parse here (fail-closed) rather than prompt. A fresh CharArrayReader
             // re-reads the same char[] from the start (detect's reader was a separate instance).
             provider.init(new java.io.CharArrayReader(pem));
-            return provider;
+            // FORCE THE PARSE HERE, while the chars are still alive. sshj's FileKeyProvider is LAZY:
+            // init() only stores the Reader, and BaseFileKeyProvider.readKeyPair() does not run until
+            // something asks for a key — which, on the dial path, is ssh.authPublickey() AFTER this
+            // method has returned and the finally below has zeroed the buffer. Returning the raw
+            // provider therefore handed sshj a reader over a char[] of NULs and public-key auth could
+            // never succeed ("Supported PEM Key Type not found for header [header not found]").
+            // Measured against sshj 0.40.0 on this classpath, not inferred; pinned by
+            // SshjDeviceSshChannelFactoryTest.loadDialKey_*.
+            KeyPair parsed = new KeyPair(provider.getPublic(), provider.getPrivate());
+            // The returned provider holds the PARSED key objects only — no Reader, no char[].
+            return new KeyPairWrapper(parsed);
         } finally {
             java.util.Arrays.fill(pem, '\0'); // wipe transient key chars
         }
