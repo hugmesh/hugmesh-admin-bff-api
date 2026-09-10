@@ -712,6 +712,11 @@ app:
       port: "${DEVICE_TERMINAL_DIAL_PORT:22}"
       # Socket connect timeout for the dial.
       connect-timeout: "${DEVICE_TERMINAL_DIAL_CONNECT_TIMEOUT:10s}"
+      # HARD deadline for a ONE-SHOT exec (the remote-install leg): the join timeout AND the socket
+      # read timeout on that path, so a compromised/wedged device cannot pin an I/O thread forever.
+      # NOT the connect timeout — a real `flatpak install` legitimately outlives a socket connect.
+      # The interactive PTY dial is bounded by device-terminal.idle-timeout instead, not by this.
+      exec-timeout: "${DEVICE_TERMINAL_DIAL_EXEC_TIMEOUT:5m}"
   # ADMIN SSH KEY-ISSUANCE (SSH PR-4, Option B) — MINT an Ed25519 credential for an operator to
   # SSH a licensed device by registering its SHA256 fingerprint into the backing
   # device_ssh_license (schema 011); the node's AuthorizedKeysCommand already matches the offered

@@ -77,7 +77,11 @@ class SshjDeviceSshChannelFactoryTest {
     }
 
     private static DeviceSshDial dial(String status, String hostKeyFp) {
-        return new DeviceSshDial("dial-1", DEVICE, "ops", "ssh-rsa AAAA...", hostKeyFp,
+        return dial(status, hostKeyFp, "ops");
+    }
+
+    private static DeviceSshDial dial(String status, String hostKeyFp, String dialUser) {
+        return new DeviceSshDial("dial-1", DEVICE, dialUser, "ssh-rsa AAAA...", hostKeyFp,
                 "fp-pub", "vault://kv/dev-1", "device-ssh-dial-dev-1", null, status, 1L,
                 Instant.now(), null);
     }
@@ -125,12 +129,190 @@ class SshjDeviceSshChannelFactoryTest {
                 .verify();
     }
 
+    // ── D2: the BFF never takes a ROOT shell (open AND exec, from the SAME rule list) ────────
+
+    @Test
+    void refuses_whenDialUserIsRoot_open() {
+        when(dials.findByDeviceId(eq(DEVICE)))
+                .thenReturn(Mono.just(dial(DeviceSshDial.STATUS_ACTIVE, "SHA256:abc", "root")));
+
+        StepVerifier.create(factory().open(DEVICE, HOST, OPERATOR, 80, 24))
+                .expectErrorSatisfies(e -> {
+                    assertThat(e).isInstanceOf(DeviceSshChannelFactory.HostKeyVerificationException.class);
+                    assertThat(e.getMessage()).contains("refusing to dial as root");
+                })
+                .verify();
+    }
+
+    @Test
+    void refuses_whenDialUserIsRoot_exec() {
+        when(dials.findByDeviceId(eq(DEVICE)))
+                .thenReturn(Mono.just(dial(DeviceSshDial.STATUS_ACTIVE, "SHA256:abc", "ROOT ")));
+
+        StepVerifier.create(factory().exec(DEVICE, HOST, "flatpak install -y org.x.App"))
+                .expectErrorSatisfies(e -> {
+                    assertThat(e).isInstanceOf(DeviceSshChannelFactory.HostKeyVerificationException.class);
+                    assertThat(e.getMessage()).contains("refusing to exec as root");
+                })
+                .verify();
+    }
+
+    @Test
+    void refuses_whenDialUserIsBlank() {
+        when(dials.findByDeviceId(eq(DEVICE)))
+                .thenReturn(Mono.just(dial(DeviceSshDial.STATUS_ACTIVE, "SHA256:abc", "  ")));
+
+        StepVerifier.create(factory().open(DEVICE, HOST, OPERATOR, 80, 24))
+                .expectError(DeviceSshChannelFactory.HostKeyVerificationException.class)
+                .verify();
+    }
+
+    @Test
+    void isRootOrBlank_recognisesEveryRootSpelling() {
+        assertThat(SshjDeviceSshChannelFactory.isRootOrBlank("root")).isTrue();
+        assertThat(SshjDeviceSshChannelFactory.isRootOrBlank(" Root ")).isTrue();
+        assertThat(SshjDeviceSshChannelFactory.isRootOrBlank("ROOT")).isTrue();
+        assertThat(SshjDeviceSshChannelFactory.isRootOrBlank(null)).isTrue();
+        assertThat(SshjDeviceSshChannelFactory.isRootOrBlank("")).isTrue();
+        assertThat(SshjDeviceSshChannelFactory.isRootOrBlank("snapops")).isFalse();
+        // NOT over-broad: a legitimate user whose name merely contains "root" is allowed.
+        assertThat(SshjDeviceSshChannelFactory.isRootOrBlank("rootless-ops")).isFalse();
+    }
+
+    // ── B2 (XS half): a mis-mounted dial key fails BEFORE a socket is opened ─────────────────
+
+    /** The mount is EMPTY and the target address is TEST-NET-1 with a 30s connect timeout, so if
+     *  the readability check ran AFTER {@code connect} (as it did) this would either hang on the
+     *  handshake or fail with a connect error — not with the mount message. */
+    @Test
+    void refusesBeforeOpeningASocket_whenTheDialKeyIsNotMounted(
+            @org.junit.jupiter.api.io.TempDir Path emptyMount) {
+        props.setKeyMountPath(emptyMount.toString());
+        props.setKeyFile("id_dial");
+        props.setPort(22);
+        props.setConnectTimeout(Duration.ofSeconds(30));
+        when(dials.findByDeviceId(eq(DEVICE)))
+                .thenReturn(Mono.just(dial(DeviceSshDial.STATUS_ACTIVE, "SHA256:abc")));
+
+        long startNanos = System.nanoTime();
+        StepVerifier.create(factory().open(DEVICE, "192.0.2.1", OPERATOR, 80, 24))
+                .expectErrorSatisfies(e -> assertThat(e.getMessage())
+                        .contains("dial private key not present at mount"))
+                .verify(Duration.ofSeconds(25));
+        // No handshake was attempted: the refusal is immediate, not connect-timeout-shaped.
+        assertThat(Duration.ofNanos(System.nanoTime() - startNanos))
+                .isLessThan(Duration.ofSeconds(10));
+    }
+
+    @Test
+    void execAlsoRefusesBeforeOpeningASocket_whenTheDialKeyIsNotMounted(
+            @org.junit.jupiter.api.io.TempDir Path emptyMount) {
+        props.setKeyMountPath(emptyMount.toString());
+        props.setKeyFile("id_dial");
+        props.setConnectTimeout(Duration.ofSeconds(30));
+        when(dials.findByDeviceId(eq(DEVICE)))
+                .thenReturn(Mono.just(dial(DeviceSshDial.STATUS_ACTIVE, "SHA256:abc")));
+
+        StepVerifier.create(factory().exec(DEVICE, "192.0.2.1", "flatpak install -y org.x.App"))
+                .expectErrorSatisfies(e -> assertThat(e.getMessage())
+                        .contains("dial private key not present at mount"))
+                .verify(Duration.ofSeconds(25));
+    }
+
+    // ── B3: one-shot exec capture is BOUNDED ────────────────────────────────────────────────
+
+    @Test
+    void readBounded_capsTheCaptureAndSaysSoInsteadOfGrowingWithoutLimit() throws Exception {
+        int cap = SshjDeviceSshChannelFactory.MAX_EXEC_OUTPUT_BYTES;
+        byte[] flood = new byte[cap * 4];                 // a device that will not stop talking
+        java.util.Arrays.fill(flood, (byte) 'a');
+
+        String captured = SshjDeviceSshChannelFactory.readBounded(
+                new java.io.ByteArrayInputStream(flood), cap);
+
+        assertThat(captured).startsWith("aaaa");
+        assertThat(captured).contains("[output truncated at " + cap + " bytes]");
+        // Bounded: the cap plus the short marker, NOT the 256 KiB the device offered.
+        assertThat(captured.length()).isLessThan(cap + 64);
+        assertThat(captured.length()).isLessThan(flood.length);
+    }
+
+    @Test
+    void readBounded_returnsShortOutputVerbatim_noMarker() throws Exception {
+        String captured = SshjDeviceSshChannelFactory.readBounded(
+                new java.io.ByteArrayInputStream("installed org.x.App\n".getBytes(
+                        java.nio.charset.StandardCharsets.UTF_8)),
+                SshjDeviceSshChannelFactory.MAX_EXEC_OUTPUT_BYTES);
+
+        assertThat(captured).isEqualTo("installed org.x.App\n");
+        assertThat(captured).doesNotContain("truncated");
+    }
+
+    // ── H2: stdin/resize are SERIALISED on one worker, never reordered across pool threads ───
+
+    /** The first write blocks for 300ms. Scheduling each write on the POOL (the pre-fix code) lets
+     *  writes 2..n run on other boundedElastic threads and land FIRST; a single per-channel Worker
+     *  queues them behind it, so the PTY sees the keystrokes in the order they were typed. */
+    @Test
+    void writeStdin_keystrokesArriveInSubmissionOrder() throws Exception {
+        RecordingStdin stdin = new RecordingStdin();
+        net.schmizz.sshj.SSHClient ssh = mock(net.schmizz.sshj.SSHClient.class);
+        net.schmizz.sshj.connection.channel.direct.Session session =
+                mock(net.schmizz.sshj.connection.channel.direct.Session.class);
+        net.schmizz.sshj.connection.channel.direct.Session.Shell shell =
+                mock(net.schmizz.sshj.connection.channel.direct.Session.Shell.class);
+        when(shell.getOutputStream()).thenReturn(stdin);
+        when(shell.getInputStream()).thenReturn(new java.io.ByteArrayInputStream(new byte[0]));
+
+        var channel = new SshjDeviceSshChannelFactory.SshjChannel(
+                ssh, session, shell, Schedulers.boundedElastic(), DEVICE);
+        try {
+            for (int i = 0; i < 6; i++) {
+                channel.writeStdin(("k" + i).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            }
+            long deadline = System.nanoTime() + Duration.ofSeconds(15).toNanos();
+            while (stdin.writes.size() < 6 && System.nanoTime() < deadline) {
+                Thread.sleep(20);
+            }
+            assertThat(stdin.writes).containsExactly("k0", "k1", "k2", "k3", "k4", "k5");
+        } finally {
+            channel.close();
+        }
+    }
+
+    /** Records stdin writes in arrival order and stalls the FIRST one, so a scheduler that does not
+     *  serialise gets overtaken. */
+    private static final class RecordingStdin extends java.io.OutputStream {
+        private final java.util.List<String> writes = new java.util.concurrent.CopyOnWriteArrayList<>();
+        private final java.util.concurrent.atomic.AtomicBoolean first =
+                new java.util.concurrent.atomic.AtomicBoolean(true);
+
+        @Override
+        public void write(int b) {
+            writes.add(String.valueOf((char) b));
+        }
+
+        @Override
+        public void write(byte[] b) {
+            if (first.compareAndSet(true, false)) {
+                try {
+                    Thread.sleep(300);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+            writes.add(new String(b, java.nio.charset.StandardCharsets.UTF_8));
+        }
+    }
+
     @Test
     void privateKey_neverAppearsInLogs_evenWhenDialFails(@org.junit.jupiter.api.io.TempDir Path tmp)
             throws Exception {
-        // A REAL, unique, unencrypted OpenSSH/PEM private key written to the mount. The dial will
-        // FAIL (the host 127.0.0.1:1 is not an sshd), but loadDialKey reads the key first — so this
-        // proves the key material never reaches any log line.
+        // A REAL, unique, unencrypted OpenSSH/PEM private key written to the mount. The dial clears
+        // the pre-connect mount check, then FAILS at connect (nothing listens on port 1). NB the
+        // key BYTES are not parsed on this path — the parse happens after connect — so what this
+        // pins is that a failing dial never echoes the mounted key (or the words "PRIVATE KEY")
+        // into any log line, including the mount/provenance error text.
         String secretMarker = writeRealRsaPrivateKey(tmp.resolve("id_dial"));
         props.setKeyMountPath(tmp.toString());
         props.setKeyFile("id_dial");

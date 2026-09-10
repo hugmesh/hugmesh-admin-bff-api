@@ -151,6 +151,8 @@ public class DesktopDialAdminController {
                         e -> Mono.error(ApiException.serviceUnavailable(e.getMessage())))
                 .onErrorResume(DesktopDialService.DialUnpinnedException.class,
                         e -> Mono.error(ApiException.unprocessable(e.getMessage())))
+                .onErrorResume(DesktopDialService.DialPolicyException.class,
+                        e -> Mono.error(ApiException.unprocessable(e.getMessage())))
                 .onErrorResume(DesktopDialService.DialNotFoundException.class, e -> {
                     log.warn("[desktop-dial] activate DENY (audit) device={} cause={}", deviceId, e.getMessage());
                     return Mono.error(ApiException.notFound(GENERIC_DIAL_NOT_FOUND));

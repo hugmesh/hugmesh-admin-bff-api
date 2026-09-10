@@ -48,7 +48,11 @@ class DesktopDialServiceTest {
     }
 
     private DeviceSshDial pending(String deviceId, String hostKeyFp) {
-        return new DeviceSshDial(null, deviceId, "snapops", "ssh-ed25519 AAAA...", hostKeyFp,
+        return pending(deviceId, hostKeyFp, "snapops");
+    }
+
+    private DeviceSshDial pending(String deviceId, String hostKeyFp, String dialUser) {
+        return new DeviceSshDial(null, deviceId, dialUser, "ssh-ed25519 AAAA...", hostKeyFp,
                 "SHA256:dialfp", "vault://kv/dial/" + deviceId, "dial-key-" + deviceId, null,
                 DeviceSshDial.STATUS_PENDING, 1L, null, null);
     }
@@ -90,6 +94,63 @@ class DesktopDialServiceTest {
             // stays PENDING — never flipped.
             assertThat(repo().findByDeviceId("dev-1").block().status())
                     .isEqualTo(DeviceSshDial.STATUS_PENDING);
+        }
+
+        /** An MD5 pin is a 128-bit digest with practical collisions. The verifier still ACCEPTS one
+         *  (rows seeded before the SHA-256 contract), so the refusal lives at activation — which is
+         *  what keeps an MD5 pin from ever reaching a live dial. */
+        @Test
+        void refusesMd5Pin_neverBecomesActive() {
+            seedDevice("dev-1", "brandx");
+            repo().insert(pending("dev-1", "MD5:aa:bb:cc:dd")).block();
+            StepVerifier.create(service(true).activate("dev-1", "super-1"))
+                    .expectError(DesktopDialService.DialPolicyException.class)
+                    .verify();
+            assertThat(repo().findByDeviceId("dev-1").block().status())
+                    .isEqualTo(DeviceSshDial.STATUS_PENDING);
+        }
+
+        /** A bare colon-hex pin carries no SHA256: label either — also refused. */
+        @Test
+        void refusesUnlabelledPin_neverBecomesActive() {
+            seedDevice("dev-1", "brandx");
+            repo().insert(pending("dev-1", "aa:bb:cc:dd")).block();
+            StepVerifier.create(service(true).activate("dev-1", "super-1"))
+                    .expectError(DesktopDialService.DialPolicyException.class)
+                    .verify();
+            assertThat(repo().findByDeviceId("dev-1").block().status())
+                    .isEqualTo(DeviceSshDial.STATUS_PENDING);
+        }
+
+        /** dial_user comes from the image-build ingest. If it says root, activating would hand this
+         *  control-plane pod a root shell on the device — refuse, and never flip the row. */
+        @Test
+        void refusesRootDialUser_neverBecomesActive() {
+            seedDevice("dev-1", "brandx");
+            repo().insert(pending("dev-1", "SHA256:hostfp", "root")).block();
+            StepVerifier.create(service(true).activate("dev-1", "super-1"))
+                    .expectError(DesktopDialService.DialPolicyException.class)
+                    .verify();
+            assertThat(repo().findByDeviceId("dev-1").block().status())
+                    .isEqualTo(DeviceSshDial.STATUS_PENDING);
+        }
+
+        @Test
+        void refusesRootDialUser_inAnyCasing() {
+            seedDevice("dev-1", "brandx");
+            repo().insert(pending("dev-1", "SHA256:hostfp", "ROOT")).block();
+            StepVerifier.create(service(true).activate("dev-1", "super-1"))
+                    .expectError(DesktopDialService.DialPolicyException.class)
+                    .verify();
+        }
+
+        /** Non-vacuousness: a SHA256 pin with an ordinary non-root dial user still activates. */
+        @Test
+        void stillActivates_sha256PinAndNonRootDialUser() {
+            seedDevice("dev-1", "brandx");
+            repo().insert(pending("dev-1", "SHA256:hostfp", "rootless-ops")).block();
+            assertThat(service(true).activate("dev-1", "super-1").block().status())
+                    .isEqualTo(DeviceSshDial.STATUS_ACTIVE);
         }
 
         @Test

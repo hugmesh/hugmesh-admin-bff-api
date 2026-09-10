@@ -2,6 +2,7 @@ package net.hugmesh.adminbff.desktop.terminal;
 
 import net.schmizz.sshj.SSHClient;
 import net.schmizz.sshj.common.Factory;
+import net.schmizz.sshj.connection.ConnectionException;
 import net.schmizz.sshj.connection.channel.direct.PTYMode;
 import net.schmizz.sshj.connection.channel.direct.Session;
 import net.schmizz.sshj.userauth.keyprovider.FileKeyProvider;
@@ -17,6 +18,7 @@ import reactor.core.scheduler.Schedulers;
 import net.hugmesh.adminbff.sshterminal.DeviceSshDial;
 import net.hugmesh.adminbff.sshterminal.DeviceSshDialRepository;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -24,6 +26,9 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Collections;
+import java.util.Locale;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -50,15 +55,41 @@ import java.util.concurrent.atomic.AtomicBoolean;
  *       into sshj and NEVER logged, persisted, returned, or {@code toString}'d.</li>
  * </ol>
  *
+ * <h3>Fail-closed preconditions, checked BEFORE a socket is opened</h3>
+ * {@link #refusalReason} is the ONE list both {@link #open} and {@link #exec} consult, so a
+ * precondition can never be enforced on one verb and forgotten on the other: the row must be ACTIVE,
+ * it must carry a pinned {@code host_key_fp}, and its {@code dial_user} must NOT be {@code root} (or
+ * blank). The BFF never takes a ROOT shell on a device: a control-plane pod that can become root on
+ * every mesh node with an ACTIVE row is a blast radius the platform does not accept — the node-side
+ * dial user is a dedicated non-root account with scoped sudo. Beyond those, the dial private key is
+ * checked for readability BEFORE {@code connect} ({@link #preflightDialKey}) so a mis-mounted
+ * deployment fails without performing a full SSH transport handshake against the device first.
+ *
+ * <h3>{@link #exec} is BOUNDED</h3>
+ * A one-shot exec captures at most {@link #MAX_EXEC_OUTPUT_BYTES}, joins the remote command under
+ * {@code app.device-terminal.dial.exec-timeout} rather than waiting forever, sets that same deadline
+ * as the socket read timeout, and DRAINS stderr on a daemon thread (an undrained channel window
+ * stalls the remote, which would otherwise keep stdout from ever reaching EOF). A compromised or
+ * wedged device can therefore neither OOM this control-plane pod nor pin an I/O thread indefinitely.
+ *
  * <h3>Threading</h3>
  * Every sshj call (connect, auth, key read, PTY alloc, stream copy, close) is BLOCKING and is
  * therefore executed on {@link Schedulers#boundedElastic()} — never the Netty event loop. The output
  * {@link Flux} is produced by a blocking read loop {@code subscribeOn} boundedElastic; stdin/resize
- * writes are dispatched to boundedElastic too.
+ * writes are dispatched to a SINGLE {@link Scheduler.Worker} per channel so consecutive keystrokes
+ * cannot be reordered across pool threads.
  */
 public class SshjDeviceSshChannelFactory implements DeviceSshChannelFactory {
 
     private static final Logger log = LoggerFactory.getLogger(SshjDeviceSshChannelFactory.class);
+
+    /** HARD cap on the output a one-shot {@link #exec} captures into memory. 64 KiB is far more
+     *  than any {@code flatpak install} line emits; anything past it is discarded with a marker
+     *  rather than grown without limit on a control-plane pod. */
+    static final int MAX_EXEC_OUTPUT_BYTES = 64 * 1024;
+
+    /** The dial user the BFF must NEVER authenticate as (see the class javadoc). */
+    private static final String ROOT_DIAL_USER = "root";
 
     private final DeviceSshDialRepository dials;
     private final DeviceTerminalDialProperties props;
@@ -82,8 +113,8 @@ public class SshjDeviceSshChannelFactory implements DeviceSshChannelFactory {
         return dials.findByDeviceId(deviceId)
                 .switchIfEmpty(Mono.error(new HostKeyVerificationException(
                         "no device_ssh_dial row for device=" + deviceId + " — refusing to dial")))
-                // Verify ACTIVE + pinned host-key before dispatching the blocking dial.
-                .flatMap(dial -> dialIfActive(dial, deviceId, hostname, cols, rows));
+                // Verify ACTIVE + pinned host-key + non-root dial user before the blocking dial.
+                .flatMap(dial -> dialIfPermitted(dial, deviceId, hostname, cols, rows));
     }
 
     @Override
@@ -93,69 +124,151 @@ public class SshjDeviceSshChannelFactory implements DeviceSshChannelFactory {
         return dials.findByDeviceId(deviceId)
                 .switchIfEmpty(Mono.error(new HostKeyVerificationException(
                         "no device_ssh_dial row for device=" + deviceId + " — refusing to exec")))
-                // Verify ACTIVE + pinned host-key before dispatching the blocking exec.
-                .flatMap(dial -> execIfActive(dial, deviceId, hostname, command));
+                // Verify ACTIVE + pinned host-key + non-root dial user before the blocking exec.
+                .flatMap(dial -> execIfPermitted(dial, deviceId, hostname, command));
     }
 
-    /** Gate the dial on ACTIVE status + pinned host-key then dispatch the blocking dial on ioScheduler. */
-    private Mono<Channel> dialIfActive(DeviceSshDial dial, String deviceId, String hostname,
-                                       int cols, int rows) {
+    /**
+     * The fail-closed dial preconditions, shared by {@link #open} and {@link #exec} so a rule can
+     * never be enforced on one verb and forgotten on the other. Returns the refusal reason, or
+     * {@code null} when the row may be dialed.
+     */
+    private static String refusalReason(DeviceSshDial dial, String deviceId, String verb) {
         if (!dial.isActive()) {
-            return Mono.error(new HostKeyVerificationException(
-                    "device_ssh_dial for device=" + deviceId + " is status="
-                    + dial.status() + " (not ACTIVE) — refusing to dial"));
+            return "device_ssh_dial for device=" + deviceId + " is status=" + dial.status()
+                    + " (not ACTIVE) — refusing to " + verb;
         }
         if (dial.hostKeyFp() == null || dial.hostKeyFp().isBlank()) {
-            return Mono.error(new HostKeyVerificationException(
-                    "device_ssh_dial for device=" + deviceId
-                    + " has no pinned host_key_fp — refusing to dial (no TOFU)"));
+            return "device_ssh_dial for device=" + deviceId
+                    + " has no pinned host_key_fp — refusing to " + verb + " (no TOFU)";
+        }
+        if (isRootOrBlank(dial.dialUser())) {
+            return "device_ssh_dial for device=" + deviceId + " has dial_user='" + dial.dialUser()
+                    + "' — refusing to " + verb + " as root (the BFF never takes a root shell)";
+        }
+        return null;
+    }
+
+    /** True for {@code root} in any casing/padding, and for an absent/blank dial user (fail-closed:
+     *  an unnamed dial user is an unreviewed one). */
+    static boolean isRootOrBlank(String dialUser) {
+        if (dialUser == null || dialUser.isBlank()) {
+            return true;
+        }
+        return ROOT_DIAL_USER.equals(dialUser.trim().toLowerCase(Locale.ROOT));
+    }
+
+    /** Gate the dial on the shared preconditions then dispatch the blocking dial on ioScheduler. */
+    private Mono<Channel> dialIfPermitted(DeviceSshDial dial, String deviceId, String hostname,
+                                          int cols, int rows) {
+        String refusal = refusalReason(dial, deviceId, "dial");
+        if (refusal != null) {
+            return Mono.error(new HostKeyVerificationException(refusal));
         }
         return Mono.fromCallable(() -> dial(deviceId, hostname, dial, cols, rows))
                 .subscribeOn(ioScheduler);
     }
 
-    /** Gate the exec on ACTIVE status + pinned host-key then dispatch the blocking exec on ioScheduler. */
-    private Mono<ExecResult> execIfActive(DeviceSshDial dial, String deviceId,
-                                          String hostname, String command) {
-        if (!dial.isActive()) {
-            return Mono.error(new HostKeyVerificationException(
-                    "device_ssh_dial for device=" + deviceId + " is status="
-                    + dial.status() + " (not ACTIVE) — refusing to exec"));
-        }
-        if (dial.hostKeyFp() == null || dial.hostKeyFp().isBlank()) {
-            return Mono.error(new HostKeyVerificationException(
-                    "device_ssh_dial for device=" + deviceId
-                    + " has no pinned host_key_fp — refusing to exec (no TOFU)"));
+    /** Gate the exec on the shared preconditions then dispatch the blocking exec on ioScheduler. */
+    private Mono<ExecResult> execIfPermitted(DeviceSshDial dial, String deviceId,
+                                             String hostname, String command) {
+        String refusal = refusalReason(dial, deviceId, "exec");
+        if (refusal != null) {
+            return Mono.error(new HostKeyVerificationException(refusal));
         }
         return Mono.fromCallable(() -> execBlocking(deviceId, hostname, dial, command))
                 .subscribeOn(ioScheduler);
     }
 
     /** Blocking: connect + pin-verify host key + auth + run ONE non-interactive command, capturing
-     *  exit + output. Runs on {@link #ioScheduler}. */
+     *  a BOUNDED amount of output under a HARD deadline. Runs on {@link #ioScheduler}. */
     private ExecResult execBlocking(String deviceId, String hostname, DeviceSshDial dial, String command)
             throws IOException {
+        // Key readability BEFORE the socket: a mis-mounted Secret must not cost a full handshake.
+        Path keyPath = preflightDialKey(dial);
+        long deadlineMs = execDeadlineMillis();
         var ssh = new SSHClient();
         ssh.addHostKeyVerifier(new PinnedHostKeyVerifier(deviceId, dial.hostKeyFp()));
         ssh.setConnectTimeout((int) props.getConnectTimeout().toMillis());
+        // Socket read timeout: a device that opens the channel and then goes silent cannot pin this
+        // thread past the exec deadline. NOT set on the interactive dial() path — an idle PTY is
+        // legitimate there and is torn down by the transport's own idle-timeout instead.
+        ssh.setTimeout((int) Math.min(Integer.MAX_VALUE, deadlineMs));
         try {
             ssh.connect(hostname, props.getPort());
-            KeyProvider keys = loadDialKey(ssh, dial);
+            KeyProvider keys = loadDialKey(ssh, dial, keyPath);
             ssh.authPublickey(dial.dialUser(), keys);
             Session session = ssh.startSession();
             Session.Command cmd = session.exec(command);
-            String output = net.schmizz.sshj.common.IOUtils.readFully(cmd.getInputStream()).toString();
-            cmd.join();
-            Integer exit = cmd.getExitStatus();
-            log.info("[desktop-remote-install] (sshj) one-shot exec device={} host={}:{} dialUser={} "
-                    + "exit={} (host-key PINNED)", deviceId, hostname, props.getPort(), dial.dialUser(),
-                    exit);
-            return new ExecResult(exit, output);
-        } catch (Throwable t) {
-            closeQuietly(ssh);
-            throw t;
+            return captureBounded(cmd, deviceId, hostname, props.getPort(), dial, deadlineMs);
         } finally {
             closeQuietly(ssh);
+        }
+    }
+
+    /** The one-shot exec deadline: {@code app.device-terminal.dial.exec-timeout}. Deliberately NOT
+     *  the (10s) connect timeout — a real {@code flatpak install} legitimately outlives a socket
+     *  connect, so reusing it would make every remote install fail. Floored at 1ms. */
+    private long execDeadlineMillis() {
+        return Math.max(1L, props.getExecTimeout().toMillis());
+    }
+
+    /**
+     * BOUNDED capture of a one-shot command: at most {@link #MAX_EXEC_OUTPUT_BYTES} of stdout held
+     * in memory, stderr drained on a daemon thread so an undrained channel window cannot stall the
+     * remote, and a HARD {@code join} deadline so a command that never exits cannot pin this thread.
+     */
+    private static ExecResult captureBounded(Session.Command cmd, String deviceId, String hostname,
+                                             int port, DeviceSshDial dial, long deadlineMs)
+            throws IOException {
+        Thread stderrDrain = new Thread(() -> discardQuietly(cmd.getErrorStream()),
+                "device-exec-stderr-" + deviceId);
+        stderrDrain.setDaemon(true);
+        stderrDrain.start();
+        String output;
+        Integer exit;
+        try {
+            output = readBounded(cmd.getInputStream(), MAX_EXEC_OUTPUT_BYTES);
+            cmd.join(deadlineMs, TimeUnit.MILLISECONDS);
+            exit = cmd.getExitStatus();
+        } catch (ConnectionException e) {
+            throw new IOException("one-shot exec failed or exceeded its " + deadlineMs
+                    + "ms deadline for device=" + deviceId + " — aborting (bounded exec)", e);
+        } finally {
+            stderrDrain.interrupt();
+        }
+        log.info("[desktop-remote-install] (sshj) one-shot exec device={} host={}:{} dialUser={} "
+                + "exit={} chars={} (host-key PINNED, bounded)", deviceId, hostname, port,
+                dial.dialUser(), exit, output.length());
+        return new ExecResult(exit, output);
+    }
+
+    /** Read at most {@code max} bytes as UTF-8, appending an explicit marker when the remote had
+     *  more to say. Never grows without limit. */
+    static String readBounded(InputStream in, int max) throws IOException {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        byte[] buf = new byte[8192];
+        int total = 0;
+        while (total < max) {
+            int n = in.read(buf, 0, Math.min(buf.length, max - total));
+            if (n == -1) {
+                return out.toString(StandardCharsets.UTF_8);
+            }
+            out.write(buf, 0, n);
+            total += n;
+        }
+        return out.toString(StandardCharsets.UTF_8)
+                + "\n…[output truncated at " + max + " bytes]";
+    }
+
+    /** Drain-and-discard a stream until EOF/close; best-effort, never throws. */
+    private static void discardQuietly(InputStream in) {
+        byte[] buf = new byte[8192];
+        try {
+            while (in.read(buf) != -1) {
+                continue; // discarded on purpose — stderr is drained only to keep the window open
+            }
+        } catch (IOException ignore) { //NOPMD EmptyCatchBlock - best-effort drain, channel closing
         }
     }
 
@@ -168,6 +281,8 @@ public class SshjDeviceSshChannelFactory implements DeviceSshChannelFactory {
      *  start shell. Runs on {@link #ioScheduler}. */
     private Channel dial(String deviceId, String hostname, DeviceSshDial dial, int cols, int rows)
             throws IOException {
+        // Key readability BEFORE the socket: a mis-mounted Secret must not cost a full handshake.
+        Path keyPath = preflightDialKey(dial);
         var ssh = new SSHClient();
         // FAIL-CLOSED host-key pin — the ONLY verifier. No known-hosts, no PromiscuousVerifier.
         ssh.addHostKeyVerifier(new PinnedHostKeyVerifier(deviceId, dial.hostKeyFp()));
@@ -175,8 +290,8 @@ public class SshjDeviceSshChannelFactory implements DeviceSshChannelFactory {
         try {
             ssh.connect(hostname, props.getPort());
             // Per-device dial PRIVATE key from the ESO-synced mount. Loaded into sshj and never
-            // logged/persisted/returned. loadPrivateKey reads the mounted file's bytes only here.
-            KeyProvider keys = loadDialKey(ssh, dial);
+            // logged/persisted/returned. loadDialKey reads the mounted file's bytes only here.
+            KeyProvider keys = loadDialKey(ssh, dial, keyPath);
             ssh.authPublickey(dial.dialUser(), keys);
 
             Session session = ssh.startSession();
@@ -195,18 +310,29 @@ public class SshjDeviceSshChannelFactory implements DeviceSshChannelFactory {
     }
 
     /**
-     * Read the per-device dial PRIVATE key from the ESO-synced K8s Secret mount and hand it to sshj
-     * as a {@link KeyProvider}, parsed ENTIRELY IN MEMORY (never re-read from / written to disk after
-     * this single read). The key text is held only in a transient {@code char[]} that is wiped in a
-     * {@code finally}. NOTHING here logs, returns, or persists the key bytes.
+     * PRE-CONNECT check that the ESO-synced dial key is actually mounted and readable, so a
+     * mis-mounted deployment fails BEFORE a socket is opened and a full SSH transport handshake
+     * (host-key verification included) is performed against the device. Returns the key path for
+     * {@link #loadDialKey}; the bytes are NOT read here.
      */
-    private KeyProvider loadDialKey(SSHClient ssh, DeviceSshDial dial) throws IOException {
+    private Path preflightDialKey(DeviceSshDial dial) throws IOException {
         Path keyPath = Path.of(props.getKeyMountPath(), props.getKeyFile());
         if (!Files.isReadable(keyPath)) {
             // Path/provenance only — never the (absent) bytes. k8s_secret_name is the mount hint.
             throw new IOException("dial private key not present at mount for device="
                     + dial.deviceId() + " (k8sSecret=" + dial.k8sSecretName() + ")");
         }
+        return keyPath;
+    }
+
+    /**
+     * Read the per-device dial PRIVATE key from the ESO-synced K8s Secret mount and hand it to sshj
+     * as a {@link KeyProvider}, parsed ENTIRELY IN MEMORY (never re-read from / written to disk after
+     * this single read). The key text is held only in a transient {@code char[]} that is wiped in a
+     * {@code finally}. NOTHING here logs, returns, or persists the key bytes.
+     */
+    private static KeyProvider loadDialKey(SSHClient ssh, DeviceSshDial dial, Path keyPath)
+            throws IOException {
         byte[] raw = Files.readAllBytes(keyPath);
         char[] pem = new String(raw, StandardCharsets.UTF_8).toCharArray();
         java.util.Arrays.fill(raw, (byte) 0);
@@ -253,10 +379,13 @@ public class SshjDeviceSshChannelFactory implements DeviceSshChannelFactory {
     /**
      * A raw duplex PTY channel over the sshj shell. ALL I/O is blocking and is confined to
      * {@link #scheduler} (boundedElastic). {@link #output()} is a blocking read loop; {@link
-     * #writeStdin}/{@link #resize}/{@link #close} dispatch to the scheduler. NO key material is held
-     * here — only the live shell streams.
+     * #writeStdin}/{@link #resize}/{@link #close} are dispatched to ONE {@link Scheduler.Worker}
+     * created for this channel, so consecutive stdin/resize tasks are SERIALISED — scheduling each
+     * on the pool directly let two keystrokes land on different workers and arrive out of order,
+     * which on a live PTY changes the command executed. NO key material is held here — only the
+     * live shell streams.
      */
-    private static final class SshjChannel implements Channel {
+    static final class SshjChannel implements Channel {
 
         private final SSHClient ssh;
         private final Session session;
@@ -264,6 +393,7 @@ public class SshjDeviceSshChannelFactory implements DeviceSshChannelFactory {
         private final OutputStream stdin;
         private final InputStream stdout;
         private final Scheduler scheduler;
+        private final Scheduler.Worker worker;
         private final String deviceId;
         private final AtomicBoolean closed = new AtomicBoolean(false);
 
@@ -275,36 +405,62 @@ public class SshjDeviceSshChannelFactory implements DeviceSshChannelFactory {
             this.stdin = shell.getOutputStream();
             this.stdout = shell.getInputStream();
             this.scheduler = scheduler;
+            // ONE worker for the lifetime of the channel: a Worker executes its tasks in submission
+            // order, which scheduler.schedule() across a pool does NOT guarantee.
+            this.worker = scheduler.createWorker();
             this.deviceId = deviceId;
         }
 
         @Override
         public void writeStdin(byte[] data) {
-            scheduler.schedule(() -> {
-                try {
-                    stdin.write(data);
-                    stdin.flush();
-                } catch (IOException e) {
-                    close();
-                }
-            });
+            scheduleUnlessClosed(() -> writeStdinNow(data));
+        }
+
+        private void writeStdinNow(byte[] data) {
+            try {
+                stdin.write(data);
+                stdin.flush();
+            } catch (IOException e) {
+                close();
+            }
         }
 
         @Override
         public void resize(int cols, int rows) {
-            scheduler.schedule(() -> {
-                try {
-                    shell.changeWindowDimensions(Math.max(1, cols), Math.max(1, rows), 0, 0);
-                } catch (IOException e) {
-                    // a resize failure should not kill the session by itself
-                    log.debug("[device-terminal] (sshj) resize failed device={}", deviceId);
-                }
-            });
+            scheduleUnlessClosed(() -> resizeNow(cols, rows));
+        }
+
+        private void resizeNow(int cols, int rows) {
+            try {
+                shell.changeWindowDimensions(Math.max(1, cols), Math.max(1, rows), 0, 0);
+            } catch (IOException e) {
+                // a resize failure should not kill the session by itself
+                log.debug("[device-terminal] (sshj) resize failed device={}", deviceId);
+            }
+        }
+
+        /** Queue an ordered task, unless the channel is already tearing down. */
+        private void scheduleUnlessClosed(Runnable task) {
+            if (closed.get()) {
+                return;
+            }
+            submit(task);
+        }
+
+        /** Queue on the channel's single worker; a disposed worker rejects, which just means the
+         *  teardown already ran. */
+        private void submit(Runnable task) {
+            try {
+                worker.schedule(task);
+            } catch (RejectedExecutionException ignore) { //NOPMD EmptyCatchBlock - already closed
+            }
         }
 
         @Override
         public Flux<byte[]> output() {
-            // Read stdout bytes in a blocking loop, emitting chunks until EOF or close.
+            // Read stdout bytes in a blocking loop, emitting chunks until EOF or close. This runs on
+            // the POOL, not the worker: a blocking read loop would otherwise occupy the single
+            // worker thread and starve every stdin write.
             return Flux.<byte[]>create(this::drainOutputToSink).subscribeOn(scheduler);
         }
 
@@ -333,8 +489,9 @@ public class SshjDeviceSshChannelFactory implements DeviceSshChannelFactory {
         @Override
         public void close() {
             if (closed.compareAndSet(false, true)) {
-                // Schedule teardown on the dedicated I/O thread (never block the caller).
-                scheduler.schedule(this::tearDownChannel);
+                // Teardown is queued behind whatever stdin/resize work is already on the worker, so
+                // it can never overtake it (submit bypasses the closed guard on purpose).
+                submit(this::tearDownChannel);
             }
         }
 
@@ -348,6 +505,7 @@ public class SshjDeviceSshChannelFactory implements DeviceSshChannelFactory {
                 ssh.disconnect();
             } catch (IOException ignore) { //NOPMD EmptyCatchBlock - best-effort teardown
             }
+            worker.dispose();
             log.info("[device-terminal] (sshj) channel closed device={}", deviceId);
         }
     }

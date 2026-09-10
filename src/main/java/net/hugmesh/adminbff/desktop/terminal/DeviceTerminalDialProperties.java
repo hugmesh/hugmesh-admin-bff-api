@@ -49,6 +49,14 @@ public class DeviceTerminalDialProperties {
     /** Socket connect timeout for the dial. */
     private Duration connectTimeout = Duration.ofSeconds(10);
 
+    /** HARD deadline for a ONE-SHOT {@code exec} (the remote-install leg): the {@code join} timeout
+     *  AND the socket read timeout on that path, so a compromised or wedged device cannot pin a
+     *  boundedElastic thread forever. Deliberately NOT {@link #connectTimeout} — a real
+     *  {@code flatpak install} legitimately runs far longer than a socket connect, so reusing the
+     *  connect timeout here would make every remote install fail. Does NOT apply to the interactive
+     *  PTY dial, whose idleness is bounded by {@code app.device-terminal.idle-timeout} instead. */
+    private Duration execTimeout = Duration.ofMinutes(5);
+
     public boolean isEnabled() {
         return enabled;
     }
@@ -87,5 +95,13 @@ public class DeviceTerminalDialProperties {
 
     public void setConnectTimeout(Duration connectTimeout) {
         this.connectTimeout = connectTimeout;
+    }
+
+    public Duration getExecTimeout() {
+        return execTimeout;
+    }
+
+    public void setExecTimeout(Duration execTimeout) {
+        this.execTimeout = execTimeout;
     }
 }
