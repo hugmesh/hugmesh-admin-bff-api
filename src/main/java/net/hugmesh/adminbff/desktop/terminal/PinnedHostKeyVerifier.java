@@ -41,9 +41,13 @@ import java.util.Locale;
  * form; an unlabelled pin is tried against both. Nothing here is secret; the pinned + presented
  * fingerprints are public key material, safe to log on a mismatch for audit.
  *
- * <p>MD5 pins are still ACCEPTED here for rows seeded before the SHA-256 contract, but
- * {@code DesktopDialService.activate} now REFUSES to make a non-{@code SHA256:} pin ACTIVE, so an
- * MD5 pin cannot reach a live dial.
+ * <p>MD5 pins are still ACCEPTED HERE for rows seeded before the SHA-256 contract — this class
+ * answers "does the presented key match the pin", not "may this pin be trusted". The MD5 rule is
+ * enforced OUTSIDE it, on BOTH sides: {@code DesktopDialService.activate} refuses to make a
+ * non-{@code SHA256:} pin ACTIVE, and {@code SshjDeviceSshChannelFactory.refusalReason} refuses to
+ * dial or exec against one however it became ACTIVE. Both are needed: the first alone is a rule
+ * about the activation PATH, and any row reaching ACTIVE another way (a backfill, a restored dump,
+ * a future direct-to-ACTIVE seed) would slip past it.
  */
 final class PinnedHostKeyVerifier implements HostKeyVerifier {
 

@@ -7,6 +7,7 @@ import ch.qos.logback.core.read.ListAppender;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 import org.slf4j.LoggerFactory;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
@@ -15,12 +16,19 @@ import net.hugmesh.adminbff.sshterminal.DeviceSshDial;
 import net.hugmesh.adminbff.sshterminal.DeviceSshDialRepository;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.InterruptedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -341,6 +349,216 @@ class SshjDeviceSshChannelFactoryTest {
         props.setKeyMountPath("/var/run/secrets/device-ssh-dial");
         assertThat(factory().toString()).doesNotContain("PRIVATE KEY");
         assertThat(props.toString()).doesNotContain("PRIVATE KEY");
+    }
+
+    // ── H1: a non-SHA256 pin may not reach a LIVE dial either (both verbs, one rule list) ────
+
+    /** {@code DesktopDialService.activate} refuses to make an MD5 pin ACTIVE — but that is a rule
+     *  about the ACTIVATION path only. Any row that reaches ACTIVE another way (a backfill, a
+     *  restored dump, a future direct-to-ACTIVE seed) must still be refused AT DIAL TIME, exactly
+     *  as the root rule already is on both sides. */
+    @Test
+    void refuses_whenActivePinIsMd5_open() {
+        when(dials.findByDeviceId(eq(DEVICE)))
+                .thenReturn(Mono.just(dial(DeviceSshDial.STATUS_ACTIVE, "MD5:aa:bb:cc:dd")));
+
+        StepVerifier.create(factory().open(DEVICE, HOST, OPERATOR, 80, 24))
+                .expectErrorSatisfies(e -> {
+                    assertThat(e).isInstanceOf(DeviceSshChannelFactory.HostKeyVerificationException.class);
+                    assertThat(e.getMessage()).contains("non-SHA256: host_key_fp");
+                    assertThat(e.getMessage()).contains("refusing to dial");
+                })
+                .verify();
+    }
+
+    @Test
+    void refuses_whenActivePinIsMd5_exec() {
+        when(dials.findByDeviceId(eq(DEVICE)))
+                .thenReturn(Mono.just(dial(DeviceSshDial.STATUS_ACTIVE, "MD5:aa:bb:cc:dd")));
+
+        StepVerifier.create(factory().exec(DEVICE, HOST, "flatpak install -y org.x.App"))
+                .expectErrorSatisfies(e -> {
+                    assertThat(e).isInstanceOf(DeviceSshChannelFactory.HostKeyVerificationException.class);
+                    assertThat(e.getMessage()).contains("non-SHA256: host_key_fp");
+                    assertThat(e.getMessage()).contains("refusing to exec");
+                })
+                .verify();
+    }
+
+    /** An UNLABELLED pin is refused too, and for the same reason the activation side refuses it:
+     *  "SHA256".equals(labelOf(fp)) is the rule on both sides, so the two can never disagree. */
+    @Test
+    void refuses_whenActivePinCarriesNoAlgorithmLabel() {
+        when(dials.findByDeviceId(eq(DEVICE)))
+                .thenReturn(Mono.just(dial(DeviceSshDial.STATUS_ACTIVE, "aa:bb:cc:dd:ee:ff")));
+
+        StepVerifier.create(factory().open(DEVICE, HOST, OPERATOR, 80, 24))
+                .expectErrorSatisfies(e ->
+                        assertThat(e.getMessage()).contains("non-SHA256: host_key_fp"))
+                .verify();
+    }
+
+    // ── B3: the capture is bounded in WALL-CLOCK TIME, not only in memory ────────────────────
+
+    /** THE NEGATIVE case for B3's DoS half. A device that completes auth, opens the session and then goes
+     *  silent parks {@code ChannelInputStream.read} on an UNTIMED {@code Object.wait()}; sshj's
+     *  {@code setTimeout} does not save us (its Reader swallows SocketTimeoutException). Only the
+     *  watchdog does. Asserted: the call RETURNS (by throwing) well inside a small multiple of the
+     *  deadline, the abort actually ran, and no stray interrupt is left on this pool thread. */
+    // SEPARATE_THREAD so that a REGRESSION here FAILS the build instead of hanging it forever —
+    // which is precisely the failure mode this guard exists to prevent.
+    @Test
+    @Timeout(value = 20, unit = TimeUnit.SECONDS, threadMode = Timeout.ThreadMode.SEPARATE_THREAD)
+    void readBoundedUnderDeadline_abortsAWedgedDevice_insteadOfParkingTheThreadForever() {
+        WedgedInputStream wedged = new WedgedInputStream();
+        long deadlineMs = 300L;
+
+        long startNanos = System.nanoTime();
+        assertThatThrownBy(() -> SshjDeviceSshChannelFactory.readBoundedUnderDeadline(
+                wedged, 64, deadlineMs, wedged::abort))
+                .isInstanceOf(IOException.class)
+                .hasMessageContaining("exceeded its " + deadlineMs + "ms deadline");
+        long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNanos);
+
+        assertThat(wedged.wasAborted()).as("the deadline watchdog must abort the transport").isTrue();
+        assertThat(elapsedMs).as("bounded, not 'forever'").isLessThan(deadlineMs * 20);
+        assertThat(Thread.currentThread().isInterrupted())
+                .as("the boundedElastic thread goes back to the pool without a stray interrupt")
+                .isFalse();
+    }
+
+    /** NON-VACUOUSNESS for the test above: WITHOUT the deadline the very same stream really does
+     *  park forever, so the assertion is measuring the watchdog and not a stream that would have
+     *  returned anyway. */
+    @Test
+    void readBounded_withoutTheDeadline_reallyDoesParkForever_soTheWatchdogIsLoadBearing()
+            throws Exception {
+        WedgedInputStream wedged = new WedgedInputStream();
+        Thread parked = new Thread(() -> {
+            try {
+                SshjDeviceSshChannelFactory.readBounded(wedged, 64);
+            } catch (IOException ignore) {
+                // expected once we abort it at the end of the test
+            }
+        }, "park-probe");
+        parked.setDaemon(true);
+        parked.start();
+        try {
+            parked.join(900L);                       // 3x the deadline the other test uses
+            assertThat(parked.isAlive())
+                    .as("unbounded readBounded is still parked — the watchdog is what ends it")
+                    .isTrue();
+        } finally {
+            wedged.abort();                          // let the probe thread die
+            parked.join(2000L);
+        }
+    }
+
+    /** The 64 KiB cap bounds MEMORY, not the read. sshj replenishes the channel's local window only
+     *  from ChannelInputStream.read, so a reader that STOPPED at the cap would stall any command
+     *  whose output exceeds the 2 MiB initial window — it would never exit and the join deadline
+     *  would fail an install that used to succeed. Pinned here: the stream is read to EOF. */
+    @Test
+    void readBounded_keepsReadingPastTheCap_soTheRemoteWindowIsNeverStalled() throws Exception {
+        int cap = 1024;
+        byte[] flood = new byte[cap * 40];
+        java.util.Arrays.fill(flood, (byte) 'a');
+        CountingInputStream src = new CountingInputStream(new java.io.ByteArrayInputStream(flood));
+
+        String captured = SshjDeviceSshChannelFactory.readBounded(src, cap);
+
+        assertThat(src.consumed())
+                .as("every byte the remote offered was READ (and discarded past the cap)")
+                .isEqualTo(flood.length);
+        assertThat(captured).contains("[output truncated at " + cap + " bytes]");
+        assertThat(captured.length()).as("but only the cap was RETAINED").isLessThan(cap + 64);
+    }
+
+    /** The watchdog's abort must not itself block or throw: it closes the socket directly rather
+     *  than going through disconnect()/close(), both of which wait on the remote. */
+    @Test
+    void abortTransport_closesTheSocketDirectly_andNeverThrows() throws Exception {
+        net.schmizz.sshj.SSHClient ssh = mock(net.schmizz.sshj.SSHClient.class);
+        java.net.Socket socket = new java.net.Socket();
+        when(ssh.getSocket()).thenReturn(socket);
+
+        SshjDeviceSshChannelFactory.abortTransport(ssh);
+        assertThat(socket.isClosed()).isTrue();
+
+        // idempotent, and null-safe for a client that never connected
+        assertThatCode(() -> SshjDeviceSshChannelFactory.abortTransport(ssh))
+                .doesNotThrowAnyException();
+        net.schmizz.sshj.SSHClient neverConnected = mock(net.schmizz.sshj.SSHClient.class);
+        when(neverConnected.getSocket()).thenReturn(null);
+        assertThatCode(() -> SshjDeviceSshChannelFactory.abortTransport(neverConnected))
+                .doesNotThrowAnyException();
+    }
+
+    /** A stdout stream that behaves like sshj's: it never returns and never EOFs until the
+     *  transport is aborted underneath it, at which point the read fails. */
+    private static final class WedgedInputStream extends InputStream {
+        private final CountDownLatch aborted = new CountDownLatch(1);
+        private final AtomicBoolean abortCalled = new AtomicBoolean(false);
+
+        @Override
+        public int read() throws IOException {
+            byte[] one = new byte[1];
+            int n = read(one, 0, 1);
+            return n == -1 ? -1 : one[0] & 0xff;
+        }
+
+        @Override
+        public int read(byte[] b, int off, int len) throws IOException {
+            try {
+                aborted.await();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new InterruptedIOException("read interrupted");
+            }
+            throw new IOException("transport aborted");
+        }
+
+        void abort() {
+            abortCalled.set(true);
+            aborted.countDown();
+        }
+
+        boolean wasAborted() {
+            return abortCalled.get();
+        }
+    }
+
+    /** Counts the bytes actually pulled off the delegate, so a test can prove the reader did NOT
+     *  stop at the memory cap. */
+    private static final class CountingInputStream extends InputStream {
+        private final InputStream delegate;
+        private int consumed;
+
+        CountingInputStream(InputStream delegate) {
+            this.delegate = delegate;
+        }
+
+        @Override
+        public int read() throws IOException {
+            int b = delegate.read();
+            if (b != -1) {
+                consumed++;
+            }
+            return b;
+        }
+
+        @Override
+        public int read(byte[] b, int off, int len) throws IOException {
+            int n = delegate.read(b, off, len);
+            if (n > 0) {
+                consumed += n;
+            }
+            return n;
+        }
+
+        int consumed() {
+            return consumed;
+        }
     }
 
     /** Writes a real unencrypted RSA private key (classic PEM) and returns a distinctive substring
