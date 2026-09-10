@@ -49,6 +49,18 @@ public class DeviceTerminalDialProperties {
     /** Socket connect timeout for the dial. */
     private Duration connectTimeout = Duration.ofSeconds(10);
 
+    /** HARD wall-clock deadline for a ONE-SHOT {@code exec} (the remote-install leg), covering the
+     *  output capture AND the {@code join} as ONE budget, so a compromised or wedged device cannot
+     *  pin a boundedElastic thread forever. It is enforced by a WATCHDOG that aborts the transport
+     *  ({@code SshjDeviceSshChannelFactory.readBoundedUnderDeadline}) — NOT by a socket read
+     *  timeout: sshj's reader swallows {@code SocketTimeoutException} and its channel streams park
+     *  on an untimed {@code wait()}, so {@code SSHClient.setTimeout} would be inert here. See that
+     *  class's javadoc for the measured detail. Deliberately NOT {@link #connectTimeout} — a real
+     *  {@code flatpak install} legitimately runs far longer than a socket connect, so reusing the
+     *  connect timeout here would make every remote install fail. Does NOT apply to the interactive
+     *  PTY dial, whose idleness is bounded by {@code app.device-terminal.idle-timeout} instead. */
+    private Duration execTimeout = Duration.ofMinutes(5);
+
     public boolean isEnabled() {
         return enabled;
     }
@@ -87,5 +99,13 @@ public class DeviceTerminalDialProperties {
 
     public void setConnectTimeout(Duration connectTimeout) {
         this.connectTimeout = connectTimeout;
+    }
+
+    public Duration getExecTimeout() {
+        return execTimeout;
+    }
+
+    public void setExecTimeout(Duration execTimeout) {
+        this.execTimeout = execTimeout;
     }
 }

@@ -21,6 +21,7 @@ import net.hugmesh.adminbff.web.ValidationExceptionHandler;
 import java.time.Instant;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
@@ -42,6 +43,12 @@ import static org.springframework.security.test.web.reactive.server.SecurityMock
  *       created_at + ending_at + enforce_actions.</li>
  *   <li>ADMIN / MOD / USER — DENY (403) on EVERY endpoint + never reaches the service.</li>
  * </ul>
+ *
+ * <p>{@code provision} — the verb that actually drives infrastructure — is additionally STEP-UP
+ * gated, so a superadmin with no {@code X-ServiceStore-StepUp} token and no fresh MFA stamp gets
+ * the "requires step-up" 403 the merged catalog-ui slice renders its challenge on, and neither the
+ * repository nor the effector is touched. {@code create}/{@code end} write accounting rows only and
+ * stay role-only.
  */
 @WebFluxTest(controllers = {ServiceDeploymentController.class, ServiceCatalogEffectorController.class})
 @Import({SecurityConfig.class, DomainRegistry.class, ValidationExceptionHandler.class, ApiExceptionHandler.class})
@@ -59,10 +66,24 @@ class ServiceDeploymentControllerTest {
     @MockitoBean ServiceDeploymentService service;
     @MockitoBean ServiceDeploymentRepository repo;
     @MockitoBean AddServiceEffector effector;
+    @MockitoBean ServiceStoreStepUpGate stepUp;
+    @MockitoBean net.hugmesh.authcore.casdoor.MfaStepUpService mfaStepUp;
     @MockitoBean ReactiveJwtDecoder jwtDecoder;
 
     private static final String SUBJECT = "superadmin-subject-11";
     private static final Instant ENDING = Instant.parse("2030-01-01T00:00:00Z");
+    private static final String STEP_UP = ServiceStoreStepUpGate.STEP_UP_HEADER;
+    private static final String TOKEN = "good-token";
+
+    @BeforeEach
+    void mfaDarkByDefault() {
+        // A5 MFA leg ships DARK by default here: only the workload step-up token leg satisfies.
+        when(mfaStepUp.isFresh(any())).thenReturn(Mono.just(false));
+        when(mfaStepUp.consume(any())).thenReturn(Mono.empty());
+        when(stepUp.isSatisfied(anyString(), any(), anyBoolean()))
+                .thenAnswer(inv -> inv.<Boolean>getArgument(2)
+                        || stepUp.isSatisfied(inv.getArgument(0), inv.getArgument(1)));
+    }
 
     private WebTestClient asSuperadmin() {
         return web.mutateWith(mockJwt().jwt(j -> j.subject(SUBJECT))
@@ -191,7 +212,8 @@ class ServiceDeploymentControllerTest {
             + "\"path\":\"deploy/\",\"targetRevision\":\"HEAD\"}";
 
     @Test
-    void provision_asSuperadmin_loadsDeployment_andDrivesEffector() {
+    void provision_asSuperadmin_withStepUp_loadsDeployment_andDrivesEffector() {
+        when(stepUp.isSatisfied(any(), eq(TOKEN))).thenReturn(true);
         when(repo.findById(eq("dep-1"))).thenReturn(Mono.just(active()));
         when(effector.provision(any(ServiceDeployment.class), any(ServiceSource.class)))
                 .thenReturn(Mono.just("acme-test-owncast"));
@@ -199,6 +221,7 @@ class ServiceDeploymentControllerTest {
         when(effector.isEffectorReal()).thenReturn(false);
         asSuperadmin().post().uri("/bff/superadmin/service-store/acme.test/deployments/dep-1/provision")
                 .contentType(MediaType.APPLICATION_JSON).bodyValue(PROVISION_BODY)
+                .header(STEP_UP, TOKEN)
                 .exchange().expectStatus().isOk()
                 .expectBody().jsonPath("$.deployment.serviceKey").isEqualTo("owncast");
         verify(effector).provision(any(ServiceDeployment.class), any(ServiceSource.class));
@@ -206,8 +229,10 @@ class ServiceDeploymentControllerTest {
 
     @Test
     void provision_asAdmin_isForbidden_andNeverLoadsOrEffects() {
+        when(stepUp.isSatisfied(any(), eq(TOKEN))).thenReturn(true);   // the ROLE is what denies
         asAdmin().post().uri("/bff/superadmin/service-store/acme.test/deployments/dep-1/provision")
                 .contentType(MediaType.APPLICATION_JSON).bodyValue(PROVISION_BODY)
+                .header(STEP_UP, TOKEN)
                 .exchange().expectStatus().isForbidden();
         verify(repo, never()).findById(anyString());
         verify(effector, never()).provision(any(), any());
@@ -216,11 +241,72 @@ class ServiceDeploymentControllerTest {
     @Test
     void provision_domainMismatch_isBadRequest() {
         // The loaded deployment is in acme.test but the path targets other.test.
+        when(stepUp.isSatisfied(any(), eq(TOKEN))).thenReturn(true);
         when(repo.findById(eq("dep-1"))).thenReturn(Mono.just(active()));
         asSuperadmin().post().uri("/bff/superadmin/service-store/other.test/deployments/dep-1/provision")
                 .contentType(MediaType.APPLICATION_JSON).bodyValue(PROVISION_BODY)
+                .header(STEP_UP, TOKEN)
                 .exchange().expectStatus().isBadRequest();
         verify(effector, never()).provision(any(), any());
+    }
+
+    /** The denial the merged catalog-ui slice consumes: 403 + "requires step-up" (what
+     *  {@code ServiceCatalogApiError.isStepUpRequired} matches) + the structured
+     *  {@code X-Step-Up-Required} signal naming the retry header. Nothing is loaded or effected. */
+    @Test
+    void provision_asSuperadmin_withoutStepUp_is403WithTheChallengeContract_andNeverEffects() {
+        when(stepUp.isSatisfied(any(), any())).thenReturn(false);
+        asSuperadmin().post().uri("/bff/superadmin/service-store/acme.test/deployments/dep-1/provision")
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(PROVISION_BODY)
+                .exchange().expectStatus().isForbidden()
+                .expectHeader().valueEquals("X-Step-Up-Required", STEP_UP)
+                .expectBody().jsonPath("$.error").value(org.hamcrest.Matchers.matchesPattern(
+                        "(?i).*requires step-up.*"));
+        verify(repo, never()).findById(anyString());
+        verify(effector, never()).provision(any(), any());
+    }
+
+    @Test
+    void provision_withAWrongStepUpToken_is403_andNeverEffects() {
+        when(stepUp.isSatisfied(any(), eq(TOKEN))).thenReturn(true);   // only THIS token is valid
+        asSuperadmin().post().uri("/bff/superadmin/service-store/acme.test/deployments/dep-1/provision")
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(PROVISION_BODY)
+                .header(STEP_UP, "stale-token")
+                .exchange().expectStatus().isForbidden();
+        verify(repo, never()).findById(anyString());
+        verify(effector, never()).provision(any(), any());
+    }
+
+    /** The co-equal MFA leg satisfies with no token, and is CONSUMED so a second provision in the
+     *  freshness window needs its own challenge. */
+    @Test
+    void provision_withFreshMfaAndNoToken_isAllowed_andConsumesTheStamp() {
+        when(mfaStepUp.isFresh(any())).thenReturn(Mono.just(true));
+        when(stepUp.isSatisfied(any(), any())).thenReturn(false);
+        when(repo.findById(eq("dep-1"))).thenReturn(Mono.just(active()));
+        when(effector.provision(any(ServiceDeployment.class), any(ServiceSource.class)))
+                .thenReturn(Mono.just("acme-test-owncast"));
+        when(effector.isEffectorReal()).thenReturn(false);
+        asSuperadmin().post().uri("/bff/superadmin/service-store/acme.test/deployments/dep-1/provision")
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(PROVISION_BODY)
+                .exchange().expectStatus().isOk();
+        verify(effector).provision(any(ServiceDeployment.class), any(ServiceSource.class));
+        verify(mfaStepUp).consume(any());
+    }
+
+    /** create / end write accounting rows only and are deliberately NOT step-up gated — pinned so
+     *  a later "gate everything" pass is a deliberate decision, not a silent one. */
+    @Test
+    void create_and_end_needNoStepUp() {
+        when(stepUp.isSatisfied(any(), any())).thenReturn(false);
+        when(service.create(eq("acme.test"), eq("owncast"), eq("small-postgres"),
+                eq(ENDING), eq("teardown,alert"), eq(SUBJECT))).thenReturn(Mono.just(active()));
+        when(service.end(eq("dep-1"))).thenReturn(Mono.just(active()));
+        asSuperadmin().post().uri("/bff/superadmin/service-store/acme.test/deployments")
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(CREATE_BODY)
+                .exchange().expectStatus().isCreated();
+        asSuperadmin().post().uri("/bff/superadmin/service-store/acme.test/deployments/dep-1/end")
+                .exchange().expectStatus().isOk();
     }
 
     // ── Effector mode endpoint ───────────────────────────────────────────────────
@@ -245,12 +331,14 @@ class ServiceDeploymentControllerTest {
     @Test
     void provision_includesEffectorReal_false() {
         // With the noop client the provision response wraps deployment + effectorReal:false.
+        when(stepUp.isSatisfied(any(), eq(TOKEN))).thenReturn(true);
         when(repo.findById(eq("dep-1"))).thenReturn(Mono.just(active()));
         when(effector.provision(any(ServiceDeployment.class), any(ServiceSource.class)))
                 .thenReturn(Mono.just("acme-test-owncast"));
         when(effector.isEffectorReal()).thenReturn(false);
         asSuperadmin().post().uri("/bff/superadmin/service-store/acme.test/deployments/dep-1/provision")
                 .contentType(MediaType.APPLICATION_JSON).bodyValue(PROVISION_BODY)
+                .header(STEP_UP, TOKEN)
                 .exchange().expectStatus().isOk()
                 .expectBody()
                 .jsonPath("$.deployment.serviceKey").isEqualTo("owncast")
@@ -260,6 +348,7 @@ class ServiceDeploymentControllerTest {
     @Test
     void provision_includesEffectorReal_true() {
         // With a real ArgoCD client mock the provision response carries effectorReal:true.
+        when(stepUp.isSatisfied(any(), eq(TOKEN))).thenReturn(true);
         when(repo.findById(eq("dep-1"))).thenReturn(Mono.just(active()));
         when(effector.provision(any(ServiceDeployment.class), any(ServiceSource.class)))
                 .thenReturn(Mono.just("acme-test-owncast"));
@@ -267,6 +356,7 @@ class ServiceDeploymentControllerTest {
         when(effector.isEffectorReal()).thenReturn(true);
         asSuperadmin().post().uri("/bff/superadmin/service-store/acme.test/deployments/dep-1/provision")
                 .contentType(MediaType.APPLICATION_JSON).bodyValue(PROVISION_BODY)
+                .header(STEP_UP, TOKEN)
                 .exchange().expectStatus().isOk()
                 .expectBody()
                 .jsonPath("$.deployment.serviceKey").isEqualTo("owncast")

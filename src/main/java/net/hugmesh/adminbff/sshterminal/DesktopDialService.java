@@ -3,6 +3,8 @@ package net.hugmesh.adminbff.sshterminal;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+
+import java.util.Locale;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import net.hugmesh.adminbff.desktop.terminal.DeviceTerminalDialProperties;
@@ -67,8 +69,10 @@ public class DesktopDialService {
      * Activate the (seeded, PENDING) dial row for {@code deviceId}: PENDING→ACTIVE at the next
      * generation. Fails {@link DialDarkException} while the dial leg ships dark;
      * {@link DialNotFoundException} if there is no row; {@link DialUnpinnedException} if the row has
-     * no pinned {@code host_key_fp} (refuse activation of an unpinned dial — 422). Idempotent: a row
-     * already ACTIVE returns a no-op (no error), so a double-activate is safe.
+     * no pinned {@code host_key_fp} (refuse activation of an unpinned dial — 422);
+     * {@link DialPolicyException} if the pin is not a {@code SHA256:} one or the {@code dial_user}
+     * is {@code root}/blank (see {@link #policyRefusal} — also 422). Idempotent: a row already
+     * ACTIVE returns a no-op (no error), so a double-activate is safe.
      *
      * <p>HELD-UNTIL-LIVE: a verifying pinned test-connect BEFORE the flip is deferred behind the
      * dial flag + a real device; the buildable-now path is the explicit activate with the
@@ -111,6 +115,10 @@ public class DesktopDialService {
                     "refusing to activate device=" + deviceId
                     + " — dial row has no pinned host_key_fp (no TOFU)"));
         }
+        String policyRefusal = policyRefusal(row, deviceId);
+        if (policyRefusal != null) {
+            return Mono.error(new DialPolicyException(policyRefusal));
+        }
         long nextGen = row.generation() + 1;
         return dials.activate(row.id(), nextGen).flatMap(updated -> {
             if (updated == 0L) {
@@ -120,6 +128,54 @@ public class DesktopDialService {
             log.info("[desktop-dial] ACTIVATED device={} gen={} by={}", deviceId, nextGen, by);
             return dials.findByDeviceId(deviceId);
         });
+    }
+
+    /**
+     * The DIAL-TRUST policy a row must satisfy to become ACTIVE, on top of merely having a pin.
+     * Returns the refusal reason, or {@code null} when the row may be activated.
+     *
+     * <ul>
+     *   <li><b>SHA-256 pin only.</b> An MD5 fingerprint is a 128-bit digest with practical collision
+     *       attacks; {@code PinnedHostKeyVerifier} still ACCEPTS an MD5 pin for compatibility with
+     *       rows seeded before the SHA-256 contract, so the refusal has to live HERE — refusing
+     *       activation is what makes sure an MD5 pin can never reach a live dial.</li>
+     *   <li><b>Never root.</b> {@code dial_user} is seeded from the image-build ingest; if it says
+     *       {@code root}, activating the row would hand this control-plane pod a root shell on the
+     *       device. The node-side dial user is a dedicated non-root account with scoped sudo. A
+     *       blank dial user is refused for the same reason (an unnamed dial user is an unreviewed
+     *       one). The dial factory refuses the same rows at dial time, so a row activated before
+     *       this rule existed still cannot dial.</li>
+     * </ul>
+     */
+    private static String policyRefusal(DeviceSshDial row, String deviceId) {
+        if (!"SHA256".equals(labelOf(row.hostKeyFp()))) {
+            return "refusing to activate device=" + deviceId
+                    + " — host_key_fp is not a SHA256: pin (MD5 pins may not become ACTIVE)";
+        }
+        if (isRootOrBlank(row.dialUser())) {
+            return "refusing to activate device=" + deviceId + " — dial_user='" + row.dialUser()
+                    + "' (the BFF never dials as root)";
+        }
+        return null;
+    }
+
+    /** The algorithm label of a fingerprint pin, upper-cased; {@code ""} when it carries none. */
+    private static String labelOf(String fp) {
+        String t = fp.trim();
+        int colon = t.indexOf(':');
+        if (colon > 0) {
+            String label = t.substring(0, colon);
+            if (label.equalsIgnoreCase("MD5") || label.equalsIgnoreCase("SHA256")) {
+                return label.toUpperCase(Locale.ROOT);
+            }
+        }
+        return "";
+    }
+
+    /** True for {@code root} in any casing/padding, and for an absent/blank dial user. */
+    private static boolean isRootOrBlank(String dialUser) {
+        return dialUser == null || dialUser.isBlank()
+                || "root".equals(dialUser.trim().toLowerCase(Locale.ROOT));
     }
 
     /** CAS ACTIVE→REVOKED at the next generation; return the existing row if already non-active. */
@@ -145,6 +201,14 @@ public class DesktopDialService {
     /** Refuse to activate a dial row with no pinned host_key_fp (controller -> 422). */
     public static class DialUnpinnedException extends RuntimeException {
         public DialUnpinnedException(String message) {
+            super(message);
+        }
+    }
+
+    /** Refuse to activate a dial row that violates dial-trust POLICY — a non-SHA256 pin, or a
+     *  {@code root}/blank dial user (controller -> 422). */
+    public static class DialPolicyException extends RuntimeException {
+        public DialPolicyException(String message) {
             super(message);
         }
     }

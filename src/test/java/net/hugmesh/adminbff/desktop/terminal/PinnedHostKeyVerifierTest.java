@@ -93,6 +93,75 @@ class PinnedHostKeyVerifierTest {
                 .verify("dev-1.mesh", 22, attackerHost)).isFalse();
     }
 
+    // ── H1: base64 is CASE-SIGNIFICANT; only the algorithm LABEL may be case-folded ──────────
+
+    /** The pre-fix verifier lower-cased BOTH the pin and the computed SHA-256 digest, so a pin
+     *  differing from the real fingerprint only in letter case still verified — folding 52 of
+     *  base64's 64 symbols onto 26. A case-mangled pin is a DIFFERENT pin and must REFUSE. */
+    @Test
+    void rejects_sha256PinThatDiffersFromTheRealFingerprintOnlyInCase() throws Exception {
+        PublicKey host = rsaKey();
+        String real = openSshSha256Fp(host);                 // "SHA256:<mixed-case base64>"
+        String digest = real.substring("SHA256:".length());
+        String mangled = "SHA256:" + digest.toLowerCase(java.util.Locale.ROOT);
+        // Guard the guard: only run the assertion on a digest that actually HAS an upper-case
+        // letter to mangle (an all-lower/all-digit base64 would make this vacuous).
+        assertThat(digest).isNotEqualTo(digest.toLowerCase(java.util.Locale.ROOT));
+
+        assertThat(new PinnedHostKeyVerifier("dev-1", mangled).verify("dev-1.mesh", 22, host))
+                .isFalse();
+    }
+
+    /** The same in the other direction: an UPPER-cased digest is also a different pin. */
+    @Test
+    void rejects_sha256PinUpperCased() throws Exception {
+        PublicKey host = rsaKey();
+        String digest = openSshSha256Fp(host).substring("SHA256:".length());
+        assertThat(digest).isNotEqualTo(digest.toUpperCase(java.util.Locale.ROOT));
+        assertThat(new PinnedHostKeyVerifier("dev-1", "SHA256:" + digest.toUpperCase(java.util.Locale.ROOT))
+                .verify("dev-1.mesh", 22, host)).isFalse();
+    }
+
+    /** MD5 fingerprints are colon-HEX, where case carries no information — those stay
+     *  case-insensitive, so an upper-cased legacy pin keeps working. */
+    @Test
+    void accepts_md5PinRegardlessOfHexCase() throws Exception {
+        PublicKey host = rsaKey();
+        String md5 = SecurityUtils.getFingerprint(host);
+        assertThat(new PinnedHostKeyVerifier("dev-1", md5.toUpperCase(java.util.Locale.ROOT))
+                .verify("dev-1.mesh", 22, host)).isTrue();
+    }
+
+    /** A LABELLED pin is matched ONLY against that algorithm's form — a "SHA256:"-labelled pin
+     *  holding the MD5 hex must not be honoured by the MD5 leg. */
+    @Test
+    void rejects_sha256LabelledPinHoldingTheMd5Digest() throws Exception {
+        PublicKey host = rsaKey();
+        String md5 = SecurityUtils.getFingerprint(host);
+        assertThat(new PinnedHostKeyVerifier("dev-1", "SHA256:" + md5)
+                .verify("dev-1.mesh", 22, host)).isFalse();
+    }
+
+    /** ...and an "MD5:"-labelled pin holding the SHA-256 base64 must not be honoured either. */
+    @Test
+    void rejects_md5LabelledPinHoldingTheSha256Digest() throws Exception {
+        PublicKey host = rsaKey();
+        String digest = openSshSha256Fp(host).substring("SHA256:".length());
+        assertThat(new PinnedHostKeyVerifier("dev-1", "MD5:" + digest)
+                .verify("dev-1.mesh", 22, host)).isFalse();
+    }
+
+    /** An UNLABELLED SHA-256 digest still matches (the seeding PR may have stored the bare form),
+     *  and still exactly. */
+    @Test
+    void accepts_unlabelledSha256Digest_exactCaseOnly() throws Exception {
+        PublicKey host = rsaKey();
+        String digest = openSshSha256Fp(host).substring("SHA256:".length());
+        assertThat(new PinnedHostKeyVerifier("dev-1", digest).verify("dev-1.mesh", 22, host)).isTrue();
+        assertThat(new PinnedHostKeyVerifier("dev-1", digest.toLowerCase(java.util.Locale.ROOT))
+                .verify("dev-1.mesh", 22, host)).isFalse();
+    }
+
     @Test
     void findExistingAlgorithms_isEmpty_noKnownHostsConsulted() {
         PinnedHostKeyVerifier verifier = new PinnedHostKeyVerifier("dev-1", "aa:bb");
