@@ -50,8 +50,9 @@ import static org.springframework.security.test.web.reactive.server.SecurityMock
  * MFA stamp is refused with the "requires step-up" 403 the merged catalog-ui slice keys its
  * {@code <hug-step-up-challenge>} on, and the service is never called.
  *
- * <p><b>{@code withdraw} is ROLE-ONLY</b> — operator decision "role only" (hugmesh-generator #347,
- * 2026-09-10), reversing the gate that landed with #51. The tests below assert the ABSENCE of the
+ * <p><b>{@code withdraw} is ROLE-ONLY</b> — operator answer "role-only — remove the gate"
+ * (hugmesh-generator #347 decision 6, 2026-09-10), reversing the gate that landed with #51. The
+ * tests below assert the ABSENCE of the
  * gate positively rather than by omission: a superadmin with the gate mock refusing everything
  * still gets a 200 and a real write, no {@code X-Step-Up-Required} header is minted, and neither
  * {@code ServiceStoreStepUpGate} nor {@code MfaStepUpService} is consulted at all. That last

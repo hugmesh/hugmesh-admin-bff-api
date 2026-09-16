@@ -710,6 +710,8 @@ app:
       # device, named by that device's device_ssh_dial.k8s_secret_name. A PATH only, never bytes.
       key-mount-path: "${DEVICE_TERMINAL_DIAL_KEY_MOUNT:/var/run/secrets/device-ssh-dial}"
       # File within EACH per-device Secret mount that holds the PEM/OpenSSH private dial key.
+      # ONE plain file name (no separator, no `.`/`..`): a value that climbs out of the device
+      # directory is refused at startup (ERROR) and on every dial, so it cannot reach a flat key.
       key-file: "${DEVICE_TERMINAL_DIAL_KEY_FILE:id_dial}"
       # The node sshd port the BFF dials.
       port: "${DEVICE_TERMINAL_DIAL_PORT:22}"

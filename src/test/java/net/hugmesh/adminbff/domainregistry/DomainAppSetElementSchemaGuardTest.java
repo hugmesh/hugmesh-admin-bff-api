@@ -202,7 +202,12 @@ class DomainAppSetElementSchemaGuardTest {
     @DisplayName("this commit wires NO ApplicationSet writer — the guard is inert")
     void domainRegistryPackage_stillWiresNoApplicationSetWriter() throws Exception {
         Path pkg = Path.of("src/main/java/net/hugmesh/adminbff/domainregistry");
-        assumeTrue(Files.isDirectory(pkg), "not running from the module root");
+        // ASSERT, not assume: a guard that SKIPS when it cannot see the sources is a guard that
+        // passes vacuously (the other two source scans on this branch assert the same way).
+        assertThat(Files.isDirectory(pkg))
+                .as("main sources must be scannable from surefire's working directory (%s)",
+                        pkg.toAbsolutePath())
+                .isTrue();
 
         List<String> offenders = new ArrayList<>();
         try (var paths = Files.list(pkg)) {

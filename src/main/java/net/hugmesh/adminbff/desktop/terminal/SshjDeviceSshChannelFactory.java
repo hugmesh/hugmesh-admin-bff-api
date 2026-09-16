@@ -539,13 +539,31 @@ public class SshjDeviceSshChannelFactory implements DeviceSshChannelFactory {
      * {@code Path.of(keyMountPath, keyFile)} for EVERY device — one mesh-wide BFF dial key, so a
      * single compromise reached every node with an ACTIVE row and rotating one device's credential
      * was impossible. The device's own {@code k8s_secret_name} is now a REQUIRED path segment, so
-     * a mesh-wide key is not merely discouraged: there is no code path that can reach one.
+     * a mesh-wide key is not merely discouraged: every path this helper can return lies STRICTLY
+     * inside the device's own Secret directory.
+     *
+     * <p>Three rules, each independent of the others, all fail-closed:
+     * <ol>
+     *   <li>the row's {@code k8s_secret_name} must be ONE DNS-1123 Secret name
+     *       ({@link #dialKeyIdentityRefusal}) — so the row cannot name {@code ..} or a
+     *       separator;</li>
+     *   <li>the {@code key-file} SETTING must be ONE plain file name ({@link #keyFileRefusal}) —
+     *       so operator config cannot climb back out of the device directory either. The
+     *       2026-09-16 skeptic pass on this branch measured that with only the mount-root check
+     *       below, {@code key-file=../id_dial} resolved EVERY device to
+     *       {@code <key-mount-path>/id_dial} — the retired mesh-wide path — and was ACCEPTED,
+     *       silently. That is why this rule exists and why the containment check is now against
+     *       the device directory rather than the mount root;</li>
+     *   <li>whatever the two settings say, the NORMALIZED result must still be a descendant of
+     *       {@code <key-mount-path>/<k8s_secret_name>} — belt-and-braces on both rules above.</li>
+     * </ol>
      *
      * <p>Both callers resolve THROUGH HERE and neither accepts a path from its caller, so the two
      * cannot drift apart and no caller can inject a mount-root path.
      *
-     * @throws IOException (fail-closed) when the row carries no usable {@code k8s_secret_name}, or
-     *     when the resolved path would escape the mount root.
+     * @throws IOException (fail-closed) when the row carries no usable {@code k8s_secret_name},
+     *     when the configured key-file is not a single plain file name, or when the resolved path
+     *     would leave the device's own Secret directory.
      */
     static Path resolveDialKeyPath(DeviceTerminalDialProperties props, DeviceSshDial dial)
             throws IOException {
@@ -554,16 +572,51 @@ public class SshjDeviceSshChannelFactory implements DeviceSshChannelFactory {
             throw new IOException("device_ssh_dial for device=" + dial.deviceId() + " " + refusal
                     + " — refusing to resolve a dial key");
         }
+        String keyFileRefusal = keyFileRefusal(props);
+        if (keyFileRefusal != null) {
+            throw new IOException("dial key-file setting " + keyFileRefusal
+                    + " — refusing to resolve a dial key for device=" + dial.deviceId());
+        }
         Path mountRoot = Path.of(props.getKeyMountPath()).normalize();
-        Path keyPath = mountRoot.resolve(dial.k8sSecretName()).resolve(props.getKeyFile())
-                .normalize();
-        // Belt-and-braces, INDEPENDENT of the name syntax rule above: whatever the row or the
-        // key-file setting says, the resolved file must still live under the configured mount.
-        if (!keyPath.startsWith(mountRoot)) {
-            throw new IOException("resolved dial key path escapes the mount for device="
-                    + dial.deviceId() + " (k8sSecret=" + dial.k8sSecretName() + ") — refusing");
+        Path deviceDir = mountRoot.resolve(dial.k8sSecretName()).normalize();
+        Path keyPath = deviceDir.resolve(props.getKeyFile()).normalize();
+        // Belt-and-braces, INDEPENDENT of the two syntax rules above: whatever the row or the
+        // key-file setting says, the resolved file must still live INSIDE THIS DEVICE's own Secret
+        // directory — not merely under the mount root, which a `../<key-file>` key-file satisfied
+        // while resolving to the retired mesh-wide file.
+        if (keyPath.equals(deviceDir) || !keyPath.startsWith(deviceDir)) {
+            throw new IOException("resolved dial key path escapes the device's own Secret mount for"
+                    + " device=" + dial.deviceId() + " (k8sSecret=" + dial.k8sSecretName()
+                    + ") — refusing");
         }
         return keyPath;
+    }
+
+    /**
+     * The KEY-FILE precondition: {@code app.device-terminal.dial.key-file} must be ONE plain file
+     * name inside each per-device Secret mount — never blank, never {@code .} or {@code ..}, never
+     * a path with a separator. A Kubernetes Secret key cannot contain a separator anyway, so no
+     * legitimate deployment loses anything; what this refuses is a setting that would climb out of
+     * the device directory (the {@code ../id_dial} shape) or name the directory itself.
+     *
+     * <p>Shared by {@link #resolveDialKeyPath} (dial time) and {@link DeviceTerminalConfig}
+     * (startup, logged at ERROR) so a mis-set deployment learns at startup, not on the first dial.
+     * Returns the refusal reason, or {@code null} when the setting is usable. The echoed value is
+     * operator configuration (an env var), not row data, and it is a file NAME, never key bytes.
+     */
+    static String keyFileRefusal(DeviceTerminalDialProperties props) {
+        String keyFile = props.getKeyFile();
+        if (keyFile == null || keyFile.isBlank()) {
+            return "is blank (app.device-terminal.dial.key-file must name the key file inside each"
+                    + " per-device Secret mount)";
+        }
+        if (keyFile.equals(".") || keyFile.equals("..") || keyFile.contains("/")
+                || keyFile.contains("\\")) {
+            return "is not a single plain file name (key-file='" + printable(keyFile)
+                    + "'; a key-file that climbs out of the per-device Secret directory would reach"
+                    + " the retired mesh-wide key at the mount root)";
+        }
+        return null;
     }
 
     /**
@@ -589,11 +642,37 @@ public class SshjDeviceSshChannelFactory implements DeviceSshChannelFactory {
         }
         if (secret.length() > MAX_SECRET_NAME_LENGTH || !SECRET_NAME.matcher(secret).matches()) {
             // A Secret NAME is not a secret, so it is safe to echo — and an operator debugging a
-            // bad ingest needs to see the value that was rejected.
-            return "has a malformed k8s_secret_name='" + secret + "' (must be ONE DNS-1123 Secret"
-                    + " name; it is used as a path segment under the dial key mount)";
+            // bad ingest needs to see the value that was rejected. But the value comes from the
+            // image-build ingest (an internal-token surface that bounds only its LENGTH) and this
+            // phrase reaches plain-text audit lines and a 422 body, so it is echoed as PRINTABLE
+            // ASCII, bounded — a newline or an ANSI escape planted in a name cannot forge or
+            // colour a log line.
+            return "has a malformed k8s_secret_name='" + printable(secret) + "' (must be ONE"
+                    + " DNS-1123 Secret name; it is used as a path segment under the dial key"
+                    + " mount)";
         }
         return null;
+    }
+
+    /** Max characters of an untrusted value echoed into a refusal phrase (log/422-safe). */
+    private static final int MAX_ECHO = 64;
+
+    /**
+     * Render an UNTRUSTED string for a log line or an error body: every character outside
+     * printable ASCII becomes {@code ?}, and anything past {@link #MAX_ECHO} characters is
+     * replaced by a length marker. Never applied to key material — only to names and settings.
+     */
+    static String printable(String value) {
+        StringBuilder out = new StringBuilder(Math.min(value.length(), MAX_ECHO) + 16);
+        int shown = Math.min(value.length(), MAX_ECHO);
+        for (int i = 0; i < shown; i++) {
+            char c = value.charAt(i);
+            out.append(c >= 0x20 && c <= 0x7E ? c : '?');
+        }
+        if (value.length() > MAX_ECHO) {
+            out.append("…(").append(value.length()).append(" chars)");
+        }
+        return out.toString();
     }
 
     /**
@@ -624,8 +703,8 @@ public class SshjDeviceSshChannelFactory implements DeviceSshChannelFactory {
      * dial. Returns a PATH, never bytes.
      */
     static String meshWideKeyHint(DeviceTerminalDialProperties props) {
-        Path legacy = Path.of(props.getKeyMountPath(), props.getKeyFile());
-        if (!Files.isReadable(legacy)) {
+        Path legacy = Path.of(props.getKeyMountPath(), props.getKeyFile()).normalize();
+        if (!Files.isRegularFile(legacy) || !Files.isReadable(legacy)) {
             return "";
         }
         return " — a MESH-WIDE dial key is mounted at " + legacy + "; mesh-wide dial keys are NO"
@@ -654,8 +733,15 @@ public class SshjDeviceSshChannelFactory implements DeviceSshChannelFactory {
             throws IOException {
         Path keyPath = resolveDialKeyPath(props, dial);
         byte[] raw = Files.readAllBytes(keyPath);
-        char[] pem = new String(raw, StandardCharsets.UTF_8).toCharArray();
+        // Decode straight into a wipeable char[] — NOT via `new String(raw)`, whose immutable copy
+        // of the PEM would outlive this method until GC and defeat the finally-wipe below.
+        java.nio.CharBuffer decoded = StandardCharsets.UTF_8.decode(java.nio.ByteBuffer.wrap(raw));
         java.util.Arrays.fill(raw, (byte) 0);
+        char[] pem = new char[decoded.remaining()];
+        decoded.get(pem);
+        if (decoded.hasArray()) {
+            java.util.Arrays.fill(decoded.array(), '\0');
+        }
         try {
             // Detect the key format from the in-memory text, pick the matching sshj FileKeyProvider
             // factory from this client's config, and init it from a Reader over the same text — so

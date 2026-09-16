@@ -20,6 +20,15 @@ import static org.assertj.core.api.Assertions.assertThat;
  * request mappings it declares is PINNED here, so retiring one is a deliberate act that has to
  * come through this file and read the evidence below first.
  *
+ * <p><b>This guard does not oppose the retirement — it sequences it.</b> The operator's answer
+ * on hugmesh-generator#347 decision 11 is <i>"retire them"</i>, with the caveat, in the same
+ * line: <i>"If a probe shows a live consumer I will report it here rather than delete
+ * quietly."</i> The probe showed live consumers on two of three lanes (below), so the paths
+ * stay for now and the blockers are tracked (hugmesh-generator#366 for the two disagreeing route
+ * tables). When a blocker is cleared, retiring the path means removing its mapping AND its
+ * {@link #PINNED} entry in the same commit — one edit, with the evidence in front of you. If the
+ * operator prefers no guard at all, delete this class; nothing at runtime depends on it.
+ *
  * <h2>Why this guard exists</h2>
  * The operator's answer on hugmesh-admin-bff-api#2 is <b>"retire"</b>. That answer is on the
  * issue, so the next reader will try to carry it out — and on 2026-09-10 carrying it out would
@@ -42,8 +51,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  * <h2>What trips it</h2>
  * Deleting a mapping trips it (the retirement this guards against) and so does ADDING one — a new
  * legacy user path deserves the same three-lane check. Either way the fix is to update
- * {@link #PINNED} <em>and</em> the audit in {@link AuthController}'s javadoc together, which is
- * the whole point: the pin and the evidence cannot drift apart silently.
+ * {@link #PINNED} <em>and</em> the audit in {@link AuthController}'s javadoc together. (Only the
+ * MAPPINGS are scanned; the javadoc audit is not — so the pin catches a surface change, and the
+ * failure message is what points the editor at the prose to update alongside it.)
  *
  * <h2>Documented limit</h2>
  * This reads source text, so it pins what the file DECLARES, not what the running app serves. A

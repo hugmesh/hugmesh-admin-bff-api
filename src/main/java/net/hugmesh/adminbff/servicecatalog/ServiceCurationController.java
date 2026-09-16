@@ -56,7 +56,8 @@ import net.hugmesh.adminbff.web.dto.ServiceCurationRequest;
  * {@code offer} when hugmesh-admin-bff-api #51 landed, over the objection recorded in the
  * superadmin-service-catalog-ui #4 plan ("gating it means a step-up to REMOVE a service from a
  * domain, which may be the wrong friction"). The question was put to the operator on
- * hugmesh-generator #347 and answered <b>"role only"</b> on 2026-09-10, so the gate is gone:
+ * hugmesh-generator #347 (decision 6) and answered <b>"role-only — remove the gate"</b> on
+ * 2026-09-10, so the gate is gone:
  * {@code @PreAuthorize("hasRole('SUPERADMIN')")} plus the coarse {@code /bff/superadmin/**} gate
  * is the whole protection on this verb, and it takes no step-up header, session cookie or
  * {@code Authorization} parameter at all.
@@ -134,7 +135,8 @@ public class ServiceCurationController {
     }
 
     // ── Withdraw a service_key from a {domain}'s offered catalog (SUPERADMIN; ROLE-ONLY) ──
-    // No step-up: operator decision "role only" (hugmesh-generator #347, 2026-09-10). The
+    // No step-up: operator answer "role-only — remove the gate" (hugmesh-generator #347
+    // decision 6, 2026-09-10). The
     // signature deliberately carries no step-up header / cookie / Authorization parameter, so the
     // dumped openapi contract shows this verb as role-protected rather than merely lenient.
     @PreAuthorize("hasRole('SUPERADMIN')")

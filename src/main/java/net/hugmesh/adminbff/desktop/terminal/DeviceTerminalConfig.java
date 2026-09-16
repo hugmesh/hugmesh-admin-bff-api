@@ -106,20 +106,43 @@ public class DeviceTerminalConfig {
                 + "host-key PINNED, no TOFU; PER-DEVICE dial key from {}/<k8s_secret_name>/{}) "
                 + "— REQUIRES security re-review before enablement",
                 dialProps.getKeyMountPath(), dialProps.getKeyFile());
+        announceDialPolicy(dialProps, DeviceDialAlgorithmPolicy.unavailableAlgorithms());
+        return new SshjDeviceSshChannelFactory(dials, dialProps);
+    }
+
+    /**
+     * The STARTUP announcement for a real dial: the algorithm policy at INFO, and at ERROR every
+     * condition under which the dial will fail closed on its first use — a policy algorithm this
+     * sshj build lacks, a {@code key-file} setting that is not one plain file name, a mesh-wide key
+     * still mounted flat at the mount root. "Learn it now, not at 3am on the first dial."
+     *
+     * <p>Package-private and given its inputs as PARAMETERS on purpose: this sshj build provides
+     * every policy algorithm, so a test through the real wiring can only ever observe the happy
+     * path and a check that was silently disabled would look identical (the 2026-09-16 skeptic
+     * pass proved exactly that with a surviving mutant). {@code DeviceTerminalDialWiringTest}
+     * therefore feeds a synthetic missing algorithm, a bad key-file and a real flat key through
+     * THIS seam and asserts the ERROR lines, while its wiring-level test proves the bean calls it.
+     */
+    static void announceDialPolicy(DeviceTerminalDialProperties dialProps,
+                                   List<String> unavailable) {
         log.info("[device-terminal] (sshj) dial algorithm policy (NOT sshj's DefaultConfig): {}",
                 DeviceDialAlgorithmPolicy.describe());
-        List<String> unavailable = DeviceDialAlgorithmPolicy.unavailableAlgorithms();
         if (!unavailable.isEmpty()) {
             log.error("[device-terminal] DIAL ALGORITHM POLICY UNAVAILABLE — this sshj build does "
                     + "not provide {} — every dial will FAIL CLOSED rather than negotiate an "
                     + "unreviewed algorithm set (hugmesh-admin-bff-api#11 H3)", unavailable);
+        }
+        String keyFile = SshjDeviceSshChannelFactory.keyFileRefusal(dialProps);
+        if (keyFile != null) {
+            log.error("[device-terminal] DIAL KEY-FILE SETTING REFUSED — app.device-terminal.dial"
+                    + ".key-file {} — every dial will FAIL CLOSED until it names one plain file"
+                    + " inside each per-device Secret mount", keyFile);
         }
         String meshWide = SshjDeviceSshChannelFactory.meshWideKeyHint(dialProps);
         if (!meshWide.isEmpty()) {
             log.error("[device-terminal] MESH-WIDE DIAL KEY DETECTED — this deployment will NOT "
                     + "dial any device until per-device Secrets are mounted{}", meshWide);
         }
-        return new SshjDeviceSshChannelFactory(dials, dialProps);
     }
 
     /** The dial seam DEFAULT. FAILS CLOSED (never dials, never TOFU-trusts). In force whenever the

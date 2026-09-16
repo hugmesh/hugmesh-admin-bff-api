@@ -45,7 +45,11 @@ public class DeviceTerminalDialProperties {
      *  {@code <keyMountPath>/<keyFile>} is a retired mesh-wide key and is NEVER used. */
     private String keyMountPath = "/var/run/secrets/device-ssh-dial";
 
-    /** The file within EACH per-device Secret mount that holds the PEM/OpenSSH private dial key. */
+    /** The file within EACH per-device Secret mount that holds the PEM/OpenSSH private dial key.
+     *  ONE plain file name: no separator, never {@code .}/{@code ..} — a value that climbs out of
+     *  the per-device directory (e.g. {@code ../id_dial}, which points back at the retired
+     *  mesh-wide file) is refused at startup (ERROR) and on every dial
+     *  ({@code SshjDeviceSshChannelFactory.keyFileRefusal}). */
     private String keyFile = "id_dial";
 
     /** The TCP port the BFF dials the mesh node's sshd on. */
