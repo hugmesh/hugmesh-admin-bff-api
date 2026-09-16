@@ -8,6 +8,7 @@ import java.util.Locale;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import net.hugmesh.adminbff.desktop.terminal.DeviceTerminalDialProperties;
+import net.hugmesh.adminbff.desktop.terminal.SshjDeviceSshChannelFactory;
 import net.hugmesh.commons.security.PrincipalDomain;
 
 /**
@@ -145,6 +146,23 @@ public class DesktopDialService {
      *       blank dial user is refused for the same reason (an unnamed dial user is an unreviewed
      *       one). The dial factory refuses the same rows at dial time, so a row activated before
      *       this rule existed still cannot dial.</li>
+     *   <li><b>Must name its OWN key Secret.</b> Key material is PER DEVICE (operator decision,
+     *       2026-09-10, hugmesh-admin-bff-api#11): the factory reads
+     *       {@code <key-mount-path>/<k8s_secret_name>/<key-file>}, so a row with no (or a malformed)
+     *       {@code k8s_secret_name} names no key material and can never dial. Refusing it HERE
+     *       means the operator learns at the moment they can fix it rather than on a failed dial;
+     *       {@code SshjDeviceSshChannelFactory.dialKeyIdentityRefusal} — the same predicate — is
+     *       what actually keeps it off the wire, on BOTH verbs, exactly like the two rules above.
+     *       <p>MEASURED, so the two halves of this rule are not credited equally. The ABSENT case
+     *       is unreachable through the ingest: {@code k8s_secret_name} is {@code NOT NULL}
+     *       (changelog {@code 170-device-ssh-keys.xml:89}) and {@code ImageBuildService.seedDial}
+     *       passes it through {@code blankToNull}, so an ingest that omits OR blanks the name
+     *       inserts a NULL, the INSERT fails, and the seed is skipped — a blank name can only
+     *       arrive from outside that path, which is why it is checked rather than assumed. The
+     *       MALFORMED case is a different matter and IS reachable from that internal-token
+     *       surface: {@code ImageBuildIngestRequest.k8sSecretName} bounds only its LENGTH
+     *       ({@code @Size(max = 253)}, no pattern), so {@code ../../etc/ssl} is stored verbatim
+     *       today. Now that the column is a PATH SEGMENT, that is the half with teeth.</li>
      * </ul>
      */
     private static String policyRefusal(DeviceSshDial row, String deviceId) {
@@ -155,6 +173,10 @@ public class DesktopDialService {
         if (isRootOrBlank(row.dialUser())) {
             return "refusing to activate device=" + deviceId + " — dial_user='" + row.dialUser()
                     + "' (the BFF never dials as root)";
+        }
+        String keyIdentity = SshjDeviceSshChannelFactory.dialKeyIdentityRefusal(row);
+        if (keyIdentity != null) {
+            return "refusing to activate device=" + deviceId + " — the dial row " + keyIdentity;
         }
         return null;
     }

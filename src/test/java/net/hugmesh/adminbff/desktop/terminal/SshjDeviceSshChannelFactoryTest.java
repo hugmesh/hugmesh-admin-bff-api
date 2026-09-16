@@ -49,6 +49,8 @@ class SshjDeviceSshChannelFactoryTest {
     private static final String DEVICE = "dev-1";
     private static final String HOST = "dev-1.mesh";
     private static final String OPERATOR = "admin-x";
+    /** The k8s_secret_name every {@link #dial} row carries — the PER-DEVICE mount subdirectory. */
+    private static final String SECRET = "device-ssh-dial-dev-1";
 
     private DeviceSshDialRepository dials;
     private DeviceTerminalDialProperties props;
@@ -90,7 +92,15 @@ class SshjDeviceSshChannelFactoryTest {
 
     private static DeviceSshDial dial(String status, String hostKeyFp, String dialUser) {
         return new DeviceSshDial("dial-1", DEVICE, dialUser, "ssh-rsa AAAA...", hostKeyFp,
-                "fp-pub", "vault://kv/dev-1", "device-ssh-dial-dev-1", null, status, 1L,
+                "fp-pub", "vault://kv/dev-1", SECRET, null, status, 1L,
+                Instant.now(), null);
+    }
+
+    /** An ACTIVE, SHA256-pinned, non-root row that differs ONLY in its k8s_secret_name — so a
+     *  refusal can be attributed to the per-device key rule and nothing else. */
+    private static DeviceSshDial dialWithSecret(String k8sSecretName) {
+        return new DeviceSshDial("dial-1", DEVICE, "ops", "ssh-rsa AAAA...", "SHA256:abc",
+                "fp-pub", "vault://kv/dev-1", k8sSecretName, null, DeviceSshDial.STATUS_ACTIVE, 1L,
                 Instant.now(), null);
     }
 
@@ -205,7 +215,8 @@ class SshjDeviceSshChannelFactoryTest {
         long startNanos = System.nanoTime();
         StepVerifier.create(factory().open(DEVICE, "192.0.2.1", OPERATOR, 80, 24))
                 .expectErrorSatisfies(e -> assertThat(e.getMessage())
-                        .contains("dial private key not present at mount"))
+                        .contains("per-device dial private key not present at mount")
+                        .contains(emptyMount.resolve(SECRET).resolve("id_dial").toString()))
                 .verify(Duration.ofSeconds(25));
         // No handshake was attempted: the refusal is immediate, not connect-timeout-shaped.
         assertThat(Duration.ofNanos(System.nanoTime() - startNanos))
@@ -223,7 +234,8 @@ class SshjDeviceSshChannelFactoryTest {
 
         StepVerifier.create(factory().exec(DEVICE, "192.0.2.1", "flatpak install -y org.x.App"))
                 .expectErrorSatisfies(e -> assertThat(e.getMessage())
-                        .contains("dial private key not present at mount"))
+                        .contains("per-device dial private key not present at mount")
+                        .contains(emptyMount.resolve(SECRET).resolve("id_dial").toString()))
                 .verify(Duration.ofSeconds(25));
     }
 
@@ -321,14 +333,18 @@ class SshjDeviceSshChannelFactoryTest {
         // key BYTES are not parsed on this path — the parse happens after connect — so what this
         // pins is that a failing dial never echoes the mounted key (or the words "PRIVATE KEY")
         // into any log line, including the mount/provenance error text.
-        String secretMarker = writeRealRsaPrivateKey(tmp.resolve("id_dial"));
+        // PER-DEVICE mount: the key lives under the row's OWN k8s_secret_name, not at the root.
+        String secretMarker = writeRealRsaPrivateKey(tmp.resolve(SECRET).resolve("id_dial"));
         props.setKeyMountPath(tmp.toString());
         props.setKeyFile("id_dial");
         props.setPort(1); // nothing listening -> connect fails fast
         props.setConnectTimeout(Duration.ofMillis(200));
 
+        // A SHA256: pin, so the row clears refusalReason and the dial really reaches the mount.
+        // (It carried an unlabelled "aa:bb:cc:dd" pin, which the later MD5-pin rule refuses before
+        // the mount is ever consulted — the test was passing without exercising the key path.)
         when(dials.findByDeviceId(eq(DEVICE)))
-                .thenReturn(Mono.just(dial(DeviceSshDial.STATUS_ACTIVE, "aa:bb:cc:dd")));
+                .thenReturn(Mono.just(dial(DeviceSshDial.STATUS_ACTIVE, "SHA256:abc")));
 
         StepVerifier.create(factory().open(DEVICE, HOST, OPERATOR, 80, 24))
                 .expectError() // connect refused / timed out — but key was read on the way
@@ -561,6 +577,406 @@ class SshjDeviceSshChannelFactoryTest {
         }
     }
 
+
+    // ── PER-DEVICE KEY MATERIAL (operator answer "per device", 2026-09-10, issue #11 B1) ─────
+    //
+    // Before the decision, preflightDialKey/loadDialKey both read ONE fixed
+    // Path.of(keyMountPath, keyFile) for EVERY device — a single mesh-wide BFF dial key. These
+    // pin the two halves of the answer: (a) the path is resolved from the DEVICE's own
+    // k8s_secret_name, and (b) a mesh-wide single key is no longer a valid configuration — it
+    // fails closed, on both verbs, with a message that says so.
+
+    @Test
+    void resolveDialKeyPath_isPerDevice_neverTheOneMeshWidePath() throws Exception {
+        props.setKeyMountPath("/var/run/secrets/device-ssh-dial");
+        props.setKeyFile("id_dial");
+
+        Path a = SshjDeviceSshChannelFactory.resolveDialKeyPath(props, dialWithSecret("dial-key-a"));
+        Path b = SshjDeviceSshChannelFactory.resolveDialKeyPath(props, dialWithSecret("dial-key-b"));
+
+        assertThat(a).isEqualTo(Path.of("/var/run/secrets/device-ssh-dial/dial-key-a/id_dial"));
+        assertThat(b).isEqualTo(Path.of("/var/run/secrets/device-ssh-dial/dial-key-b/id_dial"));
+        // Two devices, two DIFFERENT files. This is the whole of the decision.
+        assertThat(a).isNotEqualTo(b);
+        // And neither is the retired mesh-wide path.
+        assertThat(a).isNotEqualTo(Path.of("/var/run/secrets/device-ssh-dial/id_dial"));
+        assertThat(b).isNotEqualTo(Path.of("/var/run/secrets/device-ssh-dial/id_dial"));
+    }
+
+    /** THE fail-closed test for a deployment that has one mesh-wide key today: the key file sits at
+     *  the mount ROOT (exactly where the pre-decision code read it) and nowhere else. The dial must
+     *  REFUSE — never silently fall back to it — and the refusal must NAME it, because an operator
+     *  who is only told "not present" while a key file is plainly on disk looks in the wrong place. */
+    @Test
+    void refusesAMeshWideKeyAtTheMountRoot_andSaysSo_open(
+            @org.junit.jupiter.api.io.TempDir Path mount) throws Exception {
+        writeRealRsaPrivateKey(mount.resolve("id_dial"));   // the RETIRED mesh-wide shape
+        props.setKeyMountPath(mount.toString());
+        props.setKeyFile("id_dial");
+        props.setConnectTimeout(Duration.ofSeconds(30));
+        when(dials.findByDeviceId(eq(DEVICE)))
+                .thenReturn(Mono.just(dial(DeviceSshDial.STATUS_ACTIVE, "SHA256:abc")));
+
+        long startNanos = System.nanoTime();
+        StepVerifier.create(factory().open(DEVICE, "192.0.2.1", OPERATOR, 80, 24))
+                .expectErrorSatisfies(e -> assertThat(e.getMessage())
+                        .contains("per-device dial private key not present at mount")
+                        .contains("MESH-WIDE dial key is mounted at "
+                                + mount.resolve("id_dial"))
+                        .contains("NO LONGER a valid configuration"))
+                .verify(Duration.ofSeconds(25));
+        // Refused BEFORE any socket: not connect-timeout-shaped.
+        assertThat(Duration.ofNanos(System.nanoTime() - startNanos))
+                .isLessThan(Duration.ofSeconds(10));
+    }
+
+    @Test
+    void refusesAMeshWideKeyAtTheMountRoot_andSaysSo_exec(
+            @org.junit.jupiter.api.io.TempDir Path mount) throws Exception {
+        writeRealRsaPrivateKey(mount.resolve("id_dial"));
+        props.setKeyMountPath(mount.toString());
+        props.setKeyFile("id_dial");
+        props.setConnectTimeout(Duration.ofSeconds(30));
+        when(dials.findByDeviceId(eq(DEVICE)))
+                .thenReturn(Mono.just(dial(DeviceSshDial.STATUS_ACTIVE, "SHA256:abc")));
+
+        StepVerifier.create(factory().exec(DEVICE, "192.0.2.1", "flatpak install -y org.x.App"))
+                .expectErrorSatisfies(e -> assertThat(e.getMessage())
+                        .contains("per-device dial private key not present at mount")
+                        .contains("MESH-WIDE dial key is mounted at "
+                                + mount.resolve("id_dial")))
+                .verify(Duration.ofSeconds(25));
+    }
+
+    /** The mirror image, and what makes the two above non-vacuous: with the key at the PER-DEVICE
+     *  path and NOTHING at the mount root, the mount check PASSES and the dial goes on to fail at
+     *  connect instead. A regression that resolved the flat mesh-wide path would fail here. */
+    @Test
+    void acceptsTheKeyAtThePerDeviceMount_andProceedsPastTheMountCheck(
+            @org.junit.jupiter.api.io.TempDir Path mount) throws Exception {
+        writeRealRsaPrivateKey(mount.resolve(SECRET).resolve("id_dial"));
+        assertThat(Files.exists(mount.resolve("id_dial"))).isFalse();   // no mesh-wide key anywhere
+        props.setKeyMountPath(mount.toString());
+        props.setKeyFile("id_dial");
+        props.setPort(1);                                   // nothing listening -> connect fails
+        props.setConnectTimeout(Duration.ofMillis(300));
+        when(dials.findByDeviceId(eq(DEVICE)))
+                .thenReturn(Mono.just(dial(DeviceSshDial.STATUS_ACTIVE, "SHA256:abc")));
+
+        StepVerifier.create(factory().open(DEVICE, "127.0.0.1", OPERATOR, 80, 24))
+                .expectErrorSatisfies(e -> assertThat(String.valueOf(e.getMessage()))
+                        .doesNotContain("not present at mount")
+                        .doesNotContain("k8s_secret_name"))
+                .verify(Duration.ofSeconds(20));
+    }
+
+    /** A row that names NO Secret is exactly the shape a mesh-wide deployment has. Refused by the
+     *  ONE shared precondition list, so BOTH verbs refuse it, before any dispatch. */
+    @Test
+    void refuses_whenTheRowNamesNoK8sSecret_open() {
+        when(dials.findByDeviceId(eq(DEVICE))).thenReturn(Mono.just(dialWithSecret(null)));
+
+        StepVerifier.create(factory().open(DEVICE, HOST, OPERATOR, 80, 24))
+                .expectErrorSatisfies(e -> {
+                    assertThat(e).isInstanceOf(DeviceSshChannelFactory.HostKeyVerificationException.class);
+                    assertThat(e.getMessage())
+                            .contains("names no k8s_secret_name")
+                            .contains("mesh-wide dial key is no longer a valid configuration")
+                            .contains("refusing to dial");
+                })
+                .verify();
+    }
+
+    @Test
+    void refuses_whenTheRowNamesNoK8sSecret_exec() {
+        when(dials.findByDeviceId(eq(DEVICE))).thenReturn(Mono.just(dialWithSecret("   ")));
+
+        StepVerifier.create(factory().exec(DEVICE, HOST, "flatpak install -y org.x.App"))
+                .expectErrorSatisfies(e -> {
+                    assertThat(e).isInstanceOf(DeviceSshChannelFactory.HostKeyVerificationException.class);
+                    assertThat(e.getMessage())
+                            .contains("names no k8s_secret_name")
+                            .contains("refusing to exec");
+                })
+                .verify();
+    }
+
+    /** k8s_secret_name becomes a PATH SEGMENT, and it is seeded from the image-build ingest (an
+     *  internal-token surface). It is matched against the real DNS-1123 Secret-name rule, so a
+     *  traversal, a separator, an absolute path or padding can never reach the filesystem. */
+    @Test
+    void refusesEveryMalformedK8sSecretName_soNoRowCanEscapeTheMount() {
+        String[] malformed = {
+            "..", "../..", "../../etc/ssl", "a/b", "/etc/ssl", "\\\\etc", "dial key",
+            " dial-key-a", "dial-key-a ", "-dial", "dial-", ".dial", "dial.", "Dial-Key",
+            "dial_key", "dial..key", "", "  ", "a".repeat(254),
+        };
+        for (String name : malformed) {
+            assertThat(SshjDeviceSshChannelFactory.dialKeyIdentityRefusal(dialWithSecret(name)))
+                    .as("must refuse k8s_secret_name=<%s>", name)
+                    .isNotNull();
+            assertThatThrownBy(() ->
+                    SshjDeviceSshChannelFactory.resolveDialKeyPath(props, dialWithSecret(name)))
+                    .as("must refuse to resolve a path for k8s_secret_name=<%s>", name)
+                    .isInstanceOf(IOException.class);
+        }
+    }
+
+    /** Not over-broad: every shape a real ESO-synced Secret name takes still resolves. */
+    @Test
+    void acceptsEveryLegalK8sSecretName() throws Exception {
+        props.setKeyMountPath("/mnt");
+        props.setKeyFile("id_dial");
+        for (String name : new String[] {
+            "device-ssh-dial-dev-1", "dial", "d1", "a.b.c", "dial-key-0000", "a".repeat(253),
+        }) {
+            assertThat(SshjDeviceSshChannelFactory.dialKeyIdentityRefusal(dialWithSecret(name)))
+                    .as("must ACCEPT k8s_secret_name=<%s>", name)
+                    .isNull();
+            assertThat(SshjDeviceSshChannelFactory.resolveDialKeyPath(props, dialWithSecret(name)))
+                    .isEqualTo(Path.of("/mnt", name, "id_dial"));
+        }
+    }
+
+    /** The SECOND, independent guard: whatever the row says, the resolved file must still live
+     *  under the configured mount. Here the escape comes from the key-FILE setting, which the
+     *  Secret-name rule does not police at all. */
+    @Test
+    void refusesAResolvedPathThatEscapesTheMount_evenWithALegalSecretName() {
+        props.setKeyMountPath("/var/run/secrets/device-ssh-dial");
+        props.setKeyFile("../../../etc/shadow");
+
+        assertThatThrownBy(() ->
+                SshjDeviceSshChannelFactory.resolveDialKeyPath(props, dialWithSecret("dial-key-a")))
+                .isInstanceOf(IOException.class)
+                .hasMessageContaining("key-file");
+    }
+
+    // ── key-file='../id_dial': the hole the 2026-09-16 skeptic pass found ─────────────────────
+    //
+    // With only a mount-ROOT containment check, key-file='../id_dial' made EVERY device resolve to
+    // <mount>/id_dial — the retired mesh-wide file — and it was ACCEPTED, silently (the hint did
+    // not fire either). Operator config rather than row data, so not an escape, but it falsified
+    // "there is no code path that can reach a mesh-wide key". These pin the fix on both readers.
+
+    /** The exact reproduction the skeptic ran, now expected to REFUSE. */
+    @Test
+    void refusesAKeyFileThatClimbsBackToTheMountRoot_theRetiredMeshWidePath() {
+        props.setKeyMountPath("/var/run/secrets/device-ssh-dial");
+        props.setKeyFile("../id_dial");
+
+        assertThatThrownBy(() ->
+                SshjDeviceSshChannelFactory.resolveDialKeyPath(props, dialWithSecret("dial-key-a")))
+                .isInstanceOf(IOException.class)
+                .hasMessageContaining("key-file")
+                .hasMessageContaining("not a single plain file name");
+        assertThat(SshjDeviceSshChannelFactory.keyFileRefusal(props)).isNotNull();
+    }
+
+    /** BEHAVIOURAL, on the second reader: a real key sits ONLY at the mount root, key-file points
+     *  back at it through `..`, and loadDialKey must NOT read it. Before the fix this returned a
+     *  parsed provider over the mesh-wide key. */
+    @Test
+    void loadDialKey_neverReachesTheMeshWideKey_throughAClimbingKeyFile(
+            @org.junit.jupiter.api.io.TempDir Path mount) throws Exception {
+        writeRealRsaPrivateKey(mount.resolve("id_dial"));           // retired mesh-wide shape
+        props.setKeyMountPath(mount.toString());
+        props.setKeyFile("../id_dial");
+
+        net.schmizz.sshj.SSHClient ssh = new net.schmizz.sshj.SSHClient();
+        try {
+            assertThatThrownBy(() -> factory().loadDialKey(ssh, dialWithSecret("dial-key-a")))
+                    .isInstanceOf(IOException.class)
+                    .hasMessageContaining("key-file");
+        } finally {
+            ssh.close();
+        }
+    }
+
+    /** And the dial verb refuses BEFORE any socket, with the key-file named as the reason. */
+    @Test
+    void refusesToDial_whenTheKeyFileSettingClimbsOutOfTheDeviceMount(
+            @org.junit.jupiter.api.io.TempDir Path mount) throws Exception {
+        writeRealRsaPrivateKey(mount.resolve("id_dial"));
+        props.setKeyMountPath(mount.toString());
+        props.setKeyFile("../id_dial");
+        props.setConnectTimeout(Duration.ofSeconds(30));
+        when(dials.findByDeviceId(eq(DEVICE)))
+                .thenReturn(Mono.just(dial(DeviceSshDial.STATUS_ACTIVE, "SHA256:abc")));
+
+        long startNanos = System.nanoTime();
+        StepVerifier.create(factory().open(DEVICE, "192.0.2.1", OPERATOR, 80, 24))
+                .expectErrorSatisfies(e -> assertThat(e.getMessage())
+                        .contains("key-file")
+                        .contains("not a single plain file name"))
+                .verify(Duration.ofSeconds(25));
+        assertThat(Duration.ofNanos(System.nanoTime() - startNanos))
+                .isLessThan(Duration.ofSeconds(10));
+    }
+
+    /** The key-file SETTING must be one plain file name: no blank, no `.`/`..`, no separator. */
+    @Test
+    void refusesEveryMalformedKeyFileSetting() {
+        props.setKeyMountPath("/var/run/secrets/device-ssh-dial");
+        String[] malformed = {
+            "", "   ", ".", "..", "../id_dial", "../../id_dial", "sub/id_dial", "/etc/shadow",
+            "id_dial/", "id_dial/..", "..\\id_dial", "../dial-key-b/id_dial",
+        };
+        for (String keyFile : malformed) {
+            props.setKeyFile(keyFile);
+            assertThat(SshjDeviceSshChannelFactory.keyFileRefusal(props))
+                    .as("must refuse key-file=<%s>", keyFile)
+                    .isNotNull();
+            assertThatThrownBy(() -> SshjDeviceSshChannelFactory.resolveDialKeyPath(
+                    props, dialWithSecret("dial-key-a")))
+                    .as("must refuse to resolve a path for key-file=<%s>", keyFile)
+                    .isInstanceOf(IOException.class);
+        }
+    }
+
+    /** Not over-broad: every plausible real Secret key name still resolves, INSIDE the device
+     *  directory — including the build Job's own `dial_private_key` (admin-bff#53). */
+    @Test
+    void acceptsEveryPlainKeyFileName_andResolvesInsideTheDeviceDirectory() throws Exception {
+        props.setKeyMountPath("/var/run/secrets/device-ssh-dial");
+        for (String keyFile : new String[] {
+            "id_dial", "dial_private_key", "id_ed25519", "ssh-privatekey", "key.pem", "..data",
+        }) {
+            props.setKeyFile(keyFile);
+            assertThat(SshjDeviceSshChannelFactory.keyFileRefusal(props))
+                    .as("must ACCEPT key-file=<%s>", keyFile)
+                    .isNull();
+            Path resolved = SshjDeviceSshChannelFactory.resolveDialKeyPath(
+                    props, dialWithSecret("dial-key-a"));
+            assertThat(resolved).isEqualTo(
+                    Path.of("/var/run/secrets/device-ssh-dial/dial-key-a", keyFile));
+            assertThat(resolved.getParent())
+                    .isEqualTo(Path.of("/var/run/secrets/device-ssh-dial/dial-key-a"));
+        }
+    }
+
+    /** The malformed-name echo reaches plain-text audit lines and a 422 body, and the value is
+     *  seeded from an internal-token surface that bounds only its LENGTH: a planted newline or
+     *  ANSI escape must not be able to forge or colour a log line, and the echo is bounded. */
+    @Test
+    void dialKeyIdentityRefusal_echoesOnlyPrintableAscii_andBoundsTheEcho() {
+        String planted = "dial\n2026-09-16 FORGED audit line \u001b[31mRED\u001b[0m\t\u0000";
+        String refusal =
+                SshjDeviceSshChannelFactory.dialKeyIdentityRefusal(dialWithSecret(planted));
+        assertThat(refusal)
+                .isNotNull()
+                .contains("malformed k8s_secret_name")
+                .doesNotContain("\n").doesNotContain("\u001b").doesNotContain("\t")
+                .doesNotContain("\u0000")
+                .contains("dial?2026-09-16 FORGED audit line ?[31mRED?[0m??");
+
+        String huge = "A".repeat(300);   // uppercase: malformed, and far over the 253 bound
+        String bounded = SshjDeviceSshChannelFactory.dialKeyIdentityRefusal(dialWithSecret(huge));
+        assertThat(bounded)
+                .isNotNull()
+                .contains("A".repeat(64) + "…(300 chars)")
+                .doesNotContain("A".repeat(65));
+    }
+
+    /** The startup half of "a mesh-wide key is not a valid configuration": DeviceTerminalConfig
+     *  logs this at ERROR when the flag is flipped on with the retired flat mount, so the operator
+     *  learns at startup rather than on the first dial. */
+    @Test
+    void meshWideKeyHint_namesTheLegacyFile_andIsEmptyOnACleanMount(
+            @org.junit.jupiter.api.io.TempDir Path mount) throws Exception {
+        props.setKeyMountPath(mount.toString());
+        props.setKeyFile("id_dial");
+
+        assertThat(SshjDeviceSshChannelFactory.meshWideKeyHint(props)).isEmpty();
+
+        // A per-device key does NOT trip it — only a key at the mount ROOT does.
+        writeRealRsaPrivateKey(mount.resolve(SECRET).resolve("id_dial"));
+        assertThat(SshjDeviceSshChannelFactory.meshWideKeyHint(props)).isEmpty();
+
+        writeRealRsaPrivateKey(mount.resolve("id_dial"));
+        assertThat(SshjDeviceSshChannelFactory.meshWideKeyHint(props))
+                .contains("MESH-WIDE dial key is mounted at " + mount.resolve("id_dial"))
+                .contains("NO LONGER a valid configuration")
+                .contains(mount.resolve("<k8s_secret_name>").resolve("id_dial").toString())
+                .doesNotContain("PRIVATE KEY");
+    }
+
+
+    /** {@link SshjDeviceSshChannelFactory#loadDialKey} is the SECOND reader of the key, and it runs
+     *  only AFTER a successful connect — no unit test can reach it through a dial. Called directly
+     *  here so its per-device resolution is measured rather than assumed: a regression that reverted
+     *  ONLY this reader to the mesh-wide flat path would otherwise pass every other test in the
+     *  class. A fresh {@code SSHClient} is enough — it builds its transport (and therefore its key
+     *  provider factories) in the constructor, so nothing is dialed. */
+    @Test
+    void loadDialKey_readsThePerDeviceKey_andNotTheMeshWideOne(
+            @org.junit.jupiter.api.io.TempDir Path mount) throws Exception {
+        writeRealRsaPrivateKey(mount.resolve(SECRET).resolve("id_dial"));
+        props.setKeyMountPath(mount.toString());
+        props.setKeyFile("id_dial");
+
+        net.schmizz.sshj.SSHClient ssh = new net.schmizz.sshj.SSHClient();
+        try {
+            var provider = factory().loadDialKey(ssh, dial(DeviceSshDial.STATUS_ACTIVE, "SHA256:abc"));
+            // Found, read and PARSED from <mount>/<k8s_secret_name>/id_dial.
+            assertThat(provider).isNotNull();
+            // AND a REGRESSION TEST for the lazy-provider bug this test found. These three calls
+            // are made HERE, after loadDialKey returned — i.e. after its finally zeroed the char[]
+            // — which is exactly when ssh.authPublickey() makes them on the real dial path. They
+            // are asserted BEFORE the type assertion below ON PURPOSE: they must fail on their own
+            // BEHAVIOUR if the lazy provider comes back, not merely because the class changed.
+            // MEASURED against sshj 0.40.0 on this classpath (a standalone probe replaying the
+            // pre-fix sequence): getPrivate() threw
+            //   java.io.IOException: Supported PEM Key Type not found for header [header not found]
+            // so public-key auth could never have succeeded.
+            assertThat(provider.getPrivate()).isNotNull();
+            assertThat(provider.getPublic()).isNotNull();
+            assertThat(provider.getType()).isEqualTo(net.schmizz.sshj.common.KeyType.RSA);
+            // Belt-and-braces on the same rule: nothing lazy, nothing holding a Reader, escapes.
+            assertThat(provider).isNotInstanceOf(
+                    net.schmizz.sshj.userauth.keyprovider.FileKeyProvider.class);
+        } finally {
+            ssh.close();
+        }
+    }
+
+    /** The other half: with the key ONLY at the mount root (the retired mesh-wide shape), this
+     *  reader must NOT find it. */
+    @Test
+    void loadDialKey_refusesToFallBackToAMeshWideKeyAtTheMountRoot(
+            @org.junit.jupiter.api.io.TempDir Path mount) throws Exception {
+        writeRealRsaPrivateKey(mount.resolve("id_dial"));
+        props.setKeyMountPath(mount.toString());
+        props.setKeyFile("id_dial");
+
+        net.schmizz.sshj.SSHClient ssh = new net.schmizz.sshj.SSHClient();
+        try {
+            assertThatThrownBy(() ->
+                    factory().loadDialKey(ssh, dial(DeviceSshDial.STATUS_ACTIVE, "SHA256:abc")))
+                    .isInstanceOf(IOException.class);
+        } finally {
+            ssh.close();
+        }
+    }
+
+    /** And it refuses a row that names no Secret at all, on its own — the identity rule is not
+     *  something only {@code refusalReason} enforces. */
+    @Test
+    void loadDialKey_refusesARowThatNamesNoSecret(@org.junit.jupiter.api.io.TempDir Path mount)
+            throws Exception {
+        props.setKeyMountPath(mount.toString());
+        props.setKeyFile("id_dial");
+
+        net.schmizz.sshj.SSHClient ssh = new net.schmizz.sshj.SSHClient();
+        try {
+            assertThatThrownBy(() -> factory().loadDialKey(ssh, dialWithSecret("")))
+                    .isInstanceOf(IOException.class)
+                    .hasMessageContaining("names no k8s_secret_name");
+        } finally {
+            ssh.close();
+        }
+    }
+
     /** Writes a real unencrypted RSA private key (classic PEM) and returns a distinctive substring
      *  of its base64 body to scan logs for. */
     private static String writeRealRsaPrivateKey(Path path) throws Exception {
@@ -570,6 +986,7 @@ class SshjDeviceSshChannelFactoryTest {
         String b64 = java.util.Base64.getMimeEncoder(64, "\n".getBytes())
                 .encodeToString(kp.getPrivate().getEncoded());
         String pem = "-----BEGIN PRIVATE KEY-----\n" + b64 + "\n-----END PRIVATE KEY-----\n";
+        Files.createDirectories(path.getParent());
         Files.writeString(path, pem);
         // a stable 32-char slice of the body that uniquely identifies THIS key
         String body = b64.replace("\n", "");
