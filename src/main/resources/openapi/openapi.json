@@ -746,6 +746,46 @@
         }
       }
     },
+    "/bff/admin/mfa/role-policy/{role}" : {
+      "put" : {
+        "tags" : [ "role-mfa-policy-controller" ],
+        "summary" : "Set a role MFA policy",
+        "operationId" : "roleMfaPolicySet",
+        "parameters" : [ {
+          "name" : "role",
+          "in" : "path",
+          "required" : true,
+          "schema" : {
+            "maxLength" : 64,
+            "minLength" : 0,
+            "pattern" : "[A-Za-z0-9_-]+",
+            "type" : "string"
+          }
+        } ],
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/SetRoleMfaPolicyRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/RoleMfaPolicy"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/bff/admin/mastodon/appearance-default" : {
       "put" : {
         "tags" : [ "Mastodon appearance default admin" ],
@@ -7254,6 +7294,25 @@
         }
       }
     },
+    "/bff/admin/mfa/role-policy" : {
+      "get" : {
+        "tags" : [ "role-mfa-policy-controller" ],
+        "summary" : "List role MFA policies",
+        "operationId" : "roleMfaPolicyList",
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/RoleMfaPolicyList"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/bff/admin/isos" : {
       "get" : {
         "tags" : [ "admin-controller" ],
@@ -9316,6 +9375,67 @@
               "pattern" : "[a-z0-9_-]+",
               "type" : "string"
             }
+          }
+        }
+      },
+      "SetRoleMfaPolicyRequest" : {
+        "type" : "object",
+        "properties" : {
+          "required" : {
+            "type" : "boolean"
+          },
+          "methods" : {
+            "maxItems" : 3,
+            "minItems" : 0,
+            "type" : "array",
+            "items" : {
+              "maxLength" : 16,
+              "minLength" : 0,
+              "type" : "string"
+            }
+          },
+          "graceSeconds" : {
+            "maximum" : 2592000,
+            "minimum" : 0,
+            "type" : "integer",
+            "format" : "int64"
+          }
+        }
+      },
+      "RoleMfaPolicy" : {
+        "type" : "object",
+        "properties" : {
+          "domain" : {
+            "type" : "string"
+          },
+          "role" : {
+            "type" : "string"
+          },
+          "required" : {
+            "type" : "boolean"
+          },
+          "methods" : {
+            "type" : "array",
+            "items" : {
+              "type" : "string"
+            }
+          },
+          "graceSeconds" : {
+            "type" : "integer",
+            "format" : "int64"
+          },
+          "fromRow" : {
+            "type" : "boolean"
+          },
+          "floor" : {
+            "type" : "boolean"
+          },
+          "updatedBy" : {
+            "type" : "string"
+          },
+          "updatedAt" : {
+            "type" : "string",
+            "format" : "date-time"
           }
         }
       },
@@ -12794,6 +12914,20 @@
             "type" : "array",
             "items" : {
               "type" : "string"
+            }
+          }
+        }
+      },
+      "RoleMfaPolicyList" : {
+        "type" : "object",
+        "properties" : {
+          "domain" : {
+            "type" : "string"
+          },
+          "policies" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/RoleMfaPolicy"
             }
           }
         }

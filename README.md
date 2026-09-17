@@ -1215,11 +1215,25 @@ them as shipped.
   (fail-closed) + step-up (sudo / SSH-via-UI / remote-install / superadmin ops). Keeps
   the custom login + a BFF-driven challenge stamping `mfa_satisfied` into the opaque
   `bff_session`. Shared MFA infrastructure lives in `hugmesh-auth-core`. **Substrate
-  already on `main` (ships dark, `app.casdoor.mfa.enabled=false`):** the MFA factor /
-  WebAuthn-challenge tables (bands 150–152), the `gateway_route_access.mfa_required` column
-  wired through the route-access entity/repo/DTO (#116), and the co-equal MFA step-up
-  satisfier (auth-core `MfaStepUpService`) wired into the **image-gen / SSH-key-issue /
-  terminal-dial** step-up gates (#115). What remains roadmap is flipping the enforcement on.
+  already on `main` (the APPLICATION default is still dark — `app.casdoor.mfa.enabled=false`,
+  `src/main/resources/application.yml:426`):** the MFA factor / WebAuthn-challenge tables
+  (bands 150–152), the `gateway_route_access.mfa_required` column wired through the
+  route-access entity/repo/DTO (#116), the co-equal MFA step-up satisfier (auth-core
+  `MfaStepUpService`) wired into the **image-gen / SSH-key-issue / terminal-dial** step-up
+  gates (#115), the enrollment/challenge leg (auth-core `MfaEnrollmentController`,
+  `/bff/mfa/**` — TOTP + WebAuthn + recovery), and the **per-role policy consumer** the 150
+  band deferred to "a later wave": `RoleMfaPolicyService` + `/bff/admin/mfa/role-policy`
+  (#3). That consumer is READ/WRITE ONLY — it resolves the effective per-(domain, role)
+  requirement and pins the non-relaxable superadmin/admin floor, but nothing in the request
+  pipeline consults it yet. Both DEPLOY targets already override `APP_CASDOOR_MFA_ENABLED=true`
+  (generator `specs/cluster/manifests/admin-bff-api/deployment.yaml:563`,
+  `tests/stack/compose.local.yaml:837`), so it is only the application default that is dark.
+  What remains roadmap is (a) ROUTE-LEVEL enforcement — the shared gateway chart still ships
+  `mfa.enabled: false` (`specs/cluster/charts/hugmesh-gateway/values.yaml:236`) and no
+  Application overrides it, so the seeded `gateway_route_access.mfa_required` rows are inert —
+  and (b) wiring `RoleMfaPolicyService.requiredForAny` into the login/session/introspect seams
+  behind its own flag. Both are gated on enrolling every privileged operator FIRST (generator
+  `docs/MFA-ROLLOUT.md` §2) — flipping before enrollment locks the operator out.
 - 🚧 **Notification external channels** — Matrix DM / Akkoma feed / phpBB / email
   adapters on top of the shipped in-app outbox MVP; per-channel `enabled()` gates,
   mod-bff `notify_channels` directive, minimal prefs tables, user-silenceable.
