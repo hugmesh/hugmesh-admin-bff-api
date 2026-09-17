@@ -242,4 +242,21 @@ class RoleMfaPolicyServiceTest {
         assertThat(service.requiredForAny("brandx", List.of("admin")).block()).isTrue();
         verify(repo, never()).findByDomainAndRoleIn(anyString(), any());
     }
+
+    /**
+     * Pins the coupling that makes the {@code floor ||} disjunct in
+     * {@code RoleMfaPolicyService.defaultFor} redundant: every floor role must ALSO be
+     * {@code true} in {@link RoleMfaPolicyService#DEFAULT_REQUIRED}. A skeptic measured on
+     * 2026-09-17 that deleting that disjunct leaves this suite green — true only while this
+     * invariant holds, so edit DEFAULT_REQUIRED and this test tells you the disjunct just
+     * became load-bearing.
+     */
+    @Test
+    void defaults_carryTheFloor_soTheDisjunctStaysRedundant() {
+        for (String floorRole : RoleMfaPolicyService.FLOOR_ROLES) {
+            assertThat(RoleMfaPolicyService.DEFAULT_REQUIRED.get(floorRole))
+                    .as("DEFAULT_REQUIRED must keep floor role '%s' required", floorRole)
+                    .isTrue();
+        }
+    }
 }

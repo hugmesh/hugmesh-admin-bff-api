@@ -43,8 +43,15 @@ import static org.springframework.security.test.web.reactive.server.SecurityMock
  *
  * <ol>
  *   <li><b>ROLE GATE</b> — ADMIN ALLOW; SUPERADMIN ALLOW; MOD/USER 403; anonymous 401. Every
- *       DENY verifies the service was NEVER called (mutation-resistant: drop the
- *       {@code @PreAuthorize} or the path rule and MOD/USER reach the service).</li>
+ *       DENY verifies the service was NEVER called, so the guarded body provably never ran.
+ *       <b>What this pins, exactly (measured 2026-09-17):</b> the COMBINED gate. Because the
+ *       real {@code SecurityConfig} path rule ({@code /bff/admin/** ->
+ *       hasAnyRole('ADMIN','SUPERADMIN')}, SecurityConfig.java:284) denies MOD/USER on its
+ *       own, deleting BOTH {@code @PreAuthorize("hasRole('ADMIN')")} annotations from the
+ *       controller leaves this class GREEN — it detects the loss of both layers, never of
+ *       either one. The per-method layer is pinned SEPARATELY by
+ *       {@link RoleMfaPolicyMethodGateTest}, which runs the controller with a
+ *       {@code permitAll} path chain; dropping either annotation turns that class red.</li>
  *   <li><b>DOMAIN FROM THE VALIDATED ISSUER</b> — the {@code domain} the service is asked for
  *       is derived from the token's {@code iss} via {@link DomainRegistry}, never from the
  *       request. Asserted by capturing the EXACT domain argument per brand.</li>

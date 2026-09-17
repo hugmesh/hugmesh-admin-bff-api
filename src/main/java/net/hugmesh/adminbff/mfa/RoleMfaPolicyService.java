@@ -193,6 +193,15 @@ public class RoleMfaPolicyService {
                 true, floor, row.updatedBy(), row.updatedAt());
     }
 
+    /**
+     * The no-row answer for a role. The {@code floor ||} disjunct below is DELIBERATELY
+     * redundant today and no test can distinguish it (measured 2026-09-17: deleting it keeps
+     * {@code RoleMfaPolicyServiceTest} 18/18 green), because {@link #DEFAULT_REQUIRED} already
+     * carries every {@link #FLOOR_ROLES} entry as {@code true}. It is kept so that editing
+     * {@code DEFAULT_REQUIRED} alone can never silently relax the floor; that coupling is the
+     * thing under test in {@code defaults_carryTheFloor_soTheDisjunctStaysRedundant}. The floor
+     * override in {@link #fromRow} is NOT redundant — a hand-edited row reaches it.
+     */
     private static RoleMfaPolicy defaultFor(String domain, String role) {
         boolean floor = FLOOR_ROLES.contains(role);
         return new RoleMfaPolicy(domain, role,
