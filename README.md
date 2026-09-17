@@ -746,7 +746,26 @@ These surfaces are the unscoped infra control plane; an ADMIN never reaches them
   `AppProfileController` (`/bff/superadmin/app-profiles`), and
   `ServiceDeploymentController` (`/bff/superadmin/service-store/{domain}/deployments`, now
   in the `servicecatalog` package). Backed by changelogs `100-service-curation` /
-  `101-app-profile` / `102-service-deployment`. The deployment plane now exposes
+  `101-app-profile` / `102-service-deployment`.
+  > **`profileJson` is validated on save (#55).** `POST`/`PUT /bff/superadmin/app-profiles`
+  > check the body against `src/main/resources/schema/app-profile.schema.json` — a
+  > **byte-identical** copy of the Service Catalog console's
+  > `schemas/app-profile.schema.json` — before the write, so a direct API call or a stale
+  > tab cannot store a body the console would refuse. Sections `resources` / `roles` /
+  > `certs` / `exposure`, every object closed; a refusal is the ordinary
+  > `{"error":"validation failed","fields":{path:message}}` 400 with EVERY offending path
+  > named, in the same message vocabulary the console uses. Three things it deliberately
+  > does not do: it never rewrites a body, it never validates a READ (a row written before
+  > the schema existed is still returned in full — it is WARN-logged on the superadmin read
+  > and fixed in the console), and it does not RESOLVE the values (that effector is still
+  > open, catalog-ui#3). Both copies are pinned to the same sha256
+  > (`AppProfileSchemaMirrorTest` here, `scripts/assert-schema-pin.mjs` there), so a
+  > one-sided edit turns both suites red. Un-parked by operator decision 37
+  > (hugmesh-generator#347, 2026-09-17): `ROLE_<UPPER>` roles, strict on unknown keys,
+  > `exposure.mfaRequired` kept. The wire shape is UNCHANGED — `profileJson` is still a
+  > bounded string and `openapi.json` does not move.
+
+  The deployment plane now exposes
   `POST …/deployments/{id}/provision` (#147), which drives the **`AddServiceEffector`**
   (AddService → ArgoCD `create/deleteApplication`) and returns a `ProvisionOutcome`
   carrying an `effectorReal` flag (false when the injected `NoopArgoCdClient` ran, i.e.
