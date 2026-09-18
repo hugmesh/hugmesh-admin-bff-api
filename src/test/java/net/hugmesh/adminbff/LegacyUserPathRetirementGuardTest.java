@@ -106,10 +106,13 @@ class LegacyUserPathRetirementGuardTest {
                         + "(user-bff's real logout is DELETE /bff/session; the alias exists so "
                         + "login-ui session.service.ts:444 (clear()) needs no change). This "
                         + "admin-bff copy is kept as a DEFENSIVE fallback — not a live browser "
-                        + "path on any gateway lane today — so it now also reads the bff_ cookie "
-                        + "(not just a header a browser never sends) and is never a silent no-op "
-                        + "for whatever still reaches it directly (a stray client, a probe, a "
-                        + "future no-gateway lane like the device lane's direct admin-bff calls).");
+                        + "path on any gateway lane today — and now also reads the bff_ cookie "
+                        + "directly (matching /bff/me's carrier-agnostic precedent), though the "
+                        + "app's own always-on SessionCookieWebFilter already bridges that "
+                        + "cookie into the header before this controller runs, so for any HTTP "
+                        + "caller this app actually serves today that read is redundant, not a "
+                        + "behavior change (see AuthController#sessionOut's javadoc and "
+                        + "AuthControllerSessionOutUnitTest).");
         PINNED.put("POST /bff/provision/matrix",
                 "login-ui bff.service.ts provisionServiceTokens() POSTs it on every sign-in; the "
                         + "compose route table has NO /bff/provision entry, so compose serves it here.");
