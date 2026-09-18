@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:hugmesh:schema:app-profile",
+  "$comment": "MIRRORING THIS FILE SERVER-SIDE (hugmesh-admin-bff-api#55): copy it BYTE-IDENTICALLY and apply every `pattern` with FULL-INPUT anchoring. JSON Schema defines `pattern` as a PARTIAL match, and java.util.regex additionally lets `$` match before a final line terminator, so Matcher.find() on ^...$ ACCEPTS \"500m\\n\" while the browser RegExp.test() this UI uses REFUSES it (measured: Temurin 25.0.4.1 find()=true / matches()=false vs node test()=false). Use Matcher.matches(), or a validator configured to anchor the whole value, or the two halves drift exactly where a byte-identical copy is supposed to stop them. Acceptance case: resources.cpu = \"500m\\n\" must be REFUSED.",
+  "title": "App-profile deploy template",
+  "description": "The profileJson document of an app_profile row (hugmesh-admin-bff-api schema 101, POST/PUT /bff/superadmin/app-profiles). A profile is a named bundle of resource / role / cert / exposure DEFAULTS a service_deployment references by name. Every section is optional ({} is the minimal valid profile) but each object is CLOSED: a key not listed here is refused, in this UI and in the bff, so a typo can never be stored as an inert default. The field vocabulary is drawn from what the platform already reads, never invented: resources.cpu/memory are the Kubernetes quantities the editor has always defaulted; roles are the canonical ROLE_<UPPER> names CasdoorAdminClient mints and gateway_route_access rows reference (PerServiceIdentity.casdoorRole); certs.altNames/ttl are the alt_names/ttl parameters every Vault-PKI ExternalSecret in hugmesh-generator carries next to the common_name PerServiceIdentity derives; exposure.routes/mfaRequired are RouteRule.url_pattern/mfa_required, exposure.ports the container ports the issue names. Nothing in the bff READS these values yet (issue #3 — the resolution effector); this schema is what that effector will read.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "resources": {
+      "description": "Compute defaults for the service's workload, as Kubernetes resource quantities. The patterns admit the COMMON spellings the platform uses and are deliberately narrower than the full Kubernetes quantity grammar (no exponent form 129e6, no milli-suffix on memory, no fractional millicores) — a server-side mirror inherits that narrowness.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "cpu": {
+          "description": "CPU quantity: whole/decimal cores or millicores.",
+          "type": "string",
+          "maxLength": 32,
+          "pattern": "^([0-9]+(\\.[0-9]+)?|[0-9]+m)$",
+          "examples": ["500m", "1", "0.5"]
+        },
+        "memory": {
+          "description": "Memory quantity: bytes, or a binary (Ki/Mi/Gi) or decimal (k/M/G) suffix.",
+          "type": "string",
+          "maxLength": 32,
+          "pattern": "^[0-9]+(\\.[0-9]+)?(k|M|G|T|P|E|Ki|Mi|Gi|Ti|Pi|Ei)?$",
+          "examples": ["512Mi", "1Gi", "256M"]
+        }
+      }
+    },
+    "roles": {
+      "description": "Casdoor roles granted access to the service in addition to the derived per-service role (PerServiceIdentity.casdoorRole = ROLE_<SERVICE>). Canonical ROLE_<UPPER> form, the same the route-access rows reference.",
+      "type": "array",
+      "uniqueItems": true,
+      "maxItems": 32,
+      "items": {
+        "type": "string",
+        "maxLength": 64,
+        "pattern": "^ROLE_[A-Z][A-Z0-9_]*$",
+        "examples": ["ROLE_ADMIN", "ROLE_MESH"]
+      }
+    },
+    "certs": {
+      "description": "mTLS certificate defaults for the per-service Vault PKI issuance (the ExternalSecret PerServiceIdentity names <domain>-<service>-tls). The common name is always the derived <service>.<domain>; these are the additional issue parameters.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "altNames": {
+          "description": "Additional subject alternative names (DNS hostnames, lowercase RFC 1123). Modelled as an ARRAY; the Vault-PKI ExternalSecret parameter this feeds (alt_names) is a COMMA-JOINED STRING, so the effector joins these with commas — the hostname pattern forbids a comma precisely so one entry can never smuggle a second name.",
+          "type": "array",
+          "uniqueItems": true,
+          "maxItems": 32,
+          "items": {
+            "type": "string",
+            "maxLength": 253,
+            "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$",
+            "examples": ["owncast", "owncast.acme-be.svc.cluster.local"]
+          }
+        },
+        "ttl": {
+          "description": "Certificate lifetime as a Vault duration string (hours/minutes/seconds).",
+          "type": "string",
+          "maxLength": 32,
+          "pattern": "^([0-9]+(h|m|s))+$",
+          "examples": ["720h", "168h", "1h30m"]
+        }
+      }
+    },
+    "exposure": {
+      "description": "What the service exposes: the gateway url_pattern(s) its route-access rule grants, the container ports, and whether the rule requires MFA.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "routes": {
+          "description": "Gateway url_pattern prefixes (RouteRule.url_pattern) granted in addition to the derived /api/<service>/. An absolute path; an optional trailing ** matches any suffix, as the seeded rules do. MEASURED LIMITS against hugmesh-gateway compose/route-access-seed.sql: the whole-surface forms / and /** are accepted because that file seeds both as real rows (line 100 and line 49), even though POST /bff/admin/route-access refuses /** for having no addressable first path segment; a MID-PATH single-* segment (the seeded /_matrix/client/*/login/**) is NOT expressible here, a deliberate omission for a per-service deploy default rather than a judgement that it is wrong.",
+          "type": "array",
+          "uniqueItems": true,
+          "maxItems": 32,
+          "items": {
+            "type": "string",
+            "maxLength": 256,
+            "pattern": "^/[A-Za-z0-9/_.-]*(\\*\\*)?$",
+            "examples": ["/api/owncast/", "/api/owncast/**", "/ws/owncast/**"]
+          }
+        },
+        "ports": {
+          "description": "Container ports the service listens on (TCP port numbers).",
+          "type": "array",
+          "uniqueItems": true,
+          "maxItems": 32,
+          "items": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 65535,
+            "examples": [8080, 8443]
+          }
+        },
+        "mfaRequired": {
+          "description": "Whether the service's route-access rule requires MFA (RouteRule.mfa_required; the gateway enforces it).",
+          "type": "boolean"
+        }
+      }
+    }
+  },
+  "examples": [
+    {
+      "resources": { "cpu": "500m", "memory": "512Mi" }
+    },
+    {
+      "resources": { "cpu": "1", "memory": "1Gi" },
+      "roles": ["ROLE_ADMIN"],
+      "certs": { "altNames": ["owncast.acme-be.svc.cluster.local"], "ttl": "720h" },
+      "exposure": { "routes": ["/api/owncast/**"], "ports": [8080], "mfaRequired": false }
+    }
+  ]
+}

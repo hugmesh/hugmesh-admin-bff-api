@@ -746,7 +746,32 @@ These surfaces are the unscoped infra control plane; an ADMIN never reaches them
   `AppProfileController` (`/bff/superadmin/app-profiles`), and
   `ServiceDeploymentController` (`/bff/superadmin/service-store/{domain}/deployments`, now
   in the `servicecatalog` package). Backed by changelogs `100-service-curation` /
-  `101-app-profile` / `102-service-deployment`. The deployment plane now exposes
+  `101-app-profile` / `102-service-deployment`.
+  > **`profileJson` is validated on save (#55).** `POST`/`PUT /bff/superadmin/app-profiles`
+  > check the body against `src/main/resources/schema/app-profile.schema.json` — a
+  > **byte-identical** copy of the Service Catalog console's
+  > `schemas/app-profile.schema.json` — before the write, so a direct API call or a stale
+  > tab cannot store a body the console would refuse. Sections `resources` / `roles` /
+  > `certs` / `exposure`, every object closed; a refusal is the ordinary
+  > `{"error":"validation failed","fields":{path:message}}` 400 with EVERY offending path
+  > named, in the same message vocabulary the console uses. Three things it deliberately
+  > does not do: it never rewrites a body, it never validates a READ (a row written before
+  > the schema existed is still returned in full — it is WARN-logged on the superadmin read
+  > and fixed in the console), and it does not RESOLVE the values (that effector is still
+  > open, catalog-ui#3). `AppProfileSchemaMirrorTest` guards the copy with TWO checks: a
+  > local sha256 pin (which makes an edit deliberate but proves nothing about the other
+  > repo — moving the schema and the literal together in one repo satisfies it, and that
+  > left both suites green with the files diverged when it was measured), and a **mirror
+  > check that reads the console's file and compares bytes**, which is the one that
+  > actually enforces byte-identity. The mirror check SKIPS when the console checkout is
+  > absent, so CI clones it and passes `-Dappprofile.schema.mirror.required=true` to turn
+  > that skip into a failure; locally a sibling checkout satisfies it
+  > (`-Dappprofile.schema.console.dir` overrides). Un-parked by operator decision 37
+  > (hugmesh-generator#347, 2026-09-17): `ROLE_<UPPER>` roles, strict on unknown keys,
+  > `exposure.mfaRequired` kept. The wire shape is UNCHANGED — `profileJson` is still a
+  > bounded string and `openapi.json` does not move.
+
+  The deployment plane now exposes
   `POST …/deployments/{id}/provision` (#147), which drives the **`AddServiceEffector`**
   (AddService → ArgoCD `create/deleteApplication`) and returns a `ProvisionOutcome`
   carrying an `effectorReal` flag (false when the injected `NoopArgoCdClient` ran, i.e.
