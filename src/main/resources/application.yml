@@ -940,7 +940,14 @@ app:
     # skips the exchange endpoint's own suspensionGate() re-check) — hard-clamped to a 60s ceiling
     # regardless of this value; <=0 disables the cache entirely (zero suspension-bypass window, one
     # exchange call per request).
-    cache-ttl-ms: "${APP_BFF_EXCHANGE_CACHE_TTL_MS:5000}"
+    # DEFAULT 0 = CACHE OFF (Decision 60, operator, 2026-09-18, "extend"): the gateway's own
+    # bff-exchange cache already ships at 0 (hugmesh-gateway#30, decision 7); this line extends
+    # the same zero-window posture to admin-bff's mirrored cache, so a suspension is enforced on
+    # the very next federation-api call from a native-login admin too, at the cost of one
+    # self-loopback exchange call per bff_-bearing request when app.bff-exchange.enabled=true.
+    # The previous default was 5000 (matched the gateway's own former default). Pinned by
+    # SessionExchangeConfigTest — a drift back to 5000 (or any positive value) goes red.
+    cache-ttl-ms: "${APP_BFF_EXCHANGE_CACHE_TTL_MS:0}"
     cache-max-size: "${APP_BFF_EXCHANGE_CACHE_MAX_SIZE:10000}"
     # Timeout for the self-loopback exchange call. A transient failure here degrades to no
     # Authorization header (soft fail-open) — see SessionExchangeService's class javadoc for why
