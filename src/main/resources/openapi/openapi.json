@@ -13172,6 +13172,15 @@
           "generation" : {
             "type" : "integer",
             "format" : "int64"
+          },
+          "idp" : {
+            "type" : "string"
+          },
+          "selinuxLevel" : {
+            "type" : "string"
+          },
+          "selinuxLevelPg" : {
+            "type" : "string"
           }
         }
       },

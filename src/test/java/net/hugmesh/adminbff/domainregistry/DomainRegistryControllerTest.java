@@ -180,7 +180,8 @@ class DomainRegistryControllerTest {
                 new DomainExportModels.DomainExportBody("fp-1", 1L,
                         java.util.List.of(new DomainExportModels.DomainEntry("acme.test", "acme",
                                 "Acme Inc", "vault:pki/acme", "acme", "acme-org", "tag:acme",
-                                false, false, 0L))),
+                                false, false, 0L,
+                                DomainIdp.OWN, "s0:c256", "s0:c257"))),
                 "hash", "sig", "pub", true);
         when(export.exportRegistry(eq("fp-1"))).thenReturn(Mono.just(signed));
         asSuperadmin().get().uri("/bff/admin/domains/export?node=fp-1")
@@ -189,7 +190,14 @@ class DomainRegistryControllerTest {
                 .jsonPath("$.signed").isEqualTo(true)
                 .jsonPath("$.body.node").isEqualTo("fp-1")
                 .jsonPath("$.body.entries[0].clusterDomain").isEqualTo("acme.test")
-                .jsonPath("$.body.entries[0].caRef").isEqualTo("vault:pki/acme");
+                .jsonPath("$.body.entries[0].caRef").isEqualTo("vault:pki/acme")
+                // DECISION 29b/29c on the SERIALIZED wire — these are the exact jq paths
+                // hugmesh-generator specs/usr/sbin/hugmesh-domain-reconcile:413 reads
+                // (.body.entries[i].idp) and the 05b element fields the per-domain Casdoor
+                // needs. A field the JSON does not carry reaches no node.
+                .jsonPath("$.body.entries[0].idp").isEqualTo("own")
+                .jsonPath("$.body.entries[0].selinuxLevel").isEqualTo("s0:c256")
+                .jsonPath("$.body.entries[0].selinuxLevelPg").isEqualTo("s0:c257");
         verify(export).exportRegistry(eq("fp-1"));
     }
 

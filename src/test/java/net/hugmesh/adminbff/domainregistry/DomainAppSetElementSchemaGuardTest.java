@@ -36,6 +36,14 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  * and that each field keeps its decided source. It fails the day a column is dropped or an
  * element field appears upstream with no answer behind it.
  *
+ * <p><b>THE ROW IS NOT THE WIRE.</b> Two joins have to hold, and this guard pins BOTH, because
+ * closing the first alone changes nothing on a cluster: (1) element field &rarr; {@link
+ * DomainRegistryRow} column, and (2) element field &rarr; the SIGNED EXPORT entry ({@link
+ * net.hugmesh.adminbff.domainregistry.DomainExportModels.DomainEntry}), which is the only wire
+ * out of this service. A column the export does not carry is invisible to the generator's
+ * {@code hugmesh-domain-reconcile}: it read {@code .body.entries[i].idp} for weeks while the
+ * export had no such field, saw absent, and reconciled every domain as {@code superdomain}.
+ *
  * <p><b>The leg itself is still NOT built, and that is still asserted.</b> Nothing in
  * {@code src/main} is added, changed, or wired by it: there is no {@code DomainReconciler}, no
  * ApplicationSet patcher, no bean, no flag, no ArgoCD object. {@link
@@ -155,7 +163,7 @@ class DomainAppSetElementSchemaGuardTest {
     // ── the join: element schema vs. the row this repo actually has ───────────────────
 
     @Test
-    @DisplayName("the projection gap is CLOSED: every required element field has a row source")
+    @DisplayName("the projection gap is CLOSED AT THE ROW: every element field has a column")
     void theProjectionGap_isClosedByDecision29() {
         Set<String> required = requiredElementKeys();
         Set<String> rowComponents = rowComponentNames();
@@ -178,7 +186,10 @@ class DomainAppSetElementSchemaGuardTest {
         assertThat(unsourced)
                 .as("""
                         An element field 05b requires has NO source on domain_registry, so the \
-                        #6 provisioning leg is blocked again. The decision-29 mapping is:
+                        #6 provisioning leg is blocked again. This is the ROW half only — see \
+                        exportEntry_carriesEveryDecidedField for the WIRE half; a column the \
+                        signed export does not carry reaches no cluster. The decision-29 \
+                        mapping is:
                         %s
                         An element missing any required field is refused by goTemplateOptions \
                         missingkey=error; one that GUESSES a field mis-addresses the Vault path \
@@ -226,12 +237,68 @@ class DomainAppSetElementSchemaGuardTest {
                 .as("slug and nsPrefix are ONE column under 29a — they cannot diverge")
                 .isEqualTo(DECIDED_SOURCES.get("nsPrefix"));
 
+        assertThat(rowComponentNames())
+                .as("29a again, from the production side: the row has NO separate 'slug' "
+                        + "component, so ns_prefix is the ONLY column the slug can come from — "
+                        + "a second column would let the Application name and the Vault path "
+                        + "drift apart")
+                .doesNotContain("slug")
+                .contains("nsPrefix");
+
         assertThat(DomainSlug.pkiNamespace("acme"))
                 .as("the tenant namespace the ApplicationSet destination expands to")
                 .isEqualTo("acme-pki");
         assertThat(DomainSlug.vaultPath("acme"))
                 .as("the per-domain Vault credential document the three ExternalSecrets read")
                 .isEqualTo("secret/acme/casdoor");
+    }
+
+    /**
+     * The WIRE half of the join. Every element field 05b requires must be carried by the signed
+     * export entry, under its own name or its decided row-source name — otherwise the column
+     * exists, the guard above is green, and the generator still sees nothing.
+     *
+     * <p>This is not hypothetical: hugmesh-generator
+     * {@code specs/usr/sbin/hugmesh-domain-reconcile:413} reads
+     * {@code .body.entries[i].idp} and validates it as a closed enum at :429-431, and that
+     * file's own header recorded the producer gap ("the DomainEntry has NO idp field yet …
+     * every current export renders the pre-#47 template set unchanged"). Decision 29b made the
+     * column real so it could be CARRIED.
+     */
+    @Test
+    @DisplayName("the wire carries them too: the export entry has every decided field")
+    void exportEntry_carriesEveryDecidedField() {
+        Set<String> wire = Arrays.stream(
+                        net.hugmesh.adminbff.domainregistry.DomainExportModels.DomainEntry.class
+                                .getRecordComponents())
+                .map(RecordComponent::getName)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+
+        assertThat(wire)
+                .as("anti-vacuity: DomainEntry must still be a record with a real field set")
+                .hasSizeGreaterThanOrEqualTo(10);
+
+        List<String> missing = new ArrayList<>();
+        for (Map.Entry<String, String> e : DECIDED_SOURCES.entrySet()) {
+            if (!wire.contains(e.getKey()) && !wire.contains(e.getValue())) {
+                missing.add(e.getKey() + " (row source: " + e.getValue() + ")");
+            }
+        }
+        assertThat(missing)
+                .as("""
+                        These element fields have a domain_registry column but the SIGNED EXPORT \
+                        does not carry them, so no consumer can ever see them: the row is not \
+                        the wire. DomainEntry today: %s. Add the field to DomainEntry AND to \
+                        DomainRegistryExportService.compile — but NOT to canonicalBytes without \
+                        moving hugmesh-generator specs/usr/lib/hugmesh/domain-verify.sh in \
+                        lockstep, because that verifier rebuilds the v1 bytes field by field and \
+                        fails CLOSED on divergence.""", wire)
+                .isEmpty();
+
+        assertThat(wire)
+                .as("DECISION 29b/29c on the wire — dropping one of these silently reverts "
+                        + "every exported domain to the superdomain IdP and to no MCS pair")
+                .contains("idp", "selinuxLevel", "selinuxLevelPg");
     }
 
     @Test
