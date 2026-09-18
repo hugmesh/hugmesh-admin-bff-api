@@ -483,14 +483,23 @@ public class AuthController {
      * denied at the gateway). Carrier-agnostic — resolves the token from the cookie-bridged
      * {@code Authorization} header. Idempotent: an unknown/expired token returns
      * {@code {loggedOut:true}} with no row to delete.
+     *
+     * <p>hugmesh-generator#549: the fe route tables now send the browser-facing
+     * {@code POST /bff/sessionOut} to user-bff's alias instead, so a browser should never
+     * reach this copy at all. It still reads the {@code bff_} session COOKIE (not just the
+     * {@code Authorization} header a browser never sends) so it is not a silent no-op for
+     * whatever DOES still reach it directly — a be-gateway caller, a stale client, or a
+     * manual probe — matching the {@link #session(Authentication, String)} / {@code /me}
+     * carrier-agnostic precedent above.
      */
     @Operation(summary = "Session out", operationId = "authSessionOut")
     @PostMapping("/sessionOut")
     public Mono<Map<String, Object>> sessionOut(
             Authentication auth,
+            @CookieValue(value = SessionCookieWebFilter.SESSION_COOKIE, required = false) String cookie,
             @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String header,
             ServerWebExchange exchange) {
-        String token = SessionCookieWebFilter.bffTokenFrom(null, header);
+        String token = SessionCookieWebFilter.bffTokenFrom(cookie, header);
         // Expire the cookie regardless of carrier (a Bearer-auth logout must still clear any
         // cookie the browser holds). No-op when cookie mode is disabled.
         ResponseCookie expired = cookies.expire();

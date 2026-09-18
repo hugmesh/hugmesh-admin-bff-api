@@ -164,6 +164,33 @@ class AuthControllerSessionCookieTest {
         verify(revocations).revokeCoarse(eq("mastodon"), anyString(), eq("logout"), anyLong());
     }
 
+    /**
+     * Regression for hugmesh-generator#549. A BROWSER holds the session as an HttpOnly
+     * {@code bff_session} cookie and sends NO {@code Authorization} header — that is the
+     * carrier the fe route tables now send {@code POST /bff/sessionOut} to user-bff for, but
+     * this admin-bff copy must not be a silent no-op for whatever else still reaches it
+     * directly. Before this fix {@code sessionOut} resolved the token with
+     * {@code bffTokenFrom(null, header)} — a cookie-only caller like this one deleted NO row,
+     * the cookie was still expired, and the response still lied {@code {"loggedOut":true}}.
+     * Modeled statefully, not "the endpoint was called": the row is proven present via
+     * {@code registerAndGetToken}, then proven ABSENT via the store after the call — a test
+     * that only asserted the 200 + body shape would pass the broken no-op too.
+     */
+    @Test
+    void sessionOut_viaCookieOnly_deletesRow() {
+        String token = extractToken(registerAndGetToken("cookieout@x.com"));
+        org.assertj.core.api.Assertions.assertThat(store.sessionOfToken(token).blockOptional())
+                .isPresent();
+
+        web.post().uri("/bff/sessionOut")
+                .cookie(SessionCookieWebFilter.SESSION_COOKIE, token)
+                .exchange().expectStatus().isOk()
+                .expectBody().jsonPath("$.loggedOut").isEqualTo(true);
+
+        org.assertj.core.api.Assertions.assertThat(store.sessionOfToken(token).blockOptional())
+                .isEmpty();
+    }
+
     private static String extractToken(String json) {
         // tiny extractor — the body is {"token":"bff_...",...}
         int i = json.indexOf("\"token\":\"") + 9;

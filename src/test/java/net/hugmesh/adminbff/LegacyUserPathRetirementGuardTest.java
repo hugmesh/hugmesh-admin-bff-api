@@ -101,9 +101,15 @@ class LegacyUserPathRetirementGuardTest {
         PINNED.put("GET /bff/session",
                 "superseded by user-bff GET /bff/session on cluster and compose (exact path both).");
         PINNED.put("POST /bff/sessionOut",
-                "admin-bff only on every lane — user-bff's logout is DELETE /bff/session, a "
-                        + "different verb and path. login-ui session.service.ts:444 (clear()) "
-                        + "awaits it on every logout; admin-ui has no production caller.");
+                "hugmesh-generator#549: as of that fix BOTH fe route tables (compose and "
+                        + "cluster) send this path to user-bff's SsoAuthController alias instead "
+                        + "(user-bff's real logout is DELETE /bff/session; the alias exists so "
+                        + "login-ui session.service.ts:444 (clear()) needs no change). This "
+                        + "admin-bff copy is kept as a DEFENSIVE fallback — not a live browser "
+                        + "path on any gateway lane today — so it now also reads the bff_ cookie "
+                        + "(not just a header a browser never sends) and is never a silent no-op "
+                        + "for whatever still reaches it directly (a stray client, a probe, a "
+                        + "future no-gateway lane like the device lane's direct admin-bff calls).");
         PINNED.put("POST /bff/provision/matrix",
                 "login-ui bff.service.ts provisionServiceTokens() POSTs it on every sign-in; the "
                         + "compose route table has NO /bff/provision entry, so compose serves it here.");

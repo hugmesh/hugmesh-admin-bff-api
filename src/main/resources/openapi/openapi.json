@@ -2297,6 +2297,13 @@
         "summary" : "Session out",
         "operationId" : "authSessionOut",
         "parameters" : [ {
+          "name" : "bff_session",
+          "in" : "cookie",
+          "required" : false,
+          "schema" : {
+            "type" : "string"
+          }
+        }, {
           "name" : "Authorization",
           "in" : "header",
           "required" : false,
