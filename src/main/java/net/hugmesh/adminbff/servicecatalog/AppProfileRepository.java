@@ -17,8 +17,10 @@ import java.time.Instant;
  * <p>app_profile is a GLOBAL library (NO per-row tenant discriminator) — every query is
  * UNSCOPED; the controller's {@code @PreAuthorize("hasRole('SUPERADMIN')")} is the only
  * gate. {@code name} is the UNIQUE natural key, so a duplicate surfaces as the DB
- * unique-violation the service treats as a 409. {@code profile_json} is opaque template
- * data read/written as a String.
+ * unique-violation the service treats as a 409. {@code profile_json} is read/written as a String
+ * and stored VERBATIM — this layer never parses, normalises or rewrites it; the schema check
+ * (issue #55) lives one level up, in {@link AppProfileService}, and decides only whether the
+ * write happens.
  */
 @Repository
 public class AppProfileRepository {
