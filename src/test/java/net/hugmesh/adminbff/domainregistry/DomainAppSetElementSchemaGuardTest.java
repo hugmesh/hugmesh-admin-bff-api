@@ -25,11 +25,26 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * CROSS-REPO SCHEMA GUARD for hugmesh-admin-bff-api issue #6 (the multi-tenancy provisioning
- * leg). It pins the ONE fact the #6 proposal turns on: what a {@code domain_registry} row would
- * have to supply for the generator's {@code casdoor-domains} ApplicationSet to accept it as an
- * element — and which of those fields this repo CANNOT supply today.
+ * leg). It pins the JOIN the whole issue turns on: what a {@code domain_registry} row has to
+ * supply for the generator's per-domain Casdoor ApplicationSet to accept it as an element, and
+ * which row column each of those fields comes from.
  *
- * <p><b>This is a test-only commit and it is INERT by construction.</b> Nothing in
+ * <p><b>Updated for operator DECISION 29 (2026-09-17).</b> This guard used to assert a GAP —
+ * four required element fields with no source in this schema, which is what made the leg
+ * unbuildable. The decision closed all four ({@code slug = ns_prefix}; an {@code idp} column;
+ * an MCS pair allocated by the writer at insert), so the guard now asserts the gap is CLOSED
+ * and that each field keeps its decided source. It fails the day a column is dropped or an
+ * element field appears upstream with no answer behind it.
+ *
+ * <p><b>THE ROW IS NOT THE WIRE.</b> Two joins have to hold, and this guard pins BOTH, because
+ * closing the first alone changes nothing on a cluster: (1) element field &rarr; {@link
+ * DomainRegistryRow} column, and (2) element field &rarr; the SIGNED EXPORT entry ({@link
+ * net.hugmesh.adminbff.domainregistry.DomainExportModels.DomainEntry}), which is the only wire
+ * out of this service. A column the export does not carry is invisible to the generator's
+ * {@code hugmesh-domain-reconcile}: it read {@code .body.entries[i].idp} for weeks while the
+ * export had no such field, saw absent, and reconciled every domain as {@code superdomain}.
+ *
+ * <p><b>The leg itself is still NOT built, and that is still asserted.</b> Nothing in
  * {@code src/main} is added, changed, or wired by it: there is no {@code DomainReconciler}, no
  * ApplicationSet patcher, no bean, no flag, no ArgoCD object. {@link
  * #domainRegistryPackage_stillWiresNoApplicationSetWriter()} asserts exactly that, so the guard
@@ -67,31 +82,31 @@ class DomainAppSetElementSchemaGuardTest {
     private static final Pattern REF = Pattern.compile("\\{\\{\\s*\\.([A-Za-z_][A-Za-z0-9_]*)\\s*}}");
 
     /**
-     * The element keys a {@code domain_registry} row can supply TODAY, and the row accessor each
-     * one comes from. Deliberately small: it is the measured answer, not an aspiration.
+     * EVERY element key, and the {@link DomainRegistryRow} accessor it is sourced from —
+     * CLOSED by operator DECISION 29 (2026-09-17). Before that decision this map held three
+     * entries and a companion {@code UNDECIDED} map held the other four; the four are:
+     *
+     * <ul>
+     *   <li>{@code slug} &rarr; {@code nsPrefix} (29a: <em>"the slug rule is ns_prefix — it also
+     *       names the Vault path secret/&lt;slug&gt;/casdoor, so namespace and secret path now
+     *       agree"</em>). This is why {@code slug} and {@code nsPrefix} map to the SAME
+     *       accessor, and why that column is UNIQUE + DNS-1123 validated + immutable.</li>
+     *   <li>{@code idp} &rarr; {@code idp} (29b: add the column rather than derive it).</li>
+     *   <li>{@code selinuxLevel} / {@code selinuxLevelPg} &rarr; the allocated MCS pair
+     *       (29c: the writer allocates at insert under a uniqueness constraint).</li>
+     * </ul>
+     *
+     * <p>If an entry here loses its row accessor, the provisioning leg went back to being
+     * unbuildable — that is a regression, not a refactor.
      */
     private static final Map<String, String> DECIDED_SOURCES = Map.of(
+            "slug", "nsPrefix",
             "clusterDomain", "clusterDomain",
             "casdoorOrg", "casdoorOrg",
-            "nsPrefix", "nsPrefix");
-
-    /**
-     * The element keys with NO decided source in this repo — the #6 blocker, one line of reason
-     * each. {@code slug} is the odd one out: a CANDIDATE column exists ({@code brand}), but the
-     * rule (brand vs ns_prefix vs derived from cluster_domain) is an open operator decision, and
-     * the slug also names the Vault path {@code secret/<slug>/casdoor}, so guessing it wrong
-     * mis-addresses a secret rather than merely mis-naming an Application.
-     */
-    private static final Map<String, String> UNDECIDED = Map.of(
-            "slug", "candidate column `brand` exists but the slug RULE is undecided "
-                    + "(brand | ns_prefix | derived from cluster_domain); it also names the Vault "
-                    + "path secret/<slug>/casdoor",
-            "idp", "no `idp` column exists on domain_registry at all (own|superdomain landed in "
-                    + "the Studio/KEYS manifest via generator PR #71, never in this schema)",
-            "selinuxLevel", "MCS category: no column and no allocator; docs/SECURITY.md §3 "
-                    + "requires cluster-UNIQUE categories and 05b says the element writer owns "
-                    + "the allocation",
-            "selinuxLevelPg", "MCS category for the per-domain Postgres: same as selinuxLevel");
+            "nsPrefix", "nsPrefix",
+            "idp", "idp",
+            "selinuxLevel", "selinuxLevel",
+            "selinuxLevelPg", "selinuxLevelPg");
 
     // ── the vendored ApplicationSet ───────────────────────────────────────────────────
 
@@ -148,16 +163,15 @@ class DomainAppSetElementSchemaGuardTest {
     // ── the join: element schema vs. the row this repo actually has ───────────────────
 
     @Test
-    @DisplayName("domain_registry can supply only 3 of the 7 required element fields")
-    void theProjectionGap_isExactlyTheFourUndecidedFields() {
+    @DisplayName("the projection gap is CLOSED AT THE ROW: every element field has a column")
+    void theProjectionGap_isClosedByDecision29() {
         Set<String> required = requiredElementKeys();
         Set<String> rowComponents = rowComponentNames();
 
-        // Every DECIDED source must still exist on the row (a rename would silently break the
-        // half of the projection that IS settled).
+        // Every DECIDED source must exist on the row. A rename here silently un-builds the leg.
         for (Map.Entry<String, String> e : DECIDED_SOURCES.entrySet()) {
             assertThat(rowComponents)
-                    .as("element field '%s' is sourced from DomainRegistryRow.%s()",
+                    .as("element field '%s' is sourced from DomainRegistryRow.%s() — decision 29",
                             e.getKey(), e.getValue())
                     .contains(e.getValue());
         }
@@ -165,37 +179,126 @@ class DomainAppSetElementSchemaGuardTest {
         Set<String> unsourced = new TreeSet<>(required);
         unsourced.removeAll(DECIDED_SOURCES.keySet());
 
-        String why = UNDECIDED.entrySet().stream()
-                .map(e -> "  - " + e.getKey() + ": " + e.getValue())
+        String mapping = DECIDED_SOURCES.entrySet().stream()
+                .sorted(Map.Entry.comparingByKey())
+                .map(e -> "  - " + e.getKey() + " <- DomainRegistryRow." + e.getValue() + "()")
                 .collect(Collectors.joining("\n"));
         assertThat(unsourced)
                 .as("""
-                        The #6 provisioning leg is BLOCKED on these element fields, not on \
-                        writing the reconciler:
+                        An element field 05b requires has NO source on domain_registry, so the \
+                        #6 provisioning leg is blocked again. This is the ROW half only — see \
+                        exportEntry_carriesEveryDecidedField for the WIRE half; a column the \
+                        signed export does not carry reaches no cluster. The decision-29 \
+                        mapping is:
                         %s
-                        A reconciler that emits an element missing any of them is refused by \
-                        goTemplateOptions missingkey=error; one that GUESSES them mis-addresses \
-                        a Vault path or collides two workloads on one MCS category. If this set \
-                        shrank, a decision was made — record it on issue #6 and update this \
-                        guard in the same commit.""", why)
-                .containsExactlyInAnyOrderElementsOf(new TreeSet<>(UNDECIDED.keySet()));
+                        An element missing any required field is refused by goTemplateOptions \
+                        missingkey=error; one that GUESSES a field mis-addresses the Vault path \
+                        secret/<slug>/casdoor or collides two workloads on one MCS category. \
+                        If a NEW field appeared upstream, it needs an operator decision and a \
+                        column — record it on issue #6 and update this guard in the same \
+                        commit.""", mapping)
+                .isEmpty();
     }
 
     @Test
-    @DisplayName("the row still has NO idp / MCS columns, and still has the band-190 ack targets")
-    void rowShape_isStillThePreDecisionShape() {
+    @DisplayName("the row carries the decision-29 columns, and still has the band-190 ack targets")
+    void rowShape_carriesTheDecision29Columns() {
         Set<String> components = rowComponentNames();
 
         assertThat(components)
-                .as("adding any of these columns means the #6 decision was taken — re-read the "
-                        + "proposal on issue #6 and update this guard deliberately")
-                .doesNotContain("idp", "selinuxLevel", "selinuxLevelPg");
+                .as("""
+                        DECISION 29 (operator, 2026-09-17) put these on domain_registry via \
+                        changelog 012: idp (29b, a real column not a derivation) and the \
+                        allocated MCS pair (29c, allocated by the writer at insert under \
+                        uq_domain_registry_selinux_level/_pg). Removing one reverts the \
+                        decision and re-blocks the provisioning leg.""")
+                .contains("idp", "selinuxLevel", "selinuxLevelPg");
 
         assertThat(components)
                 .as("the band-190 provisioning-status columns are the ack endpoint's write "
                         + "surface (changelog 190-domain-registry-provisioning-status.xml); "
                         + "they are READ-only today — nothing in this repo writes them")
                 .contains("caProvisioned", "appsetRegistered", "lastReconciledGeneration");
+    }
+
+    @Test
+    @DisplayName("the slug rule stays ns_prefix (29a) — slug and nsPrefix share one source")
+    void slugRule_isNsPrefix() {
+        assertThat(DECIDED_SOURCES.get("slug"))
+                .as("""
+                        Decision 29a: the slug rule is ns_prefix, NOT brand and NOT derived \
+                        from cluster_domain. The slug names the Application casdoor-<slug>, the \
+                        namespace <slug>-pki AND the Vault path secret/<slug>/casdoor, so \
+                        sourcing it from a different column re-points a live secret. If this \
+                        assertion is edited, the Vault path convention moved with it and \
+                        docs/DOMAIN-IDP.md has to move too.""")
+                .isEqualTo("nsPrefix");
+        assertThat(DECIDED_SOURCES.get("slug"))
+                .as("slug and nsPrefix are ONE column under 29a — they cannot diverge")
+                .isEqualTo(DECIDED_SOURCES.get("nsPrefix"));
+
+        assertThat(rowComponentNames())
+                .as("29a again, from the production side: the row has NO separate 'slug' "
+                        + "component, so ns_prefix is the ONLY column the slug can come from — "
+                        + "a second column would let the Application name and the Vault path "
+                        + "drift apart")
+                .doesNotContain("slug")
+                .contains("nsPrefix");
+
+        assertThat(DomainSlug.pkiNamespace("acme"))
+                .as("the tenant namespace the ApplicationSet destination expands to")
+                .isEqualTo("acme-pki");
+        assertThat(DomainSlug.vaultPath("acme"))
+                .as("the per-domain Vault credential document the three ExternalSecrets read")
+                .isEqualTo("secret/acme/casdoor");
+    }
+
+    /**
+     * The WIRE half of the join. Every element field 05b requires must be carried by the signed
+     * export entry, under its own name or its decided row-source name — otherwise the column
+     * exists, the guard above is green, and the generator still sees nothing.
+     *
+     * <p>This is not hypothetical: hugmesh-generator
+     * {@code specs/usr/sbin/hugmesh-domain-reconcile:413} reads
+     * {@code .body.entries[i].idp} and validates it as a closed enum at :429-431, and that
+     * file's own header recorded the producer gap ("the DomainEntry has NO idp field yet …
+     * every current export renders the pre-#47 template set unchanged"). Decision 29b made the
+     * column real so it could be CARRIED.
+     */
+    @Test
+    @DisplayName("the wire carries them too: the export entry has every decided field")
+    void exportEntry_carriesEveryDecidedField() {
+        Set<String> wire = Arrays.stream(
+                        net.hugmesh.adminbff.domainregistry.DomainExportModels.DomainEntry.class
+                                .getRecordComponents())
+                .map(RecordComponent::getName)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+
+        assertThat(wire)
+                .as("anti-vacuity: DomainEntry must still be a record with a real field set")
+                .hasSizeGreaterThanOrEqualTo(10);
+
+        List<String> missing = new ArrayList<>();
+        for (Map.Entry<String, String> e : DECIDED_SOURCES.entrySet()) {
+            if (!wire.contains(e.getKey()) && !wire.contains(e.getValue())) {
+                missing.add(e.getKey() + " (row source: " + e.getValue() + ")");
+            }
+        }
+        assertThat(missing)
+                .as("""
+                        These element fields have a domain_registry column but the SIGNED EXPORT \
+                        does not carry them, so no consumer can ever see them: the row is not \
+                        the wire. DomainEntry today: %s. Add the field to DomainEntry AND to \
+                        DomainRegistryExportService.compile — but NOT to canonicalBytes without \
+                        moving hugmesh-generator specs/usr/lib/hugmesh/domain-verify.sh in \
+                        lockstep, because that verifier rebuilds the v1 bytes field by field and \
+                        fails CLOSED on divergence.""", wire)
+                .isEmpty();
+
+        assertThat(wire)
+                .as("DECISION 29b/29c on the wire — dropping one of these silently reverts "
+                        + "every exported domain to the superdomain IdP and to no MCS pair")
+                .contains("idp", "selinuxLevel", "selinuxLevelPg");
     }
 
     @Test
