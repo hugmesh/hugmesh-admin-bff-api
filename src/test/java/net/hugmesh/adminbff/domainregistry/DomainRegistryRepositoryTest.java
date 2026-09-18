@@ -279,6 +279,29 @@ class DomainRegistryRepositoryTest {
     }
 
     @Test
+    void explicitPairFromTheStaticMatrix_isRefusedByTheWriter_notStored() {
+        // The one MCS failure no DATABASE constraint can catch: s0:c85 / s0:c86 are UNIQUE
+        // values, so every uniqueness guard accepts them — and they are the base's own
+        // placeholders, which docs/DOMAIN-IDP.md:56 forbids going live on a domain. Only the
+        // writer can refuse them, and nothing in the cluster would report the co-location.
+        DomainRegistryRepository repo = repo();
+        DomainRegistration placeholders = new DomainRegistration(
+                null, "placeholder.test", "ph", "Acme Inc", "vault:pki/acme", "ph", "acme-org",
+                "tag:acme", true, null, null, null, false, false, 0L,
+                DomainIdp.SUPERDOMAIN, "s0:c85", "s0:c86");
+
+        StepVerifier.create(repo.insert(placeholders, "s@infra"))
+                .expectErrorSatisfies(e -> assertThat(e)
+                        .isInstanceOf(IllegalArgumentException.class)
+                        .hasMessageContaining("reserved per-domain range"))
+                .verify();
+
+        assertThat(repo.findByClusterDomain("placeholder.test").block())
+                .as("refused BEFORE the INSERT — no row, not a row with bad categories")
+                .isNull();
+    }
+
+    @Test
     void checkConstraint_refusesARowWhoseTwoCategoriesAreTheSame() {
         // ck_domain_registry_selinux_level_distinct. The allocator can never produce this, so
         // the only way in is a hand-written UPDATE — which is exactly what this simulates. A

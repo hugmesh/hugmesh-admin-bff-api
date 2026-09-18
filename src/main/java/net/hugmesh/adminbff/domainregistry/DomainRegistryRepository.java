@@ -90,12 +90,35 @@ public class DomainRegistryRepository {
      */
     private Mono<McsCategoryAllocator.McsPair> allocateFor(DomainRegistration d) {
         return McsCategoryAllocator.pairOf(d.selinuxLevel(), d.selinuxLevelPg())
-                .map(Mono::just)
+                .map(DomainRegistryRepository::checkedExplicitPair)
                 .orElseGet(() -> repo.findAll()
                         .map(DomainRegistryRow::selinuxLevel)
                         .filter(level -> level != null && !level.isBlank())
                         .collectList()
                         .map(McsCategoryAllocator::allocate));
+    }
+
+    /**
+     * An explicit pair is honoured only from inside the RESERVED per-domain range. Nothing
+     * supplies one today; the javadoc above invites a future reconcile/import caller to, and
+     * that caller must not be able to store a category from the static per-application matrix —
+     * hugmesh-generator {@code docs/DOMAIN-IDP.md:56} forbids the base's {@code s0:c85} /
+     * {@code s0:c86} placeholders going live, and a platform category on a tenant pod removes
+     * the isolation silently. The UNIQUE constraints cannot catch it: those values are unique.
+     */
+    private static Mono<McsCategoryAllocator.McsPair> checkedExplicitPair(
+            McsCategoryAllocator.McsPair pair) {
+        if (!McsCategoryAllocator.isInReservedRange(pair.level())
+                || !McsCategoryAllocator.isInReservedRange(pair.levelPg())) {
+            return Mono.error(new IllegalArgumentException(
+                    "explicit MCS pair (" + pair.level() + ", " + pair.levelPg() + ") is outside "
+                            + "the reserved per-domain range s0:c" + McsCategoryAllocator.FLOOR_CATEGORY
+                            + "..s0:c" + McsCategoryAllocator.CEILING_CATEGORY
+                            + " — a category from the static per-application matrix (or the "
+                            + "forbidden s0:c85/s0:c86 placeholders) would silently co-locate a "
+                            + "tenant workload with a platform one"));
+        }
+        return Mono.just(pair);
     }
 
     /** Every registered domain (the SUPERADMIN list surface). Ordered by the natural key. */

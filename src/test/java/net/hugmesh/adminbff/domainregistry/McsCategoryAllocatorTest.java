@@ -200,6 +200,32 @@ class McsCategoryAllocatorTest {
                 .isFalse();
     }
 
+    @Test
+    @DisplayName("isInReservedRange refuses the static matrix, the placeholders and junk")
+    void isInReservedRange_refusesAnythingOutsideThePerDomainRange() {
+        assertThat(McsCategoryAllocator.isInReservedRange("s0:c256")).isTrue();
+        assertThat(McsCategoryAllocator.isInReservedRange("s0:c1023")).isTrue();
+        assertThat(McsCategoryAllocator.isInReservedRange("s0:c257"))
+                .as("a range check, NOT a parity check — the odd half of a pair is in range")
+                .isTrue();
+
+        assertThat(McsCategoryAllocator.isInReservedRange("s0:c85"))
+                .as("hugmesh-generator docs/DOMAIN-IDP.md:56 forbids the base's s0:c85 / s0:c86 "
+                        + "placeholders ever going live on a domain. They are UNIQUE values, so "
+                        + "no constraint can catch them — only the writer can.")
+                .isFalse();
+        assertThat(McsCategoryAllocator.isInReservedRange("s0:c86")).isFalse();
+        assertThat(McsCategoryAllocator.isInReservedRange("s0:c88"))
+                .as("the highest statically assigned category on 2026-09-17 is below the floor")
+                .isFalse();
+        assertThat(McsCategoryAllocator.isInReservedRange("s0:c1024"))
+                .as("containerd selinux_category_range = 1024 makes c1024 invalid")
+                .isFalse();
+        assertThat(McsCategoryAllocator.isInReservedRange("s0")).isFalse();
+        assertThat(McsCategoryAllocator.isInReservedRange("")).isFalse();
+        assertThat(McsCategoryAllocator.isInReservedRange(null)).isFalse();
+    }
+
     private static int category(String level) {
         return Integer.parseInt(level.substring("s0:c".length()));
     }

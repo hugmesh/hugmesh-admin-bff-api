@@ -158,6 +158,37 @@ public final class McsCategoryAllocator {
     }
 
     /**
+     * Whether a category value is a well-formed {@code s0:cNN} INSIDE the reserved per-domain
+     * range — the guard on an EXPLICIT pair supplied by a caller (a future reconcile/import
+     * path restating an existing domain's categories) rather than allocated here.
+     *
+     * <p>Unlike {@link #slotOf(String)} this does NOT require the EVEN half: it is a
+     * range check, deliberately, so a forced-duplicate test can still hand the database two
+     * in-range values and prove a UNIQUE constraint bites. What it refuses is a category from
+     * the STATIC per-application matrix — hugmesh-generator {@code docs/DOMAIN-IDP.md:56}
+     * forbids the base's {@code s0:c85} / {@code s0:c86} placeholders ever going live on a
+     * domain, and a static-matrix category silently co-locates a tenant's pod with a platform
+     * workload. That failure is invisible in the cluster, which is why it is refused at the
+     * writer rather than trusted to a reviewer.
+     */
+    public static boolean isInReservedRange(String level) {
+        if (level == null) {
+            return false;
+        }
+        Matcher m = LEVEL.matcher(level.trim());
+        if (!m.matches()) {
+            return false;
+        }
+        int category;
+        try {
+            category = Integer.parseInt(m.group(1));
+        } catch (NumberFormatException e) {
+            return false;
+        }
+        return category >= FLOOR_CATEGORY && category <= CEILING_CATEGORY;
+    }
+
+    /**
      * Whether a database error is the MCS-uniqueness violation this allocator races against
      * (as opposed to the {@code cluster_domain} / {@code ns_prefix} duplicate, which is a real
      * 409 for the caller and must NOT be retried). Matched on the constraint NAME anywhere in
