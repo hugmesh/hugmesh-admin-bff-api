@@ -242,6 +242,72 @@ class DomainRegistryRepositoryTest {
     }
 
     @Test
+    void uniqueSelinuxLevel_bitesONITSOWN_notOnlyViaThePgConstraint() {
+        // ISOLATES uq_domain_registry_selinux_level. The test above supplies BOTH halves equal
+        // to the first row's, so the _pg constraint alone is enough to reject it — dropping the
+        // casdoor-pod constraint left that test GREEN (measured, mutation battery run 1). Here
+        // ONLY the casdoor-pod category collides; the Postgres half is a free slot's.
+        DomainRegistryRepository repo = repo();
+        DomainRegistration first = repo.insert(draft("lvl-a.test", "lvl-a"), "s@infra").block();
+        assertThat(first).isNotNull();
+
+        DomainRegistration collide = new DomainRegistration(
+                null, "lvl-b.test", "lvl-b", "Acme Inc", "vault:pki/acme", "lvl-b", "acme-org",
+                "tag:acme", true, null, null, null, false, false, 0L,
+                DomainIdp.SUPERDOMAIN, first.selinuxLevel(), "s0:c1023");
+
+        StepVerifier.create(repo.insert(collide, "other@infra"))
+                .expectError()
+                .verify();
+    }
+
+    @Test
+    void uniqueSelinuxLevelPg_bitesONITSOWN() {
+        // The mirror image: only the POSTGRES category collides.
+        DomainRegistryRepository repo = repo();
+        DomainRegistration first = repo.insert(draft("pg-a.test", "pg-a"), "s@infra").block();
+        assertThat(first).isNotNull();
+
+        DomainRegistration collide = new DomainRegistration(
+                null, "pg-b.test", "pg-b", "Acme Inc", "vault:pki/acme", "pg-b", "acme-org",
+                "tag:acme", true, null, null, null, false, false, 0L,
+                DomainIdp.SUPERDOMAIN, "s0:c1022", first.selinuxLevelPg());
+
+        StepVerifier.create(repo.insert(collide, "other@infra"))
+                .expectError()
+                .verify();
+    }
+
+    @Test
+    void checkConstraint_refusesARowWhoseTwoCategoriesAreTheSame() {
+        // ck_domain_registry_selinux_level_distinct. The allocator can never produce this, so
+        // the only way in is a hand-written UPDATE — which is exactly what this simulates. A
+        // pod and its own database sharing a category is the same §3 violation as two domains
+        // sharing one, and nothing in the cluster would report it.
+        DomainRegistryRepository repo = repo();
+        DomainRegistration row = repo.insert(draft("same.test", "same"), "s@infra").block();
+        assertThat(row).isNotNull();
+
+        StepVerifier.create(db.sql("UPDATE domain_registry SET selinux_level_pg = selinux_level "
+                        + "WHERE cluster_domain = 'same.test'").fetch().rowsUpdated())
+                .expectError()
+                .verify();
+    }
+
+    @Test
+    void checkConstraint_refusesAnUnknownIdp() {
+        // ck_domain_registry_idp. The service refuses an unknown idp with a 400; this is the
+        // backstop for anything that reaches the table another way.
+        DomainRegistryRepository repo = repo();
+        repo.insert(draft("idpck.test", "idpck"), "s@infra").block();
+
+        StepVerifier.create(db.sql("UPDATE domain_registry SET idp = 'entra' "
+                        + "WHERE cluster_domain = 'idpck.test'").fetch().rowsUpdated())
+                .expectError()
+                .verify();
+    }
+
+    @Test
     void uniqueNsPrefix_rejectsASecondDomainWithTheSameSlug() {
         // DECISION 29a: the slug names the Vault path secret/<slug>/casdoor, so two domains
         // sharing one would read ONE credential document. uq_domain_registry_ns_prefix.
