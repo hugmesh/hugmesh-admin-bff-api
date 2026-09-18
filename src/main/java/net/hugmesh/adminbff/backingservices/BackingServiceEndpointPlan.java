@@ -79,6 +79,16 @@ public final class BackingServiceEndpointPlan {
      * The SIX namespaces decision 34a names, re-measured against
      * {@code hugmesh-generator@88f70d99 specs/cluster} on 2026-09-17.
      *
+     * <p>ALL SIX SHIP. Three of them (hugmesh-owncast, hugmesh-tube, hugmesh-forum) are created
+     * by their own optional-service Applications, so their identical ConfigMap and grant ship
+     * from that service's own manifests directory rather than from the always-on
+     * {@code manifests/backing-service-endpoints/} bundle — an object applied from the always-on
+     * bundle into a namespace that does not exist on a default mesh would leave that Application
+     * permanently unable to sync. The generator guard
+     * {@code tests/scripts/test-backing-service-endpoints-closure.sh} pins all six placements and
+     * goes RED on the deletion of any one of them, which is what stops this axis and the shipped
+     * manifests from drifting apart.
+     *
      * <p>A seventh namespace holds a Postgres address and is deliberately NOT here:
      * {@code hugmesh-frontend}, whose fe-gateway reads
      * {@code r2dbc:postgresql://fe_gateway:$(ROUTE_ACCESS_DB_PASSWORD)@route-access-db…}. Every
@@ -106,15 +116,19 @@ public final class BackingServiceEndpointPlan {
             new AxisNamespace("hugmesh-owncast", false,
                     "owncast HAS a real SPRING_R2DBC_URL/SPRING_LIQUIBASE_URL env seam but no "
                             + "backing-services.yaml id. Its namespace only exists when the "
-                            + "optional service is installed."),
+                            + "optional service is installed, so its ConfigMap + grant ship "
+                            + "from manifests/owncast/backing-service-endpoints.yaml, not from "
+                            + "the always-on manifests/backing-service-endpoints/ bundle."),
             new AxisNamespace("hugmesh-tube", false,
                     "tube HAS a real SPRING_R2DBC_URL/SPRING_LIQUIBASE_URL env seam but no "
                             + "backing-services.yaml id. Its namespace only exists when the "
-                            + "optional service is installed."),
+                            + "optional service is installed, so its ConfigMap + grant ship "
+                            + "from manifests/tube/backing-service-endpoints.yaml."),
             new AxisNamespace("hugmesh-forum", false,
                     "phpbb carries PHPBB_DB_HOST (a bare host, not a URL) and has no registry "
                             + "id. Its namespace only exists when the optional service is "
-                            + "installed."));
+                            + "installed, so its ConfigMap + grant ship from "
+                            + "manifests/forum/backing-service-endpoints.yaml."));
 
     /**
      * One actuatable service: the namespace whose ConfigMap holds its keys, the in-mesh authority
