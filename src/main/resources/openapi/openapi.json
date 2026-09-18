@@ -2620,6 +2620,27 @@
         }
       }
     },
+    "/bff/internal/usage" : {
+      "post" : {
+        "tags" : [ "internal-account-controller" ],
+        "operationId" : "recordUsage",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/RecordUsageRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "204" : {
+            "description" : "No Content"
+          }
+        }
+      }
+    },
     "/bff/internal/sessions" : {
       "post" : {
         "tags" : [ "internal-account-controller" ],
@@ -10558,6 +10579,26 @@
           "secret" : {
             "maxLength" : 4096,
             "minLength" : 0,
+            "type" : "string"
+          }
+        }
+      },
+      "RecordUsageRequest" : {
+        "required" : [ "action", "handle" ],
+        "type" : "object",
+        "properties" : {
+          "handle" : {
+            "minLength" : 1,
+            "type" : "string"
+          },
+          "roles" : {
+            "type" : "array",
+            "items" : {
+              "type" : "string"
+            }
+          },
+          "action" : {
+            "minLength" : 1,
             "type" : "string"
           }
         }

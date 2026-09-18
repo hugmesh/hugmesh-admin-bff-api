@@ -24,6 +24,7 @@ import net.hugmesh.adminbff.account.AccountIssuerService;
 import net.hugmesh.adminbff.account.AccountLocalpartService;
 import net.hugmesh.adminbff.account.RegistrationDomainResolver;
 import net.hugmesh.adminbff.suspension.SuspensionService;
+import net.hugmesh.adminbff.usage.UsageService;
 import net.hugmesh.authcore.account.Account;
 import net.hugmesh.authcore.account.AccountStatus;
 import net.hugmesh.authcore.account.AccountStore;
@@ -168,6 +169,14 @@ public class InternalAccountController {
     /** How long before access-token expiry the exchange leg pre-emptively refreshes. */
     private final long refreshSkewSeconds;
 
+    /**
+     * The SAME {@code @Service} {@code AuthController#emitAndSession}/{@code #complete} call
+     * for admin-bff's OWN {@code register}/{@code login}/{@code complete}/{@code
+     * matrix.entitled}/{@code mastodon.entitled} events — see {@link #recordUsage} (decision
+     * 55, hugmesh-admin-bff-api#85).
+     */
+    private final UsageService usage;
+
     public InternalAccountController(AccountStore accounts,
                                      SuspensionService suspensions,
                                      MfaStepUpService mfaStepUp,
@@ -177,7 +186,8 @@ public class InternalAccountController {
                                      AccountLocalpartService localparts,
                                      AccountCasdoorSubService casdoorSubs,
                                      AccountIssuerService accountIssuers,
-                                     RegistrationDomainResolver registrationDomains) {
+                                     RegistrationDomainResolver registrationDomains,
+                                     UsageService usage) {
         this.accounts = accounts;
         this.suspensions = suspensions;
         this.mfaStepUp = mfaStepUp;
@@ -188,6 +198,7 @@ public class InternalAccountController {
         this.casdoorSubs = casdoorSubs;
         this.accountIssuers = accountIssuers;
         this.registrationDomains = registrationDomains;
+        this.usage = usage;
     }
 
     /**
@@ -271,6 +282,18 @@ public class InternalAccountController {
 
     /** The exchange body from the gateway: a raw opaque {@code bff_} session token. */
     public record ExchangeRequest(@NotBlank String token) {
+    }
+
+    /**
+     * The body for {@link #recordUsage} — the EXACT parameter list of {@link
+     * UsageService#record(String, List, String)}, so the internal caller's contract is a
+     * straight pass-through with no re-derivation on this side. {@code roles} is optional
+     * ({@code null} is treated as "no roles", identical to how {@code UsageService.record}
+     * already treats it) since a caller that only knows the handle at record time (no
+     * account object in hand) still has a valid call to make.
+     */
+    public record RecordUsageRequest(@NotBlank String handle, @Nullable List<String> roles,
+                                     @NotBlank String action) {
     }
 
     /**
@@ -760,6 +783,74 @@ public class InternalAccountController {
                         .switchIfEmpty(Mono.error(notFound("session")))
                         // Decrypt custody, lazily refresh if near expiry, serve the current JWT on refresh failure.
                         .flatMap(s -> exchangeSessionRow(s))));
+    }
+
+    // ──────────────────────────── Usage recording (decision 55) ───────────────────────────
+
+    /**
+     * Record one usage event on admin-bff's OWN {@link UsageService} — a registration (or
+     * any other action) performed on a DIFFERENT service (today: user-bff's {@code
+     * LegacyPathParityController} register handlers, hugmesh-user-bff-api#19 box 3) is
+     * recorded here EXACTLY as if it had been performed against this service's own {@code
+     * AuthController}, since {@code AuthController} calls the SAME {@link
+     * UsageService#record(String, List, String)} with the SAME three arguments — this
+     * endpoint is a straight pass-through, not a reinterpretation. Decision 55 (operator,
+     * 2026-09-18, "yes"): a registration performed through user-bff DOES appear in
+     * admin-bff's usage table.
+     *
+     * <h3>Why a dedicated endpoint rather than folding into restart-onboarding (#84)</h3>
+     * The parent issue (hugmesh-admin-bff-api#2, box 2) floated folding this into box 1's
+     * {@code POST /bff/internal/accounts/{id}/restart-onboarding} with an {@code action}
+     * field, since admin-bff's own register handlers call {@code restartOnboarding} and
+     * {@code usage.record(..., "register")} back-to-back on every registration — folding
+     * would save user-bff one round trip on THAT specific path. This endpoint is dedicated
+     * instead, for three reasons argued on #85: (1) #84 is a separate, not-yet-landed issue
+     * outside decision 55's scope — folding would require building #84's own account-state
+     * mutation as a side effect of this analytics leg, entangling two unrelated concerns in
+     * one request/response contract; (2) a dedicated endpoint mirrors {@link
+     * UsageService#record}'s OWN three-argument shape exactly and works for ANY action
+     * (not only {@code "register"}) — {@code "login"}, {@code "complete"}, {@code
+     * "matrix.entitled"}, {@code "mastodon.entitled"}, or a future action user-bff records
+     * on its own surface, none of which have anything to do with restart-onboarding; (3) it
+     * matches #85's own "Done when" checklist verbatim ("the internal usage leg exists with
+     * a test and a regenerated openapi.json"), which never mentions #84. The cost — one
+     * extra round trip on the register path specifically, once #84 AND
+     * hugmesh-user-bff-api#19 both land — is the SAME "S either way" cost the parent
+     * comment itself accepted for either shape.
+     *
+     * <h3>No account lookup, no existence check — deliberately</h3>
+     * {@code AuthController}'s own calls (e.g. {@code emitAndSession}) never re-verify the
+     * account before recording — they call {@code usage.record} with a handle/roles they
+     * already hold from an account object validated earlier in the SAME request. This
+     * endpoint does the same: it trusts the caller (an internal, {@code ROLE_SERVICE}-gated
+     * service that has already resolved its own account) and performs no {@link
+     * AccountStore} read. Adding one here would diverge from {@code AuthController}'s own
+     * behaviour (this service's register path never fails a registration because the
+     * FOLLOW-UP usage write couldn't find the account it just created) and would cost a
+     * database round trip {@link UsageService#record} itself does not pay.
+     *
+     * <h3>Idempotent where it can be</h3>
+     * {@link UsageService#record} is an APPEND (an analytics event), not a keyed upsert —
+     * there is no dedup key in the schema today, so calling this endpoint twice for the
+     * same registration genuinely records two rows, identical to what happens if {@code
+     * AuthController} itself is ever called twice for the same registration (it is not
+     * idempotent either — this endpoint does not invent a stronger guarantee than its own
+     * in-process equivalent already has). What IS idempotent: the endpoint has no
+     * precondition and no allocated identity to collide on, {@link UsageService#record}
+     * never throws (Kafka/ClickHouse failures degrade silently — see its class javadoc), so
+     * a caller may retry a failed/uncertain request without risking an error response or a
+     * partial-state failure — the ONLY possible side effect of a retry is an extra usage
+     * row, never a broken one.
+     *
+     * <p>204 on every call (fire-and-forget, matching {@code AuthController}'s own {@code
+     * .subscribe()} idiom — the write is best-effort and the caller has nothing useful to
+     * read back). No caller-observable failure mode exists: this method itself never
+     * returns an error.
+     */
+    @PostMapping("/usage")
+    @org.springframework.web.bind.annotation.ResponseStatus(HttpStatus.NO_CONTENT)
+    public Mono<Void> recordUsage(@RequestBody RecordUsageRequest body) {
+        return usage.record(body.handle(), body.roles() == null ? List.of() : body.roles(), body.action());
     }
 
     /**
