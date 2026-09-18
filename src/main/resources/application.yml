@@ -765,10 +765,28 @@ app:
   # (@ConditionalOnProperty / env), never a profile-named additional-location file.
   backing-services:
     enabled: "${APP_BACKING_SERVICES_ENABLED:false}"
-    # The Lease-gated single-writer reconcile loop SKELETON. SHIPS DARK — DEFAULT false: the
-    # scheduled tick returns early, so nothing runs at defaults. When enabled it still only
-    # calls the Noop effector (v1 logs-only; the real managed-mode flip is deferred to a
-    # follow-on generator/effector leg). Reuses the SHARED LeaderElection
+    # The REAL managed-mode EFFECTOR (Fabric8BackingServiceEffector). SHIPS DARK — DEFAULT
+    # false: the dark NoopBackingServiceEffector is in force and NO cluster is dialled, so a
+    # recorded managed mode stays durable INTENT. True wires the fabric8 effector, which
+    # merge-patches that service's two address keys into the `backing-service-endpoints`
+    # ConfigMap IN THAT SERVICE'S OWN NAMESPACE (operator decision 34a, 2026-09-17: one
+    # ConfigMap PER NAMESPACE — the single shared object was recommended and DECLINED), and
+    # then stamps the ledger generation onto exactly that service's consumer Deployment pod
+    # templates so the Deployment controller performs a TARGETED ROLLING RESTART (decision
+    # 34b). Flipping postgres-wiki-bff rolls ONE Deployment, not forty — and it IS a restart:
+    # a configMapKeyRef env var is resolved once, at container creation. Never write this
+    # down as "no restart" or as a live re-dial.
+    # ⚠ Before flipping this true on a live cluster: the `backing-service-endpoints`
+    # ConfigMap must exist in the target namespace (generator apps/17-…), the
+    # backing-service-endpoints-writer Role must be bound to this pod's backups-effector SA
+    # there, and the consumer Deployments must actually READ the keys — until that conversion
+    # lands a flip rewrites a key nothing consumes and rolls a pod that re-reads its literal.
+    effector:
+      enabled: "${APP_BACKING_SERVICES_EFFECTOR_ENABLED:false}"
+    # The Lease-gated single-writer reconcile loop. SHIPS DARK — DEFAULT false: the scheduled
+    # tick returns early, so nothing runs at defaults. Enabling it alone changes nothing
+    # either: it hands each recorded row to whichever effector the flag above selected, which
+    # is the logging Noop unless that flag is also true. Reuses the SHARED LeaderElection
     # (app.access-suspension.lease), so single-replica / dev / test fall back to AlwaysLeader.
     reconcile:
       enabled: "${APP_BACKING_SERVICES_RECONCILE_ENABLED:false}"

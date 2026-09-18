@@ -5,16 +5,16 @@ import org.slf4j.LoggerFactory;
 import reactor.core.publisher.Mono;
 
 /**
- * The DEFAULT, DARK {@link BackingServiceEffector}. With no real managed-mode effector wired
- * (the v1 default AND every deployment until the generator/effector leg ships the real one),
- * {@link #applyMode} does NOTHING but log — the {@code backing_service_mode} ledger row is
- * written by the service, but NO cluster prune / endpoint re-point happens, so the feature
- * records durable INTENT and ships dark exactly like {@code NoopBackupEffector} and the
- * optional-services Noop seams.
+ * The DEFAULT, DARK {@link BackingServiceEffector}. While
+ * {@code app.backing-services.effector.enabled} is false — the default, and every deployment
+ * until an operator turns it on — {@link #applyMode} does NOTHING but log: the
+ * {@code backing_service_mode} ledger row is written by the service, but NO ConfigMap write and
+ * NO consumer restart happens, so the feature records durable INTENT and ships dark exactly like
+ * {@code NoopBackupEffector} and the optional-services Noop seams.
  *
- * <p>Registered as an {@code @ConditionalOnMissingBean} default by
- * {@link BackingServiceEffectorConfig}, so a follow-on leg's real effector (defined elsewhere)
- * deterministically replaces it without touching this class.
+ * <p>{@link BackingServiceEffectorConfig} selects this or the real
+ * {@link Fabric8BackingServiceEffector} by that one property, with mutually-exclusive
+ * conditions, so exactly one is registered in every mode.
  */
 public class NoopBackingServiceEffector implements BackingServiceEffector {
 

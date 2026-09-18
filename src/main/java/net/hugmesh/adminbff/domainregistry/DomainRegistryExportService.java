@@ -86,7 +86,13 @@ public class DomainRegistryExportService {
             maxRowGen = Math.max(maxRowGen, d.lastReconciledGeneration());
             entries.add(new DomainEntry(d.clusterDomain(), d.brand(), d.org(), d.caRef(),
                     d.nsPrefix(), d.casdoorOrg(), d.meshTag(),
-                    d.caProvisioned(), d.appsetRegistered(), d.lastReconciledGeneration()));
+                    d.caProvisioned(), d.appsetRegistered(), d.lastReconciledGeneration(),
+                    // DECISION 29b/29c: the column is useless if the wire does not carry it.
+                    // idp is NORMALISED (absent/blank -> superdomain) because the consumer
+                    // validates it as a CLOSED enum and refuses the entry otherwise; the MCS
+                    // pair is carried RAW, nulls included — a row allocated before 29c has no
+                    // categories and must read as "not provisionable", never as a default.
+                    DomainIdp.normalize(d.idp()), d.selinuxLevel(), d.selinuxLevelPg()));
         }
         // Deterministic ordering so the content-hash + signature are reproducible.
         entries.sort(Comparator.comparing(DomainEntry::clusterDomain));
@@ -122,6 +128,23 @@ public class DomainRegistryExportService {
      *   dom=&lt;clusterDomain&gt;\tbrand=&lt;brand&gt;\torg=&lt;org&gt;\tca=&lt;caRef&gt;\tns=&lt;nsPrefix&gt;\tcasdoor=&lt;casdoorOrg&gt;\tmesh=&lt;meshTag&gt;\tca_prov=&lt;bool&gt;\tappset=&lt;bool&gt;\tgen=&lt;long&gt;\n  (one per entry)
      * </pre>
      * The same bytes the generator domain-reconcile agent recomputes to verify.
+     *
+     * <h3>WHY THE DECISION-29 FIELDS ARE NOT IN HERE (read before "fixing" it)</h3>
+     * {@code idp}, {@code selinuxLevel} and {@code selinuxLevelPg} are on the JSON entry but
+     * NOT in these bytes, and that is deliberate. hugmesh-generator
+     * {@code specs/usr/lib/hugmesh/domain-verify.sh:domain_canonical_bytes} reconstructs this
+     * encoding from the JSON with a jq expression naming exactly these TEN fields, and
+     * {@code domain_verify_export} FAILS CLOSED (keeps the last-good cache, emits no CA and no
+     * brand repo) on any byte divergence. Adding a field here without moving that file in the
+     * same breath silently stops reconciliation on every node running an older verifier.
+     *
+     * <p>The correct migration is a two-repo lockstep in this order: (1) teach the consumer to
+     * accept {@code v1-domain} AND {@code v2-domain}; (2) ship it; (3) only then emit v2 here.
+     * Until that happens the three fields travel UNSIGNED inside a signed envelope — the
+     * residual risk is that anything that gets past the export's mTLS can flip {@code idp} or
+     * an MCS category without breaking the signature.
+     * {@code DomainRegistryExportServiceTest.canonicalBytes_stillCarriesExactlyTheV1TenFields}
+     * pins this shape so the change can only be made deliberately.
      */
     static byte[] canonicalBytes(DomainExportBody body) {
         StringBuilder sb = new StringBuilder();

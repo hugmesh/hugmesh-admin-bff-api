@@ -24,6 +24,11 @@ public record UpdateDomainRequest(
         @Nullable
         String caRef,
 
+        /** The domain's SLUG. IMMUTABLE after create (decision 29a): {@code null} (omitted)
+         *  and the CURRENT value are both accepted, a DIFFERENT value is refused with a 409.
+         *  Renaming it would re-point the Vault path {@code secret/<slug>/casdoor} at a
+         *  document that does not exist, and rename the ArgoCD Application (pruning the old
+         *  instance), so it is a de-provision plus a re-provision, never an update. */
         @Size(max = 64, message = "nsPrefix is too long")
         @Nullable
         String nsPrefix,
@@ -39,5 +44,15 @@ public record UpdateDomainRequest(
         /** Desired-state on/off. {@code null} (omitted) leaves the current value
          *  unchanged; {@code false} is the SOFT-DISABLE. */
         @Nullable
-        Boolean enabled) {
+        Boolean enabled,
+
+        /** Which Casdoor serves this domain's sign-in (decision 29b): {@code own} or
+         *  {@code superdomain}. {@code null} (omitted) leaves the current value unchanged.
+         *  NOTE that flipping {@code own -> superdomain} is what would later PRUNE a
+         *  per-domain IdP instance, and the generator's removal runbook requires the domain's
+         *  tenancy-registry pair to be retired FIRST; nothing in this repo materialises that
+         *  yet, so the flip is inert today. */
+        @Size(max = 16, message = "idp is too long")
+        @Nullable
+        String idp) {
 }
