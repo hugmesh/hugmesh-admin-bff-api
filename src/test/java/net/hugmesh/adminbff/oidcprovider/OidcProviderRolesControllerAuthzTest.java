@@ -43,9 +43,16 @@ import static org.springframework.security.test.web.reactive.server.SecurityMock
  * <ol>
  *   <li><b>ROLE GATE</b> — ADMIN ALLOW; SUPERADMIN ALLOW (via {@code ROLE_SUPERADMIN >
  *       ROLE_ADMIN}); MOD/USER -&gt; 403; unauth -&gt; 401. The DENY tests
- *       {@code verify(repo, never())} so the guarded body provably never ran
- *       (MUTATION-RESISTANT: delete the {@code @PreAuthorize}/path-rule and MOD/USER reach
- *       the repo, flipping these red).</li>
+ *       {@code verify(repo, never())} so the guarded body provably never ran.
+ *       <b>What this pins, exactly (measured 2026-09-17):</b> the COMBINED gate. Because the
+ *       real {@code SecurityConfig} path rule ({@code /bff/admin/** ->
+ *       hasAnyRole('ADMIN','SUPERADMIN')}, SecurityConfig.java:284) denies MOD/USER on its
+ *       own, deleting all three {@code @PreAuthorize("hasRole('ADMIN')")} annotations from
+ *       the controller leaves this class fully GREEN (19/19) — it detects the loss of both
+ *       layers together, never of either one alone. The per-method layer is pinned
+ *       SEPARATELY by {@link OidcProviderRolesMethodGateTest}, which runs the controller
+ *       with a {@code permitAll} path chain; dropping any one annotation there turns it
+ *       red.</li>
  *   <li><b>DOMAIN SCOPING from the VALIDATED ISSUER</b> — the {@code domain} the repo is
  *       queried/mutated with is derived from the token's cryptographically-validated
  *       {@code iss} (via {@link DomainRegistry}), NEVER a path/body/header. A brand-X admin
