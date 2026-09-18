@@ -38,10 +38,14 @@ import java.util.regex.Pattern;
  *
  * <h3>The schema FILE is the contract, and it is byte-identical on both sides</h3>
  * {@code src/main/resources/schema/app-profile.schema.json} is a byte-for-byte copy of
- * {@code schemas/app-profile.schema.json} in the console repo. Both copies are pinned to the
- * same sha256 — {@link AppProfileSchemaMirrorTest} here, {@code scripts/assert-schema-pin.mjs}
- * there — so a one-sided edit turns BOTH suites red. Loosening the schema loosens both halves
- * together, which is the whole point of the copy.
+ * {@code schemas/app-profile.schema.json} in the console repo. {@link AppProfileSchemaMirrorTest}
+ * here and {@code scripts/assert-schema-pin.mjs} there guard that, and it is worth knowing how:
+ * the matching sha256 LITERALS only make an edit deliberate within one repo (moving the file and
+ * the literal together satisfies both repos' literals while the two files diverge — that was
+ * measured, both suites green), so each side also READS the other repo's file and compares bytes
+ * whenever that checkout is reachable, which CI guarantees by cloning it. The byte comparison is
+ * the half that enforces the contract. Loosening the schema loosens both halves together, which
+ * is the whole point of the copy.
  *
  * <h3>Anchoring — the one place a byte-identical copy is NOT enough</h3>
  * JSON Schema defines {@code pattern} as a PARTIAL match, and {@code java.util.regex}

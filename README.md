@@ -758,9 +758,15 @@ These surfaces are the unscoped infra control plane; an ADMIN never reaches them
   > does not do: it never rewrites a body, it never validates a READ (a row written before
   > the schema existed is still returned in full — it is WARN-logged on the superadmin read
   > and fixed in the console), and it does not RESOLVE the values (that effector is still
-  > open, catalog-ui#3). Both copies are pinned to the same sha256
-  > (`AppProfileSchemaMirrorTest` here, `scripts/assert-schema-pin.mjs` there), so a
-  > one-sided edit turns both suites red. Un-parked by operator decision 37
+  > open, catalog-ui#3). `AppProfileSchemaMirrorTest` guards the copy with TWO checks: a
+  > local sha256 pin (which makes an edit deliberate but proves nothing about the other
+  > repo — moving the schema and the literal together in one repo satisfies it, and that
+  > left both suites green with the files diverged when it was measured), and a **mirror
+  > check that reads the console's file and compares bytes**, which is the one that
+  > actually enforces byte-identity. The mirror check SKIPS when the console checkout is
+  > absent, so CI clones it and passes `-Dappprofile.schema.mirror.required=true` to turn
+  > that skip into a failure; locally a sibling checkout satisfies it
+  > (`-Dappprofile.schema.console.dir` overrides). Un-parked by operator decision 37
   > (hugmesh-generator#347, 2026-09-17): `ROLE_<UPPER>` roles, strict on unknown keys,
   > `exposure.mfaRequired` kept. The wire shape is UNCHANGED — `profileJson` is still a
   > bounded string and `openapi.json` does not move.
