@@ -601,11 +601,24 @@ public class AdminController {
             return Mono.just(ResponseEntity.badRequest().body(Map.of("error", "gateway+url_pattern+role required")));
         }
         // Reserved-prefix invariant: the rule's URL pattern must resolve to a
-        // usable first path segment (reject a pattern that is only '/' or a
-        // bare wildcard — it can't target a dedicated prefix). When the first
-        // segment is a NEW dedicated prefix not yet in the reserved set, the
-        // reserved list (the username-collision source of truth) is out of
-        // date — warn so it gets added, but don't block an access-rule change.
+        // usable first path segment (reject a pattern whose first segment is a
+        // BARE WILDCARD, '/**' or '/*' — it can't target a dedicated prefix).
+        // '/' is an EXPLICIT EXCEPTION (allowed through despite having no
+        // addressable segment) — it is a single literal path, not a wildcard
+        // catch-all, so it cannot silently widen to cover prefixes the reserved
+        // set doesn't know about. hugmesh-admin-bff-api#57 (decision 61 = refuse,
+        // hugmesh-generator#347, 2026-09-18): the admin API keeps refusing '/**'
+        // — the platform's seeds were fixed to stop shipping rows this refuses,
+        // rather than relaxing this check; see that issue for the one residual
+        // this could not close (the pki-gateway headscale catch-all, which is
+        // genuinely open-ended — Host-routed with no Path predicate — and cannot
+        // be re-expressed as a finite set of addressable prefixes without either
+        // enumerating an external, evolving API surface or moving its
+        // enforcement out of gateway_route_access entirely; neither is done
+        // here). When the first segment IS a NEW dedicated prefix not yet in the
+        // reserved set, the reserved list (the username-collision source of
+        // truth) is out of date — warn so it gets added, but don't block an
+        // access-rule change.
         String firstSegment = ReservedNames.firstSegment(urlPattern);
         if (firstSegment.isEmpty() && !"/".equals(urlPattern)) {
             return Mono.just(ResponseEntity.badRequest().body(Map.of(
