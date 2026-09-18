@@ -125,4 +125,146 @@
         <sql>GRANT SELECT, INSERT, UPDATE ON domain_registry TO adminbff_app</sql>
         <rollback>REVOKE SELECT, INSERT, UPDATE ON domain_registry FROM adminbff_app</rollback>
     </changeSet>
+    <!--
+      ══════════════════════════════════════════════════════════════════════════════════
+      DECISION 29 (operator, 2026-09-17, hugmesh/hugmesh-generator#347 comment 5722264043)
+      ══════════════════════════════════════════════════════════════════════════════════
+      The four element fields the generator's per-domain Casdoor ApplicationSet
+      (hugmesh-generator specs/cluster/apps/05b-casdoor-domains.yaml) dereferences under
+      goTemplateOptions ["missingkey=error"] but domain_registry could not supply. The
+      answers, verbatim:
+
+        29a  the slug rule is `ns_prefix`. It ALSO names the Vault path
+             secret/<slug>/casdoor, so namespace and secret path now agree, and a wrong
+             slug MIS-ADDRESSES A SECRET rather than merely mis-naming an Application.
+             => ns_prefix becomes the domain's SLUG: UNIQUE here, DNS-1123-label
+                validated + IMMUTABLE after create in DomainRegistryService.
+        29b  ADD the `idp` column (own|superdomain) rather than deriving it.
+        29c  the domain_registry WRITER allocates selinux_level / selinux_level_pg AT
+             INSERT, UNDER A UNIQUENESS CONSTRAINT, because docs/SECURITY.md §3 requires
+             cluster-unique MCS categories (a duplicate category fails OPEN — two
+             workloads share a category and nothing in the cluster detects it).
+
+      WHY THESE ARE NEW changeSets IN THIS FILE RATHER THAN EDITS TO 012-domain-registry
+      OR A NEW BAND FILE: the answer names 012-domain-registry.xml as the home for the
+      idp column. EDITING the shipped 012-domain-registry changeSet would change its
+      Liquibase checksum and fail validation on every database it has already run on, so
+      the columns are APPENDED as their own changeSets — same file, new ids, no checksum
+      of an already-applied changeSet touched. Liquibase runs an unrun changeSet wherever
+      it sits in the file; on a fresh database these apply immediately after the
+      createTable, on an existing one they apply as ordinary new migrations (the band-190
+      status columns having already been added is irrelevant — these are additive).
+
+      MIGRATION COST, STATED: 012-domain-registry-ns-prefix-unique adds a UNIQUE
+      constraint to an EXISTING column. On a database that already holds two rows with
+      the same non-null ns_prefix the migration FAILS (loudly, at startup) — that is the
+      correct outcome under 29a (two domains sharing a slug share a Vault secret path),
+      but it is a cost, and it is why this is called out here rather than discovered at a
+      deployment. NULL ns_prefix values do NOT collide (SQL UNIQUE treats NULLs as
+      distinct in both PostgreSQL and the H2 PG-compat test store), so pre-decision rows
+      that never set one migrate cleanly and are refused at the SERVICE layer instead.
+    -->
+
+    <changeSet id="012-domain-registry-idp" author="hugmesh">
+        <comment>domain_registry.idp (decision 29b) — which Casdoor serves this domain's
+                 sign-in: 'superdomain' (ride the mesh's central Casdoor — the default, and
+                 the Studio Domain dataclass default) or 'own' (the domain runs its own
+                 per-domain Casdoor instance). This is the generator ApplicationSet's SELECTOR
+                 gate: only idp='own' elements generate a casdoor-&lt;slug&gt; Application.
+                 NOT NULL DEFAULT 'superdomain' so every existing row back-fills to the
+                 ride-the-superdomain floor and a fresh row provisions NOTHING until a
+                 SUPERADMIN opts it in.</comment>
+        <addColumn tableName="domain_registry">
+            <column name="idp" type="varchar(16)" defaultValue="superdomain">
+                <constraints nullable="false"/>
+            </column>
+        </addColumn>
+        <rollback>
+            <dropColumn tableName="domain_registry" columnName="idp"/>
+        </rollback>
+    </changeSet>
+
+    <changeSet id="012-domain-registry-idp-check" author="hugmesh">
+        <comment>API&lt;-&gt;DB parity: idp pinned to the own/superdomain vocabulary (the
+                 310-backing-service-mode CHECK idiom). The service refuses anything else with
+                 a 400; this is the backstop against a hand-written UPDATE.</comment>
+        <sql>ALTER TABLE domain_registry ADD CONSTRAINT ck_domain_registry_idp
+             CHECK (idp IN ('own', 'superdomain'))</sql>
+        <rollback>ALTER TABLE domain_registry DROP CONSTRAINT ck_domain_registry_idp</rollback>
+    </changeSet>
+
+    <changeSet id="012-domain-registry-selinux-levels" author="hugmesh">
+        <comment>domain_registry.selinux_level / selinux_level_pg (decision 29c) — the per-domain
+                 MCS categories the ApplicationSet patches onto the casdoor-domain Deployment and
+                 its Postgres Deployment. NULLABLE: existing rows predate the allocator and are
+                 refused at provisioning time rather than back-filled with a guessed category
+                 (a WRONG category is worse than a missing one — it silently co-locates two
+                 workloads). Every row inserted from here on is allocated a pair.</comment>
+        <addColumn tableName="domain_registry">
+            <column name="selinux_level" type="varchar(32)"/>
+        </addColumn>
+        <addColumn tableName="domain_registry">
+            <column name="selinux_level_pg" type="varchar(32)"/>
+        </addColumn>
+        <rollback>
+            <dropColumn tableName="domain_registry" columnName="selinux_level"/>
+            <dropColumn tableName="domain_registry" columnName="selinux_level_pg"/>
+        </rollback>
+    </changeSet>
+
+    <changeSet id="012-domain-registry-selinux-level-unique" author="hugmesh">
+        <comment>decision 29c's UNIQUENESS CONSTRAINT, half one: no two domains share the
+                 casdoor-pod category. This is the arbiter the allocator races against — the
+                 allocator reads the taken set and inserts, and THIS constraint (not the read)
+                 is what makes a concurrent insert lose instead of silently colliding.</comment>
+        <addUniqueConstraint tableName="domain_registry" columnNames="selinux_level"
+                             constraintName="uq_domain_registry_selinux_level"/>
+        <rollback>
+            <dropUniqueConstraint tableName="domain_registry"
+                                  constraintName="uq_domain_registry_selinux_level"/>
+        </rollback>
+    </changeSet>
+
+    <changeSet id="012-domain-registry-selinux-level-pg-unique" author="hugmesh">
+        <comment>decision 29c's UNIQUENESS CONSTRAINT, half two: no two domains share the
+                 Postgres-pod category.</comment>
+        <addUniqueConstraint tableName="domain_registry" columnNames="selinux_level_pg"
+                             constraintName="uq_domain_registry_selinux_level_pg"/>
+        <rollback>
+            <dropUniqueConstraint tableName="domain_registry"
+                                  constraintName="uq_domain_registry_selinux_level_pg"/>
+        </rollback>
+    </changeSet>
+
+    <changeSet id="012-domain-registry-selinux-level-distinct" author="hugmesh">
+        <comment>The CROSS-COLUMN half the two UNIQUE constraints cannot express: a per-column
+                 UNIQUE does NOT stop domain A's selinux_level equalling domain B's
+                 selinux_level_pg, and docs/SECURITY.md §3 forbids ANY two workloads sharing a
+                 category. The allocator makes that structurally impossible (it hands out an
+                 EVEN offset to selinux_level and the ODD one above it to selinux_level_pg, so
+                 the two columns draw from disjoint halves of the reserved range); this CHECK is
+                 the DB backstop for the same-row case a hand-written UPDATE could still create.
+                 NULL-tolerant by SQL's three-valued logic, so pre-decision rows migrate.</comment>
+        <sql>ALTER TABLE domain_registry ADD CONSTRAINT ck_domain_registry_selinux_level_distinct
+             CHECK (selinux_level IS NULL OR selinux_level_pg IS NULL
+                    OR selinux_level &lt;&gt; selinux_level_pg)</sql>
+        <rollback>ALTER TABLE domain_registry
+                  DROP CONSTRAINT ck_domain_registry_selinux_level_distinct</rollback>
+    </changeSet>
+
+    <changeSet id="012-domain-registry-ns-prefix-unique" author="hugmesh">
+        <comment>decision 29a: ns_prefix IS the slug. It names the Application
+                 (casdoor-&lt;slug&gt;), the tenant namespace (&lt;slug&gt;-pki) AND the Vault
+                 path secret/&lt;slug&gt;/casdoor, so two domains sharing one would share a
+                 SECRET. UNIQUE here; DNS-1123-label validated and immutable-after-create in
+                 the service. NULLs stay distinct (pre-decision rows migrate; the service
+                 refuses to create another one).</comment>
+        <addUniqueConstraint tableName="domain_registry" columnNames="ns_prefix"
+                             constraintName="uq_domain_registry_ns_prefix"/>
+        <rollback>
+            <dropUniqueConstraint tableName="domain_registry"
+                                  constraintName="uq_domain_registry_ns_prefix"/>
+        </rollback>
+    </changeSet>
+
 </databaseChangeLog>
