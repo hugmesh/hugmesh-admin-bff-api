@@ -1,5 +1,6 @@
 package net.hugmesh.adminbff.internalapi;
 
+import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import org.jspecify.annotations.Nullable;
 import org.springframework.beans.factory.annotation.Value;
@@ -291,6 +292,19 @@ public class InternalAccountController {
      * ({@code null} is treated as "no roles", identical to how {@code UsageService.record}
      * already treats it) since a caller that only knows the handle at record time (no
      * account object in hand) still has a valid call to make.
+     *
+     * <p>{@code handle} and {@code action} are {@link NotBlank} and the constraints are LIVE:
+     * {@link #recordUsage} takes the body {@code @Valid}, so a missing/blank value is a {@code
+     * 400 {"error":"validation failed","fields":{...}}} via {@code ValidationExceptionHandler}
+     * before {@link UsageService#record} runs (a {@code null} action would otherwise NPE inside
+     * {@code UsageService.moduleOf}). Without {@code @Valid} a record's constraints are inert —
+     * the class-level {@code @Validated} only covers path/query parameters.
+     *
+     * <p>Role dialect: {@code roles} are the LOWERCASE {@code Account.roles} tokens
+     * ({@code "user"}, {@code "admin"} — {@code RoleName.*.value()}), exactly what {@code
+     * AuthController} forwards from the account object. {@link UsageService#record} tags an
+     * event {@code admin} only when the list contains {@code "admin"}; a caller sending the
+     * Spring authority spelling ({@code "ROLE_ADMIN"}) gets every event tagged {@code user}.
      */
     public record RecordUsageRequest(@NotBlank String handle, @Nullable List<String> roles,
                                      @NotBlank String action) {
@@ -836,20 +850,29 @@ public class InternalAccountController {
      * AuthController} itself is ever called twice for the same registration (it is not
      * idempotent either — this endpoint does not invent a stronger guarantee than its own
      * in-process equivalent already has). What IS idempotent: the endpoint has no
-     * precondition and no allocated identity to collide on, {@link UsageService#record}
-     * never throws (Kafka/ClickHouse failures degrade silently — see its class javadoc), so
-     * a caller may retry a failed/uncertain request without risking an error response or a
-     * partial-state failure — the ONLY possible side effect of a retry is an extra usage
-     * row, never a broken one.
+     * precondition and no allocated identity to collide on, and {@link UsageService#record}
+     * degrades rather than fails on the common outages (Kafka down -> fallback insert;
+     * no Kafka -> best-effort insert, error swallowed — see its class javadoc), so a caller
+     * may retry a failed/uncertain request without risking a partial-state failure — the
+     * ONLY possible side effect of a retry is an extra usage row, never a broken one.
      *
-     * <p>204 on every call (fire-and-forget, matching {@code AuthController}'s own {@code
-     * .subscribe()} idiom — the write is best-effort and the caller has nothing useful to
-     * read back). No caller-observable failure mode exists: this method itself never
-     * returns an error.
+     * <p><b>Responses.</b> {@code 204 No Content} on every WELL-FORMED call (the caller has
+     * nothing useful to read back). {@code 400} with the shared {@code {"error":"validation
+     * failed","fields":{...}}} body when {@code handle} or {@code action} is missing or blank
+     * (the body is {@code @Valid}, see {@link RecordUsageRequest}); {@code 400}/{@code 415}
+     * for an unparseable body or a non-JSON content type, as on every other endpoint here.
+     * Unlike {@code AuthController}'s {@code .subscribe()} idiom this method RETURNS the
+     * {@link UsageService#record} Mono, so the 204 is sent only after the usage write has
+     * settled: with Kafka wired that is the produce (bounded by the producer's {@code
+     * max.block.ms} on a broker outage) and, if the produce fails, the fallback ClickHouse
+     * insert — a failure of THAT fallback propagates as a 500. In degraded mode (no Kafka)
+     * the direct insert swallows its own error and the call is always 204. The event is
+     * appended to the in-memory log before either write, so a retry after a 500 records a
+     * second in-memory row (see "Idempotent where it can be").
      */
     @PostMapping("/usage")
     @org.springframework.web.bind.annotation.ResponseStatus(HttpStatus.NO_CONTENT)
-    public Mono<Void> recordUsage(@RequestBody RecordUsageRequest body) {
+    public Mono<Void> recordUsage(@Valid @RequestBody RecordUsageRequest body) {
         return usage.record(body.handle(), body.roles() == null ? List.of() : body.roles(), body.action());
     }
 
