@@ -184,6 +184,35 @@ class AdminControllerRouteAccessTest {
                 .exchange().expectStatus().isBadRequest();
     }
 
+    @Test
+    void postRouteRule_400WhenPatternIsBareSingleWildcard() {
+        // Same rejection for '/*' — a bare single-segment wildcard is exactly
+        // as unaddressable as '/**'. hugmesh-admin-bff-api#57 / decision 61.
+        asAdmin().post().uri("/bff/admin/route-access").contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("{\"gateway\":\"hugmesh-fe-gateway\",\"url_pattern\":\"/*\",\"role\":\"ROLE_USER\"}")
+                .exchange().expectStatus().isBadRequest();
+    }
+
+    @Test
+    void postRouteRule_acceptsBareRootSlash_theOneExplicitException() {
+        // '/' is the ONE pattern with no addressable first segment the API
+        // still accepts — a single literal path, not a wildcard catch-all, so
+        // it can never silently widen. Companion of the two 400 tests above:
+        // proves the exception is narrow (exactly '/', not "anything without a
+        // segment"). hugmesh-admin-bff-api#57 / decision 61 (refuse '/**',
+        // hugmesh-generator#347, 2026-09-18) leans on this being the ONLY hole.
+        when(usage.record(org.mockito.ArgumentMatchers.anyString(), any(),
+                org.mockito.ArgumentMatchers.anyString())).thenReturn(Mono.empty());
+        RouteRule added = new RouteRule("id-root", "hugmesh-fe-gateway", "/", "PUBLIC", null, true, "default");
+        when(routeAccess.add(any())).thenReturn(Mono.just(added));
+        when(routeAccess.list(any(PrincipalDomain.class))).thenReturn(Flux.just(added));
+        asAdmin().post().uri("/bff/admin/route-access").contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("{\"gateway\":\"hugmesh-fe-gateway\",\"url_pattern\":\"/\",\"role\":\"PUBLIC\"}")
+                .exchange().expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.added.id").isEqualTo("id-root");
+    }
+
     // ── DB-driven route DEFINITIONS (url_registry, SUPERADMIN-only) ──────────
     // Route definitions are cluster-level infrastructure (the url_registry
     // Cassandra table has no domain column). SUPERADMIN is required; a

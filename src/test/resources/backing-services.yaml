@@ -1,0 +1,551 @@
+# =============================================================================
+# backing-services.yaml — the SINGLE source-of-truth registry for the MANAGED
+# BACKING SERVICES: the in-mesh datastores/infra a mesh normally runs itself
+# (Postgres, object store, Kafka, ClickHouse, SMTP relay, …) that an operator may
+# instead point at a HOSTED cloud equivalent (AWS / Azure) on a generated x86 or
+# rpi5 NODE image.
+# =============================================================================
+#
+# NOT an optional-service. optional-services.yaml gates USER-LEVEL features
+# (akkoma/games/…) that add/remove a whole product surface. A BACKING service is
+# ARCHITECTURE the platform always needs; "managed" does not remove the surface —
+# it moves the surface's datastore OUT of the cluster to a hosted endpoint while
+# every consumer keeps talking to the SAME logical service. So this is a SIBLING
+# registry, deliberately NOT folded into optional-services.yaml.
+#
+# THE #1 INVARIANT — SELF-HOSTED IS THE DEFAULT, BYTE-IDENTICALLY:
+#   With NO managed selection (empty MANAGED_SERVICES / no --managed-service flag)
+#   the baked tree, every consumer endpoint literal, every ArgoCD app and every ESO
+#   line is EXACTLY today's mainline. gate_backing_services() returns early on an
+#   empty selection and touches nothing. Managed mode is strictly ADDITIVE opt-in.
+#
+# MANAGED MODE = three edits per selected id, all in the BAKED GitOps tree:
+#   (a) PRUNE the in-mesh workload — its ArgoCD Application(s) + manifests dir (the
+#       existing gate_optional_services prune idioms). The consumer app/UI stays.
+#   (b) REPOINT the consumer endpoint env value(s) at the operator-supplied managed
+#       endpoint. For a DB that is BOTH SPRING_R2DBC_URL and SPRING_LIQUIBASE_URL
+#       (two separate env keys per app — miss one and Liquibase or the runtime pool
+#       silently targets the wrong host). endpointFields lists the exact seams.
+#   (c) KEEP the credential path unchanged: the SAME ESO Secret NAME sourcing the
+#       SAME Vault path — the operator writes the hosted service's password/keys to
+#       that path (gen-cluster-secrets managed block) instead of a generator-minted
+#       one. Creds are NEVER argv, NEVER git, NEVER minted for a managed service.
+#
+# CONFIG TRANSPORT (fleet trap avoided): where an app must choose local-vs-managed
+# behaviour it is PROPERTY-SWITCHED (@ConditionalOnProperty on an app.* key fed by
+# an env var, matchIfMissing=true on the self-hosted default) — NEVER a profile-
+# named application-<x>.properties under SPRING_CONFIG_ADDITIONAL_LOCATION (that
+# file only loads when profile <x> is active and fails SILENTLY; six services once
+# shipped keystore passwords that never loaded that way). The endpoint rewrite here
+# only changes env VALUES already read on the self-hosted path.
+#
+# FEASIBILITY TIERS (from the recon difficulty ranking; docs/MANAGED-SERVICES.md
+# carries the verbatim table + per-service runbooks):
+#   * tier 1 (trivial)  — velero-objectstore, smtp.
+#   * tier 2 (easy/med) — kafka, clickhouse, federation-bundles, the 5 core BFF
+#                         Postgres DBs + casdoor-pg.
+#   * tier 3 (hard)     — cassandra, harbor, vault-kv, vault-pki. v1 ships these as
+#                         docsOnly:true + modeLocked:self-hosted: the registry names
+#                         them and records the blocker, the builder REFUSES to
+#                         --managed-service them (fail-closed die with the blocker),
+#                         and docs/MANAGED-SERVICES.md carries the "why not yet".
+#
+# WHO READS IT:
+#   * BUILD-TIME: gate_backing_services() in build-x86-host-stage4.sh /
+#     build-rpi5-stage4.sh, applied AFTER gate_optional_services(). Driven by
+#     MANAGED_SERVICES (brand.conf/env) + --managed-service id=endpoint (CLI).
+#     Unknown id => fatal; tier-3/docsOnly id => fatal WITH the blocker note;
+#     malformed/empty endpoint => fatal. The case arms mirror this file field-for-
+#     field (like gate_optional_services mirrors optional-services.yaml — the YAML
+#     is the DECLARED contract + honest docs, the builder is its executable twin;
+#     the hermetic test asserts BOTH agree).
+#   * CREDS: scripts/gen-cluster-secrets.sh managed-services block (env -> keys-file
+#     -> placeholder; blank = disabled) writes the operator's hosted creds to the
+#     esoSecret's vaultPath (incl. the velero-objectstore gap the mesh never had).
+#   * LOCAL STACK: tests/stack/compose.local.yaml ${MANAGED_*:-in-stack-default}
+#     seams on the consumers that exist in compose (validation-only there — the
+#     compose stack has no Kafka/ClickHouse/MinIO to replace; document, don't
+#     overclaim).
+#
+# ⚠️ HONESTY NOTES the runbooks + README-MANAGED.md MUST carry (verified):
+#   * TLS delta: in-mesh Postgres/ClickHouse run plaintext (sslmode=disable / no ssl
+#     params). RDS/Azure-PG/ClickHouse-Cloud enforce TLS — the operator adds
+#     ?ssl=true&sslMode=require to the URLs and the managed CA to each app's
+#     truststore OUT OF BAND. The rewrite here does NOT invent TLS params.
+#   * Role-split SQL: the least-priv app role + owner role are created by each DB's
+#     initdb/10-roles.sh via docker-entrypoint-initdb.d, which never runs on RDS.
+#     The operator runs that role-split SQL against the managed DB by hand.
+#   * Citus: federation-db + route-access-db ship initdb/90-citus.sh; vanilla RDS
+#     has no Citus (Azure Cosmos DB for PostgreSQL does). federation-db is NOT a v1
+#     managed id for exactly this reason (documented, not coded).
+#   * Casdoor: its dataSourceName hardcodes sslmode=disable in a ConfigMap — the
+#     postgres-casdoor rewrite flips the host AND sslmode; a managed PG still needs
+#     the CA trusted at the Casdoor layer separately.
+
+apiVersion: hugmesh.net/v1
+kind: BackingServiceRegistry
+metadata:
+  name: backing-services
+spec:
+  # endpointFormat convention (the RHS of --managed-service id=<endpoint>):
+  #   postgres-*         host:port                 (dbName fixed per id below)
+  #   kafka              host:port[,host:port…]    (verbatim bootstrap servers)
+  #   clickhouse         https://host:port | host:port
+  #   velero-objectstore aws | http(s)://s3-host   (aws = real S3, drop s3Url)
+  #   federation-bundles bucket | bucket@https://endpoint
+  #   smtp               host:port                 (host also flows via MAIL_* creds)
+  services:
+
+    # ── velero-objectstore — cluster backup object store (TIER 1, trivial) ──────
+    # Velero is ALREADY aws-plugin + INI-file shaped and SHIPS DARK (the MinIO the
+    # BSL names is not even deployed). Managed = the easiest swap in the tree: flip
+    # the BSL coordinates + seed real IAM keys. Azure = swap the plugin initContainer
+    # (docs only in v1).
+    - id: velero-objectstore
+      displayName: "Velero backup object store"
+      kind: object-store
+      tier: 1
+      docsOnly: false
+      modeLocked: null
+      # What consumes it (manifest + the fields that name the store).
+      consumers:
+        - manifest: manifests/velero/backupstoragelocation.yaml
+          fields: [spec.objectStorage.bucket, spec.config.region, spec.config.s3Url]
+      # No in-mesh workload to prune: MinIO is referenced-but-never-deployed. The BSL
+      # stays; only its coordinates change.
+      inMesh:
+        apps: []
+        manifests: []
+        esoLines: []
+      # The scalar coordinates rewritten in the BSL (not env — plain YAML values).
+      endpointFields:
+        - { file: manifests/velero/backupstoragelocation.yaml, key: "s3Url",  note: "set to the S3-compatible URL, or DELETED for real AWS S3 (endpoint=aws)" }
+        - { file: manifests/velero/backupstoragelocation.yaml, key: "bucket", note: "from MANAGED_VELERO_BUCKET (default hugmesh-backups)" }
+        - { file: manifests/velero/backupstoragelocation.yaml, key: "region", note: "from MANAGED_VELERO_REGION (default us-east-1)" }
+      esoSecret: velero-cloud-credentials     # ns velero, key `cloud` = AWS INI
+      vaultPath: velero                        # secret/<brand>/velero.{access_key_id,secret_access_key}
+      awsTarget: "S3 (velero-plugin-for-aws, already present)"
+      azureTarget: "Azure Blob (swap to velero-plugin-for-microsoft-azure initContainer — docs only)"
+      notes: >
+        Creds are OPERATOR-SUPPLIED (the mesh never minted them — gen-cluster-secrets
+        now has the missing velero block). Azure needs the plugin initContainer swap
+        in apps/55-velero.yaml, which v1 documents rather than codes.
+
+    # ── smtp — outbound mail relay (TIER 1, trivial) ────────────────────────────
+    # There is NO in-mesh SMTP server; the platform already submits to an external
+    # relay chosen by MAIL_PROVIDER. SES/ACS is "nearly free": it is a pure creds/
+    # host data change through gen-cluster-secrets — ZERO manifest edits. The gate
+    # only RECORDS the choice in backing-services.conf; the host+creds ride MAIL_*.
+    - id: smtp
+      displayName: "Outbound SMTP relay"
+      kind: smtp
+      tier: 1
+      docsOnly: false
+      modeLocked: null
+      consumers:
+        - manifest: (via ESO casdoor-smtp / akkoma-smtp / attestation-server-smtp)
+          fields: [MAIL_HOST, MAIL_PORT, MAIL_USER, MAIL_PASSWORD]
+      inMesh:
+        apps: []
+        manifests: []
+        esoLines: []
+      # No manifest endpoint seam — host+creds flow through gen-cluster-secrets MAIL_*.
+      endpointFields: []
+      esoSecret: casdoor-smtp                  # + akkoma-smtp + attestation-server-smtp
+      vaultPath: mail                          # secret/<brand>/mail.{host,port,user,password,from}
+      awsTarget: "SES SMTP endpoint (email-smtp.<region>.amazonaws.com:587)"
+      azureTarget: "Azure Communication Services SMTP"
+      notes: >
+        Set MAIL_HOST/MAIL_PORT/MAIL_USER/MAIL_PASSWORD (env or keys-file) to the SES/
+        ACS submission endpoint; mail stays DISABLED until a real user+password
+        resolve (existing mail gate). DKIM is handled platform-side by SES/ACS.
+
+    # ── kafka — usage-event bus (TIER 2, easy) ──────────────────────────────────
+    # KRaft single-node, PLAINTEXT, no auth. ONLY admin-bff consumes it and degrades
+    # to an in-memory fallback when absent. Managed = one env value; TLS+SASL props
+    # (IAM for MSK, $ConnectionString for Event Hubs) are added OUT OF BAND (none
+    # exist today) — the rewrite does not invent them.
+    - id: kafka
+      displayName: "Kafka usage-event bus"
+      kind: kafka
+      tier: 2
+      docsOnly: false
+      modeLocked: null
+      consumers:
+        - manifest: manifests/admin-bff-api/deployment.yaml
+          fields: [SPRING_KAFKA_BOOTSTRAP_SERVERS]
+      inMesh:
+        apps: [apps/35-analytics-kafka.yaml]
+        manifests: [manifests/analytics/kafka]
+        esoLines: []
+      endpointFields:
+        - { file: manifests/admin-bff-api/deployment.yaml, env: SPRING_KAFKA_BOOTSTRAP_SERVERS }
+      esoSecret: null                          # PLAINTEXT today; SASL secret added OOB
+      vaultPath: null
+      awsTarget: "MSK (Kafka surface, TLS+IAM SASL)"
+      azureTarget: "Event Hubs (Kafka surface, SASL-PLAIN $ConnectionString)"
+      notes: >
+        The analytics-discovery DNS-floor Service (kept) becomes unnecessary but
+        harmless. Add Spring Kafka security.protocol/sasl props out of band for a
+        TLS+SASL managed broker.
+
+    # ── clickhouse — analytics warehouse (TIER 2, easy) ─────────────────────────
+    # admin-bff CLICKHOUSE_URL + the uptrace ch.dsn host. No AWS/Azure first-party
+    # ClickHouse — the managed target is ClickHouse Cloud. TLS delta: plaintext
+    # 8123/9000 today -> 8443/9440 managed.
+    - id: clickhouse
+      displayName: "ClickHouse analytics warehouse"
+      kind: clickhouse
+      tier: 2
+      docsOnly: false
+      modeLocked: null
+      consumers:
+        - manifest: manifests/admin-bff-api/deployment.yaml
+          fields: [CLICKHOUSE_URL]
+        - manifest: manifests/observability/deployment.yaml
+          fields: [ch.dsn]
+      inMesh:
+        apps: [apps/35-analytics-clickhouse.yaml]
+        manifests: [manifests/analytics/clickhouse]
+        esoLines: []
+      endpointFields:
+        - { file: manifests/admin-bff-api/deployment.yaml, env: CLICKHOUSE_URL }
+        - { file: manifests/observability/deployment.yaml, key: "ch.dsn", note: "host:port inside the clickhouse:// DSN" }
+      esoSecret: clickhouse-auth               # keep the name; password from the managed store
+      vaultPath: clickhouse
+      awsTarget: "ClickHouse Cloud (no AWS-first-party ClickHouse)"
+      azureTarget: "ClickHouse Cloud"
+      notes: >
+        The analytics-discovery clickhouse Service (kept) is harmless. Managed
+        ClickHouse enforces TLS — pass a https:// endpoint; the uptrace DSN keeps
+        sslmode=disable unless the operator edits it out of band.
+
+    # ── federation-bundles — federation remote-fragment object store (TIER 2) ────
+    # BundleStorageConfig is ALREADY endpoint-strategy dual-mode (APP_BUNDLES_STORAGE
+    # flag EXISTS). Managed = flip the flag to s3 + add APP_BUNDLES_S3_* env. Creds
+    # use the AWS default chain (IRSA/env) — federation's documented posture — so no
+    # static-key Secret is materialised (unlike velero).
+    - id: federation-bundles
+      displayName: "Federation bundle object store"
+      kind: object-store
+      tier: 2
+      docsOnly: false
+      modeLocked: null
+      consumers:
+        - manifest: manifests/federation-api/deployment.yaml
+          fields: [APP_BUNDLES_STORAGE, APP_BUNDLES_S3_BUCKET, APP_BUNDLES_S3_ENDPOINT, APP_BUNDLES_S3_REGION]
+      inMesh:
+        # The bundle PVC stays defined but unused in s3 mode; no ArgoCD app owns just
+        # the store, so nothing is pruned — only the storage MODE flips.
+        apps: []
+        manifests: []
+        esoLines: []
+      endpointFields:
+        - { file: manifests/federation-api/deployment.yaml, env: APP_BUNDLES_STORAGE, value: "s3" }
+        - { file: manifests/federation-api/deployment.yaml, env: APP_BUNDLES_S3_BUCKET }
+        - { file: manifests/federation-api/deployment.yaml, env: APP_BUNDLES_S3_ENDPOINT }
+        - { file: manifests/federation-api/deployment.yaml, env: APP_BUNDLES_S3_REGION }
+      esoSecret: null                          # AWS default credential chain (IRSA/env)
+      vaultPath: null
+      awsTarget: "S3 (AWS SDK default credential chain / IRSA)"
+      azureTarget: "S3-compatible endpoint (endpoint override, path-style)"
+      notes: >
+        Creds resolve via the AWS default chain (AWS_ACCESS_KEY_ID env / ~/.aws /
+        instance metadata) — the app consumes NO static access-key env (the
+        application.yml access-key/secret-key keys are dead — do not rely on them).
+
+    # ── postgres-admin-bff … -wiki-bff + -casdoor — per-service Postgres (TIER 2) ─
+    # Each BFF has its OWN single-replica postgres:16-alpine Deployment. Managed =
+    # repoint BOTH SPRING_R2DBC_URL and SPRING_LIQUIBASE_URL, delete the DB app +
+    # manifests, keep the X-db-auth / X-db-app-auth ESO Secret names (owner +
+    # least-priv app role) sourced from the SAME secret/<brand>/<id> Vault path.
+    # v1 covers the 5 core BFF DBs + casdoor-pg. federation-db + route-access-db are
+    # DOCUMENTED-not-coded (Citus initdb has no vanilla-RDS analog).
+    - id: postgres-admin-bff
+      displayName: "admin-bff Postgres"
+      kind: postgres
+      tier: 2
+      docsOnly: false
+      modeLocked: null
+      dbName: adminbff
+      consumers:
+        - manifest: manifests/admin-bff-api/deployment.yaml
+          fields: [SPRING_R2DBC_URL, SPRING_LIQUIBASE_URL]
+      inMesh:
+        apps: [apps/30-admin-bff-db.yaml]
+        manifests: [manifests/admin-bff-db]
+        esoLines: []
+      endpointFields:
+        - { file: manifests/admin-bff-api/deployment.yaml, env: SPRING_R2DBC_URL,    scheme: "r2dbc:postgresql", db: adminbff }
+        - { file: manifests/admin-bff-api/deployment.yaml, env: SPRING_LIQUIBASE_URL, scheme: "jdbc:postgresql",  db: adminbff }
+      esoSecret: admin-bff-db-auth             # + admin-bff-db-app-auth (least-priv)
+      vaultPath: admin-bff-db
+      awsTarget: "RDS / Aurora PostgreSQL"
+      azureTarget: "Azure Database for PostgreSQL Flexible Server"
+      notes: >
+        Re-run initdb/10-roles.sh (owner + adminbff_app least-priv role) against the
+        managed DB by hand. Add TLS URL params + managed CA to the truststore OOB.
+
+    - id: postgres-user-bff
+      displayName: "user-bff Postgres"
+      kind: postgres
+      tier: 2
+      docsOnly: false
+      modeLocked: null
+      dbName: userbff
+      consumers:
+        - manifest: manifests/user-bff-api/deployment.yaml
+          fields: [SPRING_R2DBC_URL, SPRING_LIQUIBASE_URL]
+      inMesh:
+        apps: [apps/34-user-bff-db.yaml]
+        manifests: [manifests/user-bff-db]
+        esoLines: []
+      endpointFields:
+        - { file: manifests/user-bff-api/deployment.yaml, env: SPRING_R2DBC_URL,    scheme: "r2dbc:postgresql", db: userbff }
+        - { file: manifests/user-bff-api/deployment.yaml, env: SPRING_LIQUIBASE_URL, scheme: "jdbc:postgresql",  db: userbff }
+      esoSecret: user-bff-db-auth
+      vaultPath: user-bff-db
+      awsTarget: "RDS / Aurora PostgreSQL"
+      azureTarget: "Azure Database for PostgreSQL Flexible Server"
+      notes: >
+        Re-run initdb/10-roles.sh (owner + userbff_app) against the managed DB. TLS
+        URL params + managed CA OOB.
+
+    - id: postgres-mod-bff
+      displayName: "mod-bff Postgres"
+      kind: postgres
+      tier: 2
+      docsOnly: false
+      modeLocked: null
+      dbName: modbff
+      consumers:
+        - manifest: manifests/mod-bff-api/deployment.yaml
+          fields: [SPRING_R2DBC_URL, SPRING_LIQUIBASE_URL]
+      inMesh:
+        apps: [apps/32-mod-bff-db.yaml]
+        manifests: [manifests/mod-bff-db]
+        esoLines: []
+      endpointFields:
+        - { file: manifests/mod-bff-api/deployment.yaml, env: SPRING_R2DBC_URL,    scheme: "r2dbc:postgresql", db: modbff }
+        - { file: manifests/mod-bff-api/deployment.yaml, env: SPRING_LIQUIBASE_URL, scheme: "jdbc:postgresql",  db: modbff }
+      esoSecret: mod-bff-db-auth
+      vaultPath: mod-bff-db
+      awsTarget: "RDS / Aurora PostgreSQL"
+      azureTarget: "Azure Database for PostgreSQL Flexible Server"
+      notes: >
+        Re-run initdb/10-roles.sh (owner + modbff_app) against the managed DB. TLS
+        URL params + managed CA OOB.
+
+    - id: postgres-forum-bff
+      displayName: "forum-bff Postgres"
+      kind: postgres
+      tier: 2
+      docsOnly: false
+      modeLocked: null
+      dbName: forumbff
+      consumers:
+        - manifest: manifests/forum-bff-api/deployment.yaml
+          fields: [SPRING_R2DBC_URL, SPRING_LIQUIBASE_URL]
+      inMesh:
+        # apps/38-forum-bff-db.yaml is ALSO listed under the phpbb optional-service
+        # slug; if phpbb is deselected the app is already pruned. The endpoint rewrite
+        # is guarded on the consumer file still existing, so both orders are safe.
+        apps: [apps/38-forum-bff-db.yaml]
+        manifests: [manifests/forum-bff-db]
+        esoLines: []
+      endpointFields:
+        - { file: manifests/forum-bff-api/deployment.yaml, env: SPRING_R2DBC_URL,    scheme: "r2dbc:postgresql", db: forumbff }
+        - { file: manifests/forum-bff-api/deployment.yaml, env: SPRING_LIQUIBASE_URL, scheme: "jdbc:postgresql",  db: forumbff }
+      esoSecret: forum-bff-db-auth
+      vaultPath: forum-bff-db
+      awsTarget: "RDS / Aurora PostgreSQL"
+      azureTarget: "Azure Database for PostgreSQL Flexible Server"
+      notes: >
+        Re-run initdb/10-roles.sh (owner + forumbff_app) against the managed DB. TLS
+        URL params + managed CA OOB.
+
+    - id: postgres-wiki-bff
+      displayName: "wiki-bff Postgres"
+      kind: postgres
+      tier: 2
+      docsOnly: false
+      modeLocked: null
+      dbName: wikibff
+      consumers:
+        - manifest: manifests/wiki-bff-api/deployment.yaml
+          fields: [SPRING_R2DBC_URL, SPRING_LIQUIBASE_URL]
+      inMesh:
+        apps: [apps/34a-wiki-bff-db.yaml]
+        manifests: [manifests/wiki-bff-db]
+        esoLines: []
+      endpointFields:
+        - { file: manifests/wiki-bff-api/deployment.yaml, env: SPRING_R2DBC_URL,    scheme: "r2dbc:postgresql", db: wikibff }
+        - { file: manifests/wiki-bff-api/deployment.yaml, env: SPRING_LIQUIBASE_URL, scheme: "jdbc:postgresql",  db: wikibff }
+      esoSecret: wiki-bff-db-auth
+      vaultPath: wiki-bff-db
+      awsTarget: "RDS / Aurora PostgreSQL"
+      azureTarget: "Azure Database for PostgreSQL Flexible Server"
+      notes: >
+        Re-run initdb/10-roles.sh (owner + wikibff_app) against the managed DB. TLS
+        URL params + managed CA OOB.
+
+    - id: postgres-casdoor
+      displayName: "Casdoor Postgres (casdoor-pg)"
+      kind: postgres
+      tier: 2
+      docsOnly: false
+      modeLocked: null
+      dbName: casdoor
+      consumers:
+        # Casdoor reads a single dataSourceName string in a ConfigMap (NOT Spring env)
+        # rendered by the init container. The host + sslmode live inside that string.
+        - manifest: manifests/casdoor/app-conf-configmap.yaml
+          fields: [dataSourceName]
+      inMesh:
+        # Do NOT prune apps/05-casdoor.yaml (that IS the IdP). Prune ONLY the bundled
+        # pg manifest + its kustomization line inside the casdoor manifest dir.
+        apps: []
+        manifests: [manifests/casdoor/pg.yaml]
+        esoLines: [{ file: manifests/casdoor/kustomization.yaml, resource: pg.yaml }]
+      endpointFields:
+        - { file: manifests/casdoor/app-conf-configmap.yaml, key: "dataSourceName", note: "rewrite host=… (and sslmode) inside the libpq DSN; dbname=casdoor kept" }
+      esoSecret: casdoor-db
+      vaultPath: casdoor
+      awsTarget: "RDS / Aurora PostgreSQL"
+      azureTarget: "Azure Database for PostgreSQL Flexible Server"
+      notes: >
+        The DSN hardcodes sslmode=disable — the rewrite flips host AND sslmode
+        (default require) but the CA must still be trusted at the Casdoor layer OOB.
+        casdoor-pg pod mounts the same casdoor-db Secret; keep it.
+
+    # =========================================================================
+    # TIER 3 — DOCS ONLY in v1 (modeLocked: self-hosted). The builder REFUSES a
+    # --managed-service for these ids and dies with the blocker below. Listed here
+    # so the registry is the complete inventory + the refusal has authoritative text.
+    # =========================================================================
+
+    # ── cassandra — gateway revocation list + URL registry (TIER 3, hard) ───────
+    - id: cassandra
+      displayName: "Cassandra (gateway/federation datastore)"
+      kind: cassandra
+      tier: 3
+      docsOnly: true
+      modeLocked: self-hosted
+      consumers:
+        - manifest: charts/hugmesh-gateway/templates/deployment.yaml
+          fields: [CASSANDRA_CONTACT_POINTS, CASSANDRA_KEYSPACE, CASSANDRA_LOCAL_DC]
+        - manifest: manifests/admin-bff-api/deployment.yaml
+          fields: [CASSANDRA_CONTACT_POINTS]
+        - manifest: manifests/federation-api/deployment.yaml
+          fields: [MANIFEST_CACHE_CASSANDRA]
+      inMesh:
+        apps: [apps/00-cassandra.yaml]
+        manifests: [manifests/cassandra-hardening]
+        esoLines: []
+      endpointFields: []
+      esoSecret: null
+      vaultPath: null
+      awsTarget: "Amazon Keyspaces"
+      azureTarget: "Azure Cosmos DB (Cassandra API)"
+      blocker: >
+        Auth/TLS knobs live ONLY in the DARK cassandra-hardening overlay (today:
+        no authenticator, plaintext 9042). Keyspaces/Cosmos mandate TLS + SigV4/
+        service-user auth on 9142 — the driver config has no auth/TLS wiring on the
+        live path. Local-DC name, keyspace auto-creation and LWT/consistency
+        semantics need app-level verification across 3 consumers. Highest-friction
+        datastore swap besides Vault. NO code in v1.
+
+    # ── harbor — container registry (TIER 3, hard) ──────────────────────────────
+    - id: harbor
+      displayName: "Harbor container registry"
+      kind: registry
+      tier: 3
+      docsOnly: true
+      modeLocked: self-hosted
+      consumers:
+        - manifest: (~30 manifests/*/kustomization.yaml newName + imagePullSecrets)
+          fields: [registry host literal, dockerconfigjson auth host]
+        - manifest: manifests/image-builder/kaniko-build-job.template.yaml
+          fields: [push host]
+      inMesh:
+        apps: [apps/03a-harbor.yaml]
+        manifests: [manifests/harbor]
+        esoLines: []
+      endpointFields: []
+      # The PULL secret's NAME IS NOT UNIFORM across namespaces, and assuming it
+      # was is the bug this line used to carry: hugmesh-{backend,frontend,games,
+      # forum} get `harbor-registry`, but hugmesh-pki gets `hugmesh-registry-pull`
+      # because the Harbor chart is released into that namespace and already owns
+      # the name `harbor-registry` (its own REGISTRY_HTTP_SECRET —
+      # templates/registry/registry-secret.yaml).
+      esoSecret: harbor-registry               # + hugmesh-registry-pull (hugmesh-pki) + image-builder-registry (push)
+      # NOT written by gen-cluster-secrets.sh: manifests/harbor/
+      # harbor-provision-job.yaml owns this path (Harbor reveals a robot secret
+      # exactly once, so only the Job can ever hold it). The seeder leaves it
+      # alone and only `kv patch`es a manual GITLAB_REGISTRY_TOKEN /
+      # IMAGE_BUILDER_REGISTRY_TOKEN override into it — see
+      # tests/scripts/test-harbor-robots-ownership.sh.
+      vaultPath: harbor-robots
+      awsTarget: "ECR"
+      azureTarget: "ACR"
+      blocker: >
+        The registry HOST is a literal in ~30 kustomizations + the dockerconfigjson
+        template + the kaniko template. The robot-account provisioning Job has no
+        ECR/ACR analog; ECR's 12h token expiry breaks the static dockerconfigjson
+        pull-secret pattern (needs a credential-helper/IRSA refresher). Loses the
+        in-cluster air-gap posture the tree is built around. NO code in v1.
+
+    # ── vault-kv — app secrets KV via ESO (TIER 3, medium-but-broad) ────────────
+    - id: vault-kv
+      displayName: "Vault KV (app secrets via ESO)"
+      kind: secrets
+      tier: 3
+      docsOnly: true
+      modeLocked: self-hosted
+      consumers:
+        - manifest: manifests/external-secrets/secretstore.yaml
+          fields: [ClusterSecretStore hugmesh-vault]
+        - manifest: (~90 ExternalSecret remoteRef.key across manifests/external-secrets/*)
+          fields: [remoteRef.key hugmesh/<path>]
+      inMesh:
+        apps: [apps/02-vault.yaml]
+        manifests: [manifests/vault]
+        esoLines: []
+      endpointFields: []
+      esoSecret: null
+      vaultPath: null
+      awsTarget: "AWS Secrets Manager"
+      azureTarget: "Azure Key Vault"
+      blocker: >
+        ESO supports both providers, so the swap is mechanical but BROAD: replace the
+        one ClusterSecretStore spec, rewrite ~90 remoteRef.key names, re-point the
+        gen-cluster-secrets writer, and drop the vault-token/vault-ca seeding for
+        IRSA/workload-identity. Deferred to a dedicated wave; entangled with vault-pki
+        (same server). NO code in v1.
+
+    # ── vault-pki — mTLS cert issuance (TIER 3, hardest) ────────────────────────
+    - id: vault-pki
+      displayName: "Vault PKI (mTLS cert issuance)"
+      kind: pki
+      tier: 3
+      docsOnly: true
+      modeLocked: self-hosted
+      consumers:
+        - manifest: manifests/external-secrets/pki-externalsecrets.yaml
+          fields: [VaultDynamicSecret pki_int/issue/<app>, ~25 <app>-mtls + 7 DB certs]
+      inMesh:
+        apps: [apps/06-vault-pki.yaml]
+        manifests: [manifests/vault-pki]
+        esoLines: []
+      endpointFields: []
+      esoSecret: null
+      vaultPath: null
+      awsTarget: "ACM Private CA (via cert-manager)"
+      azureTarget: "Key Vault certificates (via cert-manager)"
+      blocker: >
+        The HARDEST swap. VaultDynamicSecret is a Vault-only ESO generator; ACM-PCA /
+        Key Vault certs have no drop-in "POST issue role -> cert+key via ESO". Needs a
+        cert-manager re-architecture keeping every <app>-mtls Secret name/key so the
+        keystore initContainers don't change. The USB-custody cluster-CA-import model
+        (provision.sh: USB CA == truststore anchor == pki_int signer) has NO managed
+        analog. NO code in v1.

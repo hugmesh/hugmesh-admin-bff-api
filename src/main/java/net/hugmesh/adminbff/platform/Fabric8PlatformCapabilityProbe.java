@@ -30,7 +30,7 @@ import java.util.Optional;
  * <h2>What each probe keys on</h2>
  * <ul>
  *   <li><b>argocdPresent</b> — the {@code applications.argoproj.io} CustomResourceDefinition is
- *       installed, OR an {@code argocd-server} Deployment exists in the {@code argocd} namespace.</li>
+ *       installed, OR an {@code argocd-server} Deployment exists in the {@code devops} namespace.</li>
  *   <li><b>veleroPresent</b> — the {@code backups.velero.io} CustomResourceDefinition is installed,
  *       OR a {@code velero} Deployment exists in the {@code velero} namespace.</li>
  *   <li><b>buildNodePresent</b> — at least one Node carries the x86/amd64 build-node label
@@ -52,7 +52,7 @@ public class Fabric8PlatformCapabilityProbe implements PlatformCapabilityProbe {
     static final String ARCH_LABEL = "kubernetes.io/arch";
 
     static final String ARGOCD_CRD = "applications.argoproj.io";
-    static final String ARGOCD_NAMESPACE = "argocd";
+    static final String ARGOCD_NAMESPACE = "devops";
     static final String ARGOCD_DEPLOYMENT = "argocd-server";
 
     static final String VELERO_CRD = "backups.velero.io";

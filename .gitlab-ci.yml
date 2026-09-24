@@ -47,6 +47,12 @@ test:mvn:
     # job, which clones THIS repo for the mirror half of that contract.
     CATALOG_GENERATOR_REF: "main"
     CATALOG_SIBLING_ROOT: "${CI_PROJECT_DIR}/.catalog-sibling"
+    # The CONSOLE half of the app-profile schema contract (operator decision 37, issue #55).
+    # src/main/resources/schema/app-profile.schema.json here must stay BYTE-IDENTICAL to
+    # schemas/app-profile.schema.json in hugmesh-superadmin-service-catalog-ui. Same
+    # sibling-clone shape as the catalog above, for the same reason: the guard is worthless
+    # unless CI can read the other repo.
+    CONSOLE_SCHEMA_REF: "main"
   rules:
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
@@ -64,6 +70,15 @@ test:mvn:
     # — the exact failure this change exists to end. Assert the file by name.
     - test -f "${CATALOG_SIBLING_ROOT}/hugmesh-generator/docs/catalog/image-catalog.json"
       || { echo "CATALOG SOURCE MISSING — the drift test would SKIP and this job would be green while blind"; exit 1; }
+    # THE SAME TRAP, SECOND INSTANCE. AppProfileSchemaMirrorTest compares this repo's
+    # app-profile schema against the CONSOLE's copy byte for byte, and assumeTrue()-SKIPS when
+    # the console checkout is absent — which, without this clone, is always, in CI. A sha256
+    # LITERAL is not a substitute: a one-sided edit that moves the schema and the literal
+    # together in ONE repo satisfies both repos' local pins while the two files diverge (this
+    # was measured, not theorised). Only reading the other file catches it.
+    - git clone --depth 1 --branch "${CONSOLE_SCHEMA_REF}" "${ORG_BASE}/hugmesh-superadmin-service-catalog-ui.git" "${CATALOG_SIBLING_ROOT}/hugmesh-superadmin-service-catalog-ui"
+    - test -f "${CATALOG_SIBLING_ROOT}/hugmesh-superadmin-service-catalog-ui/schemas/app-profile.schema.json"
+      || { echo "CONSOLE SCHEMA MISSING - the mirror check would SKIP and this job would be green while blind"; exit 1; }
   script:
     # settings.xml (committed) resolves the PRIVATE hugmesh-parent + hugmesh-commons
     # (incl. the tests classifier) from the GitLab Maven registry via CI_JOB_TOKEN.
@@ -74,7 +89,13 @@ test:mvn:
     # passed. It used to be the reverse, and nothing ever set the old opt-in check flag — so every
     # run rewrote the contract into a discarded CI workspace and went green while the committed
     # spec drifted.
+    # -Dappprofile.schema.mirror.required=true turns the mirror check's SKIP into a FAILURE, so
+    # a clone that silently failed cannot leave the job green while checking nothing. Belt and
+    # braces with the `test -f` above: the flag catches the case where the file exists but the
+    # path is wrong, the `test -f` catches it before Maven even starts.
     - ./mvnw -B -s settings.xml clean test -Dcatalog.source.dir="${CATALOG_SIBLING_ROOT}/hugmesh-generator/docs/catalog"
+      -Dappprofile.schema.console.dir="${CATALOG_SIBLING_ROOT}/hugmesh-superadmin-service-catalog-ui/schemas"
+      -Dappprofile.schema.mirror.required=true
     # THE GENERAL FORM OF THAT BUG: any test that regenerates a COMMITTED artefact passes by
     # rewriting it, and in a throwaway CI workspace nobody ever sees the diff. Both known cases
     # (the vendored catalogs and the OpenAPI spec) now assert instead of writing — this catches
