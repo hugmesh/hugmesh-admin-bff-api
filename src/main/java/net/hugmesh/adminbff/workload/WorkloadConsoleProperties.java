@@ -28,8 +28,9 @@ import java.util.Set;
  * </ul>
  * {@link #execReadOnlyCommands} is the read-only exec command allowlist (the safe
  * non-TTY exec variant); the full interactive TTY is gated by the danger tier + step-up +
- * Lease + device/SSH-license, not by this list. Each entry is ONE exact argv and is
- * matched against the WHOLE requested argv — see {@link #execReadOnlyAllowed}.
+ * Lease + device/SSH-license, not by this list. A one-token entry is a BARE NAME
+ * (any arguments); a multi-token entry is a PINNED ARGV matched against the WHOLE
+ * requested argv — see {@link #execReadOnlyAllowed}.
  */
 @ConfigurationProperties(prefix = "app.workload-console")
 public class WorkloadConsoleProperties {
@@ -45,10 +46,11 @@ public class WorkloadConsoleProperties {
     /** Curated (namespace, workload, port) port-forward triples (DECISION 2). */
     private List<PortForwardTarget> portForwardAllowlist = new ArrayList<>();
 
-    /** The read-only exec command allowlist. Each entry is one EXACT argv, its tokens joined
-     *  by single spaces ({@code "ps -e"} is the two-token argv {@code [ps, -e]}); the whole
-     *  requested argv must equal one of them (see {@link #execReadOnlyAllowed}). EMPTY by
-     *  default (fail-closed: nothing is exec-able). */
+    /** The read-only exec command allowlist, in the generator's two forms: a BARE NAME
+     *  ({@code "ls"}) licenses that command with any arguments; a PINNED ARGV, its tokens
+     *  joined by single spaces ({@code "ps -e"} is {@code [ps, -e]}), licenses exactly that
+     *  whole argv (see {@link #execReadOnlyAllowed}). EMPTY by default (fail-closed:
+     *  nothing is exec-able). */
     private List<String> execReadOnlyCommands = new ArrayList<>();
 
     /** Default grant TTL in hours (DECISION 4/6, ~24h). */
@@ -127,59 +129,61 @@ public class WorkloadConsoleProperties {
     }
 
     /**
-     * True iff {@code command} is, token for token, EXACTLY one allowlist entry's argv — the
-     * WHOLE argv is matched, never just its head.
-     *
-     * <p><b>Why not the first token.</b> This used to be
-     * {@code execReadOnlyCommands.contains(command.get(0))}, which was wrong in both
-     * directions. (1) Too PERMISSIVE: a bare entry licensed its command with ARBITRARY
-     * arguments, so the list was only as safe as every listed command under every flag and
-     * operand it accepts — the generator had already had to take {@code ps} ({@code ps eww}
-     * prints every process's environment), {@code date} ({@code date -f FILE} echoes FILE's
-     * lines back) and {@code du} ({@code --files0-from=FILE}, same echo) off the list for
-     * exactly that reason. (2) It made the generator's PINNED entries unreachable: the
-     * generator emits {@code "df -h"}, {@code "stat -t"}, {@code "ps -e"} and
-     * {@code "date -u"} (hugmesh-generator
+     * True iff {@code command} is licensed by one allowlist entry, under the generator's TWO
+     * deliberate entry forms (hugmesh-generator
      * {@code specs/cluster/manifests/admin-bff-api/workload-console-patch.yaml}, env
-     * {@code WORKLOAD_CONSOLE_EXEC_READONLY}; the curation rules are in its
-     * {@code docs/OPTIONAL-SERVICES.md}), and the real argv {@code [ps, -e]} has the head
-     * {@code ps}, which is not an entry — so every pinned form was refused. The ONLY argv
-     * whose head did equal {@code "ps -e"} was the one-token {@code [ps -e]}, which names a
-     * program literally called "ps -e", not {@code ps}: the one shape the old guard let
-     * through for a pinned entry was a shape that does not run the pinned command.
-     *
-     * <p><b>The rule now.</b> Each entry is turned into its argv by {@link #entryArgv}, and
-     * {@code command} is allowed only when it is EQUAL to one of those argvs — same length,
-     * same tokens, same order, case-sensitive, char-for-char. Consequences, all deliberate:
+     * {@code WORKLOAD_CONSOLE_EXEC_READONLY}: "BARE NAME ONLY for a command that holds the
+     * property under ARBITRARY argv. PINNED ARGV an exact, whole-argv safe form"):
      * <ul>
-     *   <li>no PREFIX match: {@code "ps -e"} does not license {@code [ps, -e, eww]}. This
-     *       applies to bare entries too — {@code "ls"} now licenses {@code [ls]} and NOT
-     *       {@code [ls, -la, /]}. That is NARROWER than the old head match for every bare
-     *       entry and wider for none; it is the literal contract the generator asked for
-     *       ("match the WHOLE argv ... not command.get(0)"), and a capability that needs an
-     *       argument has to be listed as that exact argv;</li>
-     *   <li>no HEAD match of a multi-token entry: {@code [ps]} is refused when only
-     *       {@code "ps -e"} is listed;</li>
-     *   <li>no shell semantics and no normalisation of any kind: nothing is unquoted, split,
-     *       globbed, trimmed, case-folded or path-resolved on the {@code command} side, so
-     *       {@code [ps -e]} (ONE token containing a space), {@code [/bin/ps, -e]},
-     *       {@code [ps, -e;env]} and {@code [sh, -c, ps -e]} are all refused. This does not
-     *       depend on what the exec path downstream does with metacharacters
-     *       ({@code Fabric8WorkloadClient} passes the list on as a {@code String[]}): a
-     *       metacharacter is simply part of a token that fails to equal any entry token;</li>
-     *   <li>a MALFORMED entry licenses nothing (fail-closed) — see {@link #entryArgv}.</li>
+     *   <li><b>BARE NAME</b> — a ONE-token entry ({@code "ls"}, {@code "uname"}) licenses
+     *       its command with ARBITRARY arguments: the head token must equal the entry, the
+     *       rest is free. The generator admits a bare name only after auditing that command
+     *       under arbitrary argv (its {@code tests/workload-console/exec_argv_property.py}
+     *       re-derives that on every run), so {@code [ls, -la, /]} is licensed by
+     *       {@code "ls"} — narrowing it here would silently drop a capability the curation
+     *       deliberately kept;</li>
+     *   <li><b>PINNED ARGV</b> — a MULTI-token entry ({@code "ps -e"}, {@code "df -h"},
+     *       {@code "stat -t"}, {@code "date -u"}) licenses EXACTLY that argv: same length,
+     *       same tokens, same order, case-sensitive. No prefix match ({@code "ps -e"} does
+     *       not license {@code [ps, -e, eww]}), and no head match ({@code [ps]} or
+     *       {@code [ps, eww]} is refused when only {@code "ps -e"} is listed). Pinning is how
+     *       the generator lists a command whose bare form is NOT argument-safe
+     *       ({@code ps eww} prints every process's environment, {@code date -f FILE} echoes
+     *       FILE's lines, {@code df --output=… <path>} is a mount-topology oracle).</li>
      * </ul>
-     * A null/empty command, or one containing a null token, is refused, and the default
-     * (empty) allowlist refuses everything.
+     *
+     * <p><b>Why not the first token alone.</b> This used to be
+     * {@code execReadOnlyCommands.contains(command.get(0))}. That honoured the BARE form but
+     * made every PINNED form unreachable: the real argv {@code [ps, -e]} has the head
+     * {@code ps}, which is not an entry, and the only argv whose head equalled
+     * {@code "ps -e"} was the one-token {@code [ps -e]} — a program literally named
+     * "ps -e", not {@code ps}. (The generator's cross-repo TODO asked for exactly this fix:
+     * "match the WHOLE argv … not command.get(0)".)
+     *
+     * <p>No shell semantics and no normalisation on the {@code command} side: nothing is
+     * unquoted, split, globbed, trimmed, case-folded or path-resolved. So {@code [ps -e]}
+     * (ONE token containing a space), {@code [/bin/ps, -e]}, {@code [ps, -e;env]},
+     * {@code [ls;env]} and {@code [sh, -c, ps -e]} are refused. A bare name's free
+     * arguments are passed on as argv elements ({@code Fabric8WorkloadClient} hands the
+     * list over as a {@code String[]}, never to a shell), so a metacharacter there is just a
+     * file-name argument to the audited command. A MALFORMED entry licenses nothing (see
+     * {@link #entryArgv}); a null/empty command, or one whose head is null, is refused; the
+     * default (empty) allowlist refuses everything.
      */
     public boolean execReadOnlyAllowed(List<String> command) {
         if (command == null || command.isEmpty()) return false;
         for (String entry : execReadOnlyCommands) {
             List<String> argv = entryArgv(entry);
-            // List.equals is element-wise, length- and order-sensitive. argv never holds a
-            // null and the comparison calls equals() on argv's elements, so a null token in
-            // command is simply unequal rather than an NPE (pinned by the null-token test).
-            if (argv != null && argv.equals(command)) return true;
+            if (argv == null) continue;
+            if (argv.size() == 1) {
+                // BARE NAME: head must match; the remaining arguments are free.
+                if (argv.get(0).equals(command.get(0))) return true;
+            } else if (argv.equals(command)) {
+                // PINNED ARGV: List.equals is element-wise, length- and order-sensitive, and
+                // calls equals() on argv's (never-null) elements, so a null token in command
+                // is simply unequal rather than an NPE.
+                return true;
+            }
         }
         return false;
     }

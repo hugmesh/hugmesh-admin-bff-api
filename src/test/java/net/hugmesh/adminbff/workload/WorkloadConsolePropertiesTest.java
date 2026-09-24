@@ -18,8 +18,9 @@ class WorkloadConsolePropertiesTest {
      * ({@code specs/cluster/manifests/admin-bff-api/workload-console-patch.yaml} at generator
      * commit 2be93a0). It is a fixture, not a live read: a later change on the generator side
      * does NOT turn this test red (the generator's own tests/workload-console suite guards the
-     * value). What it pins is that the SHAPE the generator uses — bare names mixed with
-     * space-joined pinned argvs, one comma-delimited env string — binds and matches the way
+     * value). What it pins is that the SHAPE the generator uses — bare names (any arguments)
+     * mixed with space-joined pinned argvs (exact), one comma-delimited env string — binds
+     * and matches the way
      * {@link WorkloadConsoleProperties#execReadOnlyAllowed} documents.
      */
     private static final String GENERATOR_SHIPPED_EXEC_READONLY =
@@ -72,7 +73,7 @@ class WorkloadConsolePropertiesTest {
         assertThat(p.portForwardAllowed("hugmesh-pki", "web", 8080)).isFalse();
     }
 
-    // ── read-only exec: WHOLE-argv, exact token-sequence match ─────────────────────────
+    // ── read-only exec: BARE NAME = head + any args; PINNED ARGV = exact whole argv ─────
 
     /** The generator's PINNED forms are reachable. Under the old first-token matcher every
      *  one of these was refused — no head token equals a string containing a space. */
@@ -87,11 +88,11 @@ class WorkloadConsolePropertiesTest {
         assertThat(withExec("ls").execReadOnlyAllowed(List.of("ls"))).isTrue();
     }
 
-    /** No prefix match: an allowlisted argv followed by ANYTHING is a different argv. These
-     *  are the exact escapes the generator pinned against (ps eww = every environment,
-     *  date -f FILE = FILE's lines echoed back, df --output/--sync). */
+    /** No prefix match on a PINNED argv: a pinned argv followed by ANYTHING is a different
+     *  argv. These are the exact escapes the generator pinned against (ps eww = every
+     *  environment, date -f FILE = FILE's lines echoed back, df --output/--sync). */
     @Test
-    void execReadOnly_extraArgs_areRejected() {
+    void execReadOnly_extraArgsOnPinnedEntry_areRejected() {
         WorkloadConsoleProperties p = withExec("ls", "ps -e", "date -u", "df -h");
         assertThat(p.execReadOnlyAllowed(List.of("ps", "-e", "eww"))).isFalse();
         assertThat(p.execReadOnlyAllowed(List.of("ps", "-e", "e"))).isFalse();
@@ -99,12 +100,32 @@ class WorkloadConsolePropertiesTest {
                 "date", "-u", "-f", "/var/run/secrets/workload-console-read/token"))).isFalse();
         assertThat(p.execReadOnlyAllowed(List.of("df", "-h", "--sync"))).isFalse();
         assertThat(p.execReadOnlyAllowed(List.of("df", "-h", "/var/run/secrets"))).isFalse();
-        // A BARE entry licenses only itself now — this is the deliberate narrowing vs. the
-        // old head match, which allowed exactly this argv (the replaced test asserted it).
-        assertThat(p.execReadOnlyAllowed(List.of("ls", "-la"))).isFalse();
-        assertThat(p.execReadOnlyAllowed(List.of("ls", "-la", "/"))).isFalse();
         // a trailing empty-string argument is still an extra argument
         assertThat(p.execReadOnlyAllowed(List.of("ps", "-e", ""))).isFalse();
+    }
+
+    /** A BARE NAME keeps licensing its command with ARBITRARY arguments — the generator's
+     *  "argument-safe" form, audited under arbitrary argv before a name ships bare. The
+     *  arguments go to the command as argv elements, never through a shell, so shell-looking
+     *  arguments are just file names; the HEAD itself must still equal the entry exactly. */
+    @Test
+    void execReadOnly_bareName_licensesArbitraryArguments_butOnlyItsExactHead() {
+        WorkloadConsoleProperties p = withExec("ls", "uname", "ps -e");
+        assertThat(p.execReadOnlyAllowed(List.of("ls"))).isTrue();
+        assertThat(p.execReadOnlyAllowed(List.of("ls", "-la"))).isTrue();
+        assertThat(p.execReadOnlyAllowed(List.of("ls", "-la", "/"))).isTrue();
+        assertThat(p.execReadOnlyAllowed(List.of("uname", "-a"))).isTrue();
+        assertThat(p.execReadOnlyAllowed(List.of("ls", "`env`"))).isTrue();
+        // the head is matched char-for-char: no path resolution, case folding, trimming or
+        // splitting of a head token that smuggles a second command
+        assertThat(p.execReadOnlyAllowed(List.of("/bin/ls", "-la"))).isFalse();
+        assertThat(p.execReadOnlyAllowed(List.of("LS"))).isFalse();
+        assertThat(p.execReadOnlyAllowed(List.of(" ls"))).isFalse();
+        assertThat(p.execReadOnlyAllowed(List.of("ls;env"))).isFalse();
+        assertThat(p.execReadOnlyAllowed(List.of("ls -la"))).isFalse();
+        assertThat(p.execReadOnlyAllowed(Arrays.asList((String) null, "-la"))).isFalse();
+        // a one-token entry is a bare name; a multi-token entry never becomes one by its head
+        assertThat(p.execReadOnlyAllowed(List.of("ps", "eww"))).isFalse();
     }
 
     /** No head match: the first token of a pinned entry is not itself an entry, so neither
@@ -133,8 +154,8 @@ class WorkloadConsolePropertiesTest {
                 List.of("ps", "-e", ";", "env"),
                 List.of("ps", "-e", "&&", "env"),
                 List.of("ps", "-e", "|", "cat", "/etc/shadow"),
-                List.of("ls", "`env`"),
-                List.of("ls", "$(env)"),
+                List.of("ps", "-e", "`env`"),
+                List.of("date", "-u", "$(env)"),
                 List.of("ls;env"),
                 List.of("sh", "-c", "ps -e"),
                 List.of("/bin/ps", "-e"),                  // no path resolution
@@ -185,8 +206,8 @@ class WorkloadConsolePropertiesTest {
 
     /** End to end through Spring's binder: the generator's one comma-delimited env string
      *  arrives as whole entries ({@code "df -h"}, not {@code "df"} + {@code "-h"}), blanks
-     *  around commas are trimmed by the binder (the javadoc of entryArgv relies on that), and
-     *  the shipped list licenses exactly its nine argvs. */
+     *  around commas are trimmed by the binder (the javadoc of entryArgv relies on that), the
+     *  five bare names take arguments, and the four pinned forms license exactly themselves. */
     @Test
     void execReadOnly_generatorShippedValue_bindsAndMatchesWholeArgv() {
         WorkloadConsoleProperties p = bindExec(GENERATOR_SHIPPED_EXEC_READONLY);
@@ -196,7 +217,10 @@ class WorkloadConsolePropertiesTest {
         for (List<String> argv : List.of(
                 List.of("ls"), List.of("df", "-h"), List.of("free"), List.of("uptime"),
                 List.of("id"), List.of("uname"), List.of("stat", "-t"), List.of("ps", "-e"),
-                List.of("date", "-u"))) {
+                List.of("date", "-u"),
+                // bare names with arguments (the generator audited them under arbitrary argv)
+                List.of("ls", "-la", "/"), List.of("uname", "-a"), List.of("free", "-h"),
+                List.of("id", "-u"), List.of("uptime", "-p"))) {
             assertThat(p.execReadOnlyAllowed(argv)).as("argv %s", argv).isTrue();
         }
         for (List<String> argv : List.of(
@@ -204,7 +228,7 @@ class WorkloadConsolePropertiesTest {
                 List.of("df"), List.of("df", "--output=source,target",
                         "/var/run/secrets/workload-console-read/token"),
                 List.of("stat", "-f", "/"), List.of("stat", "--file-system", "/"),
-                List.of("ls", "-la", "/"), List.of("uname", "-a"))) {
+                List.of("stat", "-t", "/etc/hostname"), List.of("df", "-h", "/"))) {
             assertThat(p.execReadOnlyAllowed(argv)).as("argv %s", argv).isFalse();
         }
 
