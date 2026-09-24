@@ -89,6 +89,13 @@ class HeadscaleAclPolicyModeGuardTest {
                 .hasMessageContaining("policy-mode='db'")
                 .hasMessageContaining("'db' was this BFF's old spelling")
                 .hasMessageContaining("Unknown ACL policy mode");
+        // ...in any case and with surrounding whitespace, the way the gate reads the declaration.
+        for (String mode : new String[] {"DB", "Db", " db ", "\tdb\n"}) {
+            assertThatThrownBy(() -> HeadscaleAclConfig.requireDbPolicyMode(props(true, mode)))
+                    .as("mode=%s", mode)
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("'db' was this BFF's old spelling");
+        }
         // ...and the hint is specific to "db": a file-mode declaration does not get it.
         assertThatThrownBy(() -> HeadscaleAclConfig.requireDbPolicyMode(props(true, "file")))
                 .isInstanceOf(IllegalStateException.class)

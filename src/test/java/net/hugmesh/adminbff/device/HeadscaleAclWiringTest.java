@@ -55,6 +55,29 @@ class HeadscaleAclWiringTest {
     }
 
     @Test
+    void javaDefaultsAlone_withNoApplicationYml_stillWireOnlyTheNoopClient() {
+        // The Java field defaults are the fallback when no config file supplies the keys (a
+        // slice test, an embedding, a yml that lost the block). With nothing declaring
+        // `enabled`, the Noop bean must still be the single policy client: its condition is
+        // matchIfMissing=true, and without that no policy client exists and the reconciler
+        // cannot be wired at all.
+        new ApplicationContextRunner()
+                .withUserConfiguration(HeadscaleAclConfig.class)
+                .withBean(ObjectMapper.class, ObjectMapper::new)
+                .withBean(WebClient.Builder.class, WebClient::builder)
+                .withBean(DeviceRegistryExportService.class, () -> mock(DeviceRegistryExportService.class))
+                .withBean(LeaderElection.class, () -> mock(LeaderElection.class))
+                .run(ctx -> {
+                    assertThat(ctx).hasNotFailed();
+                    assertThat(ctx.getBean(HeadscaleAclProperties.class).getPolicyMode()).isEqualTo("database");
+                    assertThat(ctx).hasSingleBean(HeadscalePolicyClient.class);
+                    assertThat(ctx.getBean(HeadscalePolicyClient.class))
+                            .isInstanceOf(NoopHeadscalePolicyClient.class);
+                    assertThat(ctx).hasSingleBean(HeadscaleAclReconciler.class);
+                });
+    }
+
+    @Test
     void enabledWithTheShippedDefaultMode_wiresTheRealPushClient() {
         runner.withPropertyValues("app.registry.headscale-acl.enabled=true").run(ctx -> {
             assertThat(ctx).hasNotFailed();

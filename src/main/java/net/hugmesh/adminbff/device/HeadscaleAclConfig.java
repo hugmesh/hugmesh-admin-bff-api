@@ -74,6 +74,15 @@ public class HeadscaleAclConfig {
      * IMPOSSIBLE TO MISS: the bean refuses to be created and the context fails to start, naming
      * both sides of the mismatch.
      *
+     * <p>What this gate can and cannot see: it checks the BFF's DECLARATION, not the control
+     * node. Nothing in headscale's API reports its policy mode, so the declaration is the only
+     * input. Until the generator cut-over for decision 101 = B lands (hugmesh-generator#634),
+     * the fleet as built still runs headscale with {@code policy.mode: file}, and the shipped
+     * declaration ({@code database}) already names the decided target. So on today's fleet,
+     * {@code enabled=true} alone passes this gate and produces exactly the silent no-op
+     * described above. {@code enabled} must NOT be flipped until the control node runs
+     * {@code policy.mode: database} with its policy seeded.
+     *
      * <p>Only reached on the enabled path — with the push off (the default) this method never
      * runs and boot is unchanged. The declaration is trimmed and compared case-insensitively;
      * headscale's own comparison is exact, so write {@code database} in its config.

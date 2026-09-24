@@ -536,7 +536,9 @@ app:
       # live-confirmed (docs/CANONICAL-FP.md — same blocker the READ side carries; the compiled
       # policy keys nodes by that fp), (2) an API key is provisioned, and (3) the control node
       # runs headscale with policy.mode=database and the node-side hugmesh-policy-sync agent is
-      # removed (the generator cut-over for decision 101 = B, not landed yet — see policy-mode).
+      # removed (the generator cut-over for decision 101 = B, hugmesh-generator#634, not landed
+      # yet — see policy-mode). The startup gate only checks policy-mode below, which already
+      # declares `database`, so it CANNOT catch a flip made before that cut-over.
       enabled: "${APP_REGISTRY_HEADSCALE_ACL_ENABLED:false}"
       # The headscale control-plane gRPC-gateway REST base URL (only used when enabled).
       # headscale is a HOST OpenRC service on the pki node fronted by a selector-less Service
