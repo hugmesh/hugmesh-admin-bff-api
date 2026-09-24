@@ -10588,7 +10588,8 @@
         "type" : "object",
         "properties" : {
           "handle" : {
-            "minLength" : 1,
+            "maxLength" : 400,
+            "minLength" : 0,
             "type" : "string"
           },
           "roles" : {
@@ -10598,7 +10599,8 @@
             }
           },
           "action" : {
-            "minLength" : 1,
+            "maxLength" : 128,
+            "minLength" : 0,
             "type" : "string"
           }
         }

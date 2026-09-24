@@ -556,6 +556,15 @@ app:
       usage-events: "${APP_KAFKA_TOPIC_USAGE_EVENTS:usage_events}"
     consumer:
       group-id: "${APP_KAFKA_CONSUMER_GROUP_ID:hugmesh-admin-bff-api-usage}"
+  # In-memory usage log (UsageService) — the ClickHouse-down fallback for the admin Usage
+  # view. Bounded (decision 105 = A, hugmesh-admin-bff-api#105): a ring buffer of the last
+  # in-memory-capacity events, plus separate running counters that keep totalEvents and the
+  # per-module event counts EXACT for the life of the process. The fallback's distinct users
+  # per module, active users in the last hour and per-action counts are computed over the
+  # last N (= this capacity) events only. Default 10000: with handle <= 400 and action <= 128
+  # characters (the @Size caps on POST /bff/internal/usage) that is at most ~12 MB of heap.
+  usage:
+    in-memory-capacity: "${APP_USAGE_IN_MEMORY_CAPACITY:10000}"
   # Anubis proof-of-work management proxy (Anubis is its own optional-service Deployment,
   # not a sidecar of this BFF). enabled=false by default so a deployment without the
   # Anubis optional service turned on does not get 503 cascades on the admin UI.
@@ -1033,6 +1042,26 @@ springdoc:
   # Restrict the component scan to this BFF's own controllers so the spec stays
   # the admin-BFF surface only (no stray springframework/actuator paths leak in).
   packages-to-scan: net.hugmesh.adminbff
+
+# ── API-to-API mTLS (CLIENT side / OUTBOUND) ─────────────────────────────────
+# The OTHER half of the server.ssl.* block below (decision 81a = A, hugmesh-admin-bff-api
+# #82 / #94 / #62). OutboundMtlsClient builds the reactor-netty connector the effector
+# clients (RestFederationModuleClient, RestArgoCdClient) are built on: it presents this
+# BFF's PKI client identity (keystore.p12) and trusts ONLY the cluster CA (truststore.p12).
+# Same property names as mod-/forum-/mesh-/user-bff, and it REUSES the SSL_* env the
+# server-side stores use, so one mounted /stores layout serves both directions. DEFAULT
+# OFF: local/dev/CI keeps the default connector; the in-cluster deployment sets
+# HUGMESH_MTLS_CLIENT_ENABLED=true (hugmesh-generator, admin-bff-api deployment env).
+hugmesh:
+  mtls:
+    client:
+      enabled: "${HUGMESH_MTLS_CLIENT_ENABLED:false}"
+      key-store: "${SSL_KEY_STORE:/stores/keystore.p12}"
+      key-store-type: "${SSL_KEY_STORE_TYPE:PKCS12}"
+      key-store-password: "${SSL_KEY_STORE_PASSWORD:}"
+      trust-store: "${SSL_TRUST_STORE:/stores/truststore.p12}"
+      trust-store-type: "${SSL_TRUST_STORE_TYPE:PKCS12}"
+      trust-store-password: "${SSL_TRUST_STORE_PASSWORD:}"
 
 management:
   endpoints:
