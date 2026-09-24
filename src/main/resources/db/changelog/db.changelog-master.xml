@@ -697,4 +697,11 @@
     -->
     <include file="db/changelog/330-access-suspension-mesh-role.xml"/>
     <include file="db/changelog/340-domain-theme.xml"/>
+    <!--
+      350 — backing_service_mode: rename the stored service id 'object-store' to the generator
+      registry's 'velero-objectstore' (hugmesh-admin-bff-api#58, decision 92 = A). Idempotent
+      UPDATE; a no-op on the expected empty ledger (the feature ships dark). Appended LAST —
+      backing_service_mode (310) exists by here.
+    -->
+    <include file="db/changelog/350-backing-service-id-velero-objectstore.xml"/>
 </databaseChangeLog>

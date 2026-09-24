@@ -14,12 +14,15 @@ import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
 import net.hugmesh.commons.security.RoleName;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.Set;
 
 /**
  * Usage analytics — reactive. Every meaningful action ({@code register},
@@ -73,7 +76,24 @@ public class UsageService {
             Map.entry("admin.forum.extension.install", "admin-ui"),
             Map.entry("admin.forum.audit", "admin-ui"));
 
-    private final ConcurrentLinkedQueue<UsageEvent> mem = new ConcurrentLinkedQueue<>();
+    /** Shipped default for {@code app.usage.in-memory-capacity} (the ring size). */
+    static final int DEFAULT_IN_MEMORY_CAPACITY = 10_000;
+
+    // ── In-memory fallback log: BOUNDED (decision 105 = A, hugmesh-admin-bff-api#105) ──
+    // A fixed-capacity ring of the most recent events plus separate running counters. The
+    // counters keep totalEvents and the per-module event counts EXACT for the life of the
+    // process; the ring (and so the fallback's distinct-users-per-module, active-in-last-hour
+    // and per-action figures) covers only the last `memCapacity` events. Per-module counters
+    // are safe to keep exactly because the module set is closed (MODULE_OF values + "host");
+    // per-action counts are NOT kept as exact counters because `action` is caller-supplied
+    // (POST /bff/internal/usage) and an exact map keyed on it would be unbounded again.
+    // All four fields are guarded by `memLock` so a fallback snapshot is self-consistent.
+    private final Object memLock = new Object();
+    private final int memCapacity;
+    private final ArrayDeque<UsageEvent> mem;
+    private long memTotal;
+    private final Map<String, Long> memModuleEvents = new HashMap<>();
+
     private final ObjectMapper json = new ObjectMapper();
 
     private final WebClient ch;
@@ -85,7 +105,14 @@ public class UsageService {
             @Value("${clickhouse.user:snap}") String chUser,
             @Value("${clickhouse.password:snap}") String chPass,
             @Value("${app.kafka.topic.usage-events:usage_events}") String topic,
-            @Nullable KafkaTemplate<String, String> kafka) {
+            @Nullable KafkaTemplate<String, String> kafka,
+            @Value("${app.usage.in-memory-capacity:" + DEFAULT_IN_MEMORY_CAPACITY + "}") int inMemoryCapacity) {
+        if (inMemoryCapacity < 1) {
+            throw new IllegalArgumentException(
+                    "app.usage.in-memory-capacity must be >= 1, got " + inMemoryCapacity);
+        }
+        this.memCapacity = inMemoryCapacity;
+        this.mem = new ArrayDeque<>(Math.min(inMemoryCapacity, 1024));
         WebClient.Builder b = WebClient.builder().baseUrl(chUrl);
         if (chUser != null && !chUser.isBlank()) {
             String basic = Base64.getEncoder().encodeToString((chUser + ":" + chPass).getBytes());
@@ -101,7 +128,8 @@ public class UsageService {
     }
 
     /**
-     * Record one usage event. Always logged in-memory; then — if Kafka is the bus
+     * Record one usage event. Always logged in-memory (bounded: the ring keeps the last
+     * {@code app.usage.in-memory-capacity} events, the counters stay exact); then — if Kafka is the bus
      * — PRODUCED to the usage-event topic (the consumer persists it); otherwise
      * written DIRECTLY to ClickHouse as a degraded fallback. Returns a Mono the
      * caller may subscribe to; callers on the request path fire-and-forget.
@@ -117,7 +145,7 @@ public class UsageService {
         String module = moduleOf(action);
         UsageEvent event = new UsageEvent(String.valueOf(actor), role, action, module,
                 System.currentTimeMillis());
-        mem.add(event);
+        remember(event);
 
         if (kafka != null) {
             // Kafka is the durable bus: produce + let the consumer write ClickHouse.
@@ -176,28 +204,60 @@ public class UsageService {
                 });
     }
 
+    /** Append to the bounded ring (evicting the oldest at capacity) and bump the exact counters. */
+    private void remember(UsageEvent event) {
+        synchronized (memLock) {
+            if (mem.size() >= memCapacity) {
+                mem.pollFirst();
+            }
+            mem.addLast(event);
+            memTotal++;
+            memModuleEvents.merge(event.module(), 1L, Long::sum);
+        }
+    }
+
+    /** Test seam: how many events the ring currently holds (never more than the capacity). */
+    int inMemoryEventCount() {
+        synchronized (memLock) {
+            return mem.size();
+        }
+    }
+
     // ── In-memory fallback aggregation (mirrors mock usageFromMemory) ───
-    private Map<String, Object> fromMemory() {
+    //
+    // Exact, from the counters: totalEvents and byModule[].events.
+    // Over the last N events only (N = app.usage.in-memory-capacity, reported as
+    // windowEvents): byModule[].users (distinct actors), byAction, activeUsers (distinct
+    // actors in the last hour). A module whose events have all aged out of the ring still
+    // shows its exact event count, with users = 0.
+    Map<String, Object> fromMemory() {
+        List<UsageEvent> window;
+        long total;
+        Map<String, Long> moduleEvents;
+        synchronized (memLock) {
+            window = new ArrayList<>(mem);
+            total = memTotal;
+            moduleEvents = new LinkedHashMap<>(memModuleEvents);
+        }
         long hourAgo = System.currentTimeMillis() - 3_600_000L;
-        Map<String, int[]> modEvents = new LinkedHashMap<>();
-        Map<String, java.util.Set<String>> modUsers = new LinkedHashMap<>();
-        Map<String, int[]> actEvents = new LinkedHashMap<>();
-        java.util.Set<String> recent = new java.util.HashSet<>();
-        for (UsageEvent e : mem) {
-            modEvents.computeIfAbsent(e.module(), k -> new int[1])[0]++;
-            modUsers.computeIfAbsent(e.module(), k -> new java.util.HashSet<>()).add(e.actor());
-            actEvents.computeIfAbsent(e.action(), k -> new int[1])[0]++;
+        Map<String, Set<String>> modUsers = new HashMap<>();
+        Map<String, long[]> actEvents = new LinkedHashMap<>();
+        Set<String> recent = new HashSet<>();
+        for (UsageEvent e : window) {
+            modUsers.computeIfAbsent(e.module(), k -> new HashSet<>()).add(e.actor());
+            actEvents.computeIfAbsent(e.action(), k -> new long[1])[0]++;
             if (e.ts() > hourAgo) recent.add(e.actor());
         }
         List<Map<String, Object>> byModule = new ArrayList<>();
-        modEvents.forEach((m, c) -> {
+        moduleEvents.forEach((m, c) -> {
             Map<String, Object> row = new LinkedHashMap<>();
             row.put("module", m);
-            row.put("events", c[0]);
-            row.put("users", modUsers.get(m).size());
+            row.put("events", c);
+            Set<String> users = modUsers.get(m);
+            row.put("users", users == null ? 0 : users.size());
             byModule.add(row);
         });
-        byModule.sort((a, b) -> ((Integer) b.get("events")) - ((Integer) a.get("events")));
+        byModule.sort((a, b) -> Long.compare((Long) b.get("events"), (Long) a.get("events")));
         List<Map<String, Object>> byAction = new ArrayList<>();
         actEvents.forEach((a, c) -> {
             Map<String, Object> row = new LinkedHashMap<>();
@@ -205,13 +265,14 @@ public class UsageService {
             row.put("events", c[0]);
             byAction.add(row);
         });
-        byAction.sort((a, b) -> ((Integer) b.get("events")) - ((Integer) a.get("events")));
+        byAction.sort((a, b) -> Long.compare((Long) b.get("events"), (Long) a.get("events")));
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("byModule", byModule);
         out.put("byAction", byAction);
         out.put("activeUsers", recent.size());
-        out.put("totalEvents", mem.size());
+        out.put("totalEvents", total);
         out.put("source", "in-memory");
+        out.put("windowEvents", window.size());
         return out;
     }
 

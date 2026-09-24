@@ -76,15 +76,15 @@ class BackingServiceModeRepositoryTest {
     @Test
     void currentModes_perService_independentAndLatest() {
         BackingServiceModeRepository r = repo();
-        r.insertRecorded("object-store", BackingServiceMode.MODE_MANAGED, "s3://b", null, "a", 1L).block();
+        r.insertRecorded("velero-objectstore", BackingServiceMode.MODE_MANAGED, "s3://b", null, "a", 1L).block();
         r.insertRecorded("kafka", BackingServiceMode.MODE_MANAGED, "b.msk:9094", null, "a", 2L).block();
-        // supersede object-store back to self-hosted at a higher generation.
-        r.insertRecorded("object-store", BackingServiceMode.MODE_SELF_HOSTED, null, null, "a", 3L).block();
+        // supersede velero-objectstore back to self-hosted at a higher generation.
+        r.insertRecorded("velero-objectstore", BackingServiceMode.MODE_SELF_HOSTED, null, null, "a", 3L).block();
 
         Map<String, BackingServiceMode> current = r.currentModes().block();
-        assertThat(current).containsOnlyKeys("object-store", "kafka");
-        assertThat(current.get("object-store").mode()).isEqualTo(BackingServiceMode.MODE_SELF_HOSTED);
-        assertThat(current.get("object-store").generation()).isEqualTo(3L);
+        assertThat(current).containsOnlyKeys("velero-objectstore", "kafka");
+        assertThat(current.get("velero-objectstore").mode()).isEqualTo(BackingServiceMode.MODE_SELF_HOSTED);
+        assertThat(current.get("velero-objectstore").generation()).isEqualTo(3L);
         assertThat(current.get("kafka").mode()).isEqualTo(BackingServiceMode.MODE_MANAGED);
         assertThat(current.get("kafka").endpoint()).isEqualTo("b.msk:9094");
     }

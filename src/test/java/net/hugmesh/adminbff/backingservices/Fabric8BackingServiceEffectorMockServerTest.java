@@ -268,6 +268,10 @@ class Fabric8BackingServiceEffectorMockServerTest {
 
     @Test
     void refusedIntent_writesNothingAndRollsNothing() {
+        // velero-objectstore is a real catalog id (hugmesh-admin-bff-api#58) with no ConfigMap
+        // key; object-store is the retired id. Neither may write or roll anything.
+        effector().converge(mode("velero-objectstore", BackingServiceMode.MODE_MANAGED,
+                "s3.example.net:443", 9));
         effector().converge(mode("object-store", BackingServiceMode.MODE_MANAGED,
                 "s3.example.net:443", 9));
         effector().converge(mode("postgres-wiki-bff", BackingServiceMode.MODE_MANAGED,
