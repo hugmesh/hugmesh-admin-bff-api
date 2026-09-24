@@ -2,6 +2,7 @@ package net.hugmesh.adminbff.domainregistry;
 import org.junit.jupiter.api.BeforeEach;
 
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.ApplicationContext;
 import org.springframework.boot.webflux.test.autoconfigure.WebFluxTest;
@@ -22,6 +23,7 @@ import net.hugmesh.adminbff.web.dto.CreateDomainRequest;
 
 import java.time.Instant;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -100,6 +102,13 @@ class DomainRegistryControllerTest {
 
     private static final String UPDATE_BODY = "{\"brand\":\"renamed\",\"enabled\":false}";
 
+    /** A decision-29 row: idp=own and an allocated MCS pair, as the writer stores them. */
+    private static DomainRegistration ownSample() {
+        return new DomainRegistration("dom-2", "own.test", "own", "Own Ltd", "vault:pki/own",
+                "own", "own-org", "tag:own", true, Instant.now(), SUBJECT, Instant.now(),
+                false, false, 0L, DomainIdp.OWN, "s0:c256", "s0:c257");
+    }
+
     // ── SUPERADMIN ALLOW ────────────────────────────────────────────────────────
 
     @Test
@@ -171,7 +180,8 @@ class DomainRegistryControllerTest {
                 new DomainExportModels.DomainExportBody("fp-1", 1L,
                         java.util.List.of(new DomainExportModels.DomainEntry("acme.test", "acme",
                                 "Acme Inc", "vault:pki/acme", "acme", "acme-org", "tag:acme",
-                                false, false, 0L))),
+                                false, false, 0L,
+                                DomainIdp.OWN, "s0:c256", "s0:c257"))),
                 "hash", "sig", "pub", true);
         when(export.exportRegistry(eq("fp-1"))).thenReturn(Mono.just(signed));
         asSuperadmin().get().uri("/bff/admin/domains/export?node=fp-1")
@@ -180,7 +190,14 @@ class DomainRegistryControllerTest {
                 .jsonPath("$.signed").isEqualTo(true)
                 .jsonPath("$.body.node").isEqualTo("fp-1")
                 .jsonPath("$.body.entries[0].clusterDomain").isEqualTo("acme.test")
-                .jsonPath("$.body.entries[0].caRef").isEqualTo("vault:pki/acme");
+                .jsonPath("$.body.entries[0].caRef").isEqualTo("vault:pki/acme")
+                // DECISION 29b/29c on the SERIALIZED wire — these are the exact jq paths
+                // hugmesh-generator specs/usr/sbin/hugmesh-domain-reconcile:413 reads
+                // (.body.entries[i].idp) and the 05b element fields the per-domain Casdoor
+                // needs. A field the JSON does not carry reaches no node.
+                .jsonPath("$.body.entries[0].idp").isEqualTo("own")
+                .jsonPath("$.body.entries[0].selinuxLevel").isEqualTo("s0:c256")
+                .jsonPath("$.body.entries[0].selinuxLevelPg").isEqualTo("s0:c257");
         verify(export).exportRegistry(eq("fp-1"));
     }
 
@@ -329,5 +346,56 @@ class DomainRegistryControllerTest {
         asMod().get().uri("/bff/admin/domains/export?node=fp-1")
                 .exchange().expectStatus().isForbidden();
         verify(export, never()).exportRegistry(any());
+    }
+    // ── decision 29 (2026-09-17) on the wire ────────────────────────────────────
+
+    @Test
+    void create_withIdpOwn_bindsIdpFromTheBody_andTheResponseCarriesTheAllocatedPair() {
+        // The SUPERADMIN chooses idp; the MCS pair is NOT theirs to choose — the writer
+        // allocated it and the console reads it back here (decision 29b + 29c).
+        when(service.create(any(CreateDomainRequest.class), eq(SUBJECT)))
+                .thenReturn(Mono.just(ownSample()));
+        asSuperadmin().post().uri("/bff/admin/domains")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("{\"clusterDomain\":\"own.test\",\"brand\":\"own\","
+                        + "\"nsPrefix\":\"own\",\"casdoorOrg\":\"own-org\",\"idp\":\"own\"}")
+                .exchange().expectStatus().isCreated()
+                .expectBody()
+                .jsonPath("$.idp").isEqualTo("own")
+                .jsonPath("$.nsPrefix").isEqualTo("own")
+                .jsonPath("$.selinuxLevel").isEqualTo("s0:c256")
+                .jsonPath("$.selinuxLevelPg").isEqualTo("s0:c257");
+
+        ArgumentCaptor<CreateDomainRequest> captor =
+                ArgumentCaptor.forClass(CreateDomainRequest.class);
+        verify(service).create(captor.capture(), eq(SUBJECT));
+        assertThat(captor.getValue().idp())
+                .as("idp must reach the service from the body, not be defaulted at the edge")
+                .isEqualTo("own");
+        assertThat(captor.getValue().nsPrefix()).isEqualTo("own");
+    }
+
+    @Test
+    void list_carriesIdpAndTheMcsPair_soTheConsoleCanShowWhatWasAllocated() {
+        when(service.list()).thenReturn(Flux.just(ownSample()));
+        asSuperadmin().get().uri("/bff/admin/domains")
+                .exchange().expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$[0].idp").isEqualTo("own")
+                .jsonPath("$[0].selinuxLevel").isEqualTo("s0:c256")
+                .jsonPath("$[0].selinuxLevelPg").isEqualTo("s0:c257");
+    }
+
+    @Test
+    void aPreDecisionRow_readsBackWithNoMcsPair_whichIsHowUnprovisionableIsVisible() {
+        // sample() is the 12-arg (pre-decision) shape: idp falls to the superdomain floor and
+        // the MCS pair is null. That null IS the signal — it is how the console tells a row
+        // that cannot be provisioned yet from one that can.
+        when(service.list()).thenReturn(Flux.just(sample()));
+        asSuperadmin().get().uri("/bff/admin/domains")
+                .exchange().expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$[0].idp").isEqualTo("superdomain")
+                .jsonPath("$[0].selinuxLevel").doesNotExist();
     }
 }

@@ -164,6 +164,41 @@ class AuthControllerSessionCookieTest {
         verify(revocations).revokeCoarse(eq("mastodon"), anyString(), eq("logout"), anyLong());
     }
 
+    /**
+     * A BROWSER holds the session as an HttpOnly {@code bff_session} cookie and sends NO
+     * {@code Authorization} header of its own. Modeled statefully, not "the endpoint was
+     * called": the row is proven present via {@code registerAndGetToken}, then proven ABSENT
+     * via the store after the call — a test that only asserted the 200 + body shape would pass
+     * a broken no-op too.
+     *
+     * <p><b>Correction (land-lane re-review, admin-bff-api#102):</b> this test does NOT, by
+     * itself, distinguish {@code bffTokenFrom(cookie, header)} (current) from the pre-#102
+     * {@code bffTokenFrom(null, header)}. This class imports {@link SessionCookieWebFilter} (see
+     * the class javadoc), which bridges a cookie-only request's {@code bff_session} into a
+     * synthesised {@code Authorization} header BEFORE {@code sessionOut} runs — correctly
+     * matching the real app, where that filter is always registered. So by the time this test's
+     * request reaches the controller, {@code header} already carries the token either way, and
+     * {@code bffTokenFrom(null, header)} would have resolved it identically. Verified by
+     * mutation testing: reverting the controller's cookie parameter leaves this test green.
+     * The test that actually pins the controller's OWN cookie-reading code, isolated from the
+     * filter, is {@code AuthControllerSessionOutUnitTest}. This test still has value
+     * as an end-to-end / non-regression check of the real request path.
+     */
+    @Test
+    void sessionOut_viaCookieOnly_deletesRow() {
+        String token = extractToken(registerAndGetToken("cookieout@x.com"));
+        org.assertj.core.api.Assertions.assertThat(store.sessionOfToken(token).blockOptional())
+                .isPresent();
+
+        web.post().uri("/bff/sessionOut")
+                .cookie(SessionCookieWebFilter.SESSION_COOKIE, token)
+                .exchange().expectStatus().isOk()
+                .expectBody().jsonPath("$.loggedOut").isEqualTo(true);
+
+        org.assertj.core.api.Assertions.assertThat(store.sessionOfToken(token).blockOptional())
+                .isEmpty();
+    }
+
     private static String extractToken(String json) {
         // tiny extractor — the body is {"token":"bff_...",...}
         int i = json.indexOf("\"token\":\"") + 9;

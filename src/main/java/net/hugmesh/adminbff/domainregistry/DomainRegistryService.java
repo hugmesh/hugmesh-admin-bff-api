@@ -77,16 +77,42 @@ public class DomainRegistryService {
         if (clusterDomain == null || clusterDomain.isBlank()) {
             return Mono.error(ApiException.badRequest("clusterDomain is required"));
         }
+        // DECISION 29a — nsPrefix IS the slug, so it is REQUIRED and DNS-1123 validated here.
+        // Before this, a domain could be registered with no nsPrefix at all, or with one that
+        // cannot be a Kubernetes namespace; either is unprovisionable, and the second only
+        // surfaces as a failed sync long after the SUPERADMIN pressed save.
+        var slugRefusal = DomainSlug.refusalReason(
+                req.nsPrefix() == null ? null : req.nsPrefix().trim());
+        if (slugRefusal.isPresent()) {
+            return Mono.error(ApiException.badRequest(slugRefusal.get()));
+        }
+        // DECISION 29b — idp is a real column with a closed vocabulary; absent means superdomain.
+        var idpRefusal = DomainIdp.refusalReason(req.idp());
+        if (idpRefusal.isPresent()) {
+            return Mono.error(ApiException.badRequest(idpRefusal.get()));
+        }
         DomainRegistration draft = new DomainRegistration(
-                null, clusterDomain, req.brand(), req.org(), req.caRef(), req.nsPrefix(),
+                null, clusterDomain, req.brand(), req.org(), req.caRef(), req.nsPrefix().trim(),
                 req.casdoorOrg(), req.meshTag(),
                 !Boolean.FALSE.equals(req.enabled()),
-                null, createdBySubject, null);
+                null, createdBySubject, null, false, false, 0L,
+                DomainIdp.normalize(req.idp()), null, null);
+        String slug = req.nsPrefix().trim();
         return repo.findByClusterDomain(clusterDomain)
                 .flatMap(existing -> Mono.<DomainRegistration>error(ApiException.conflict(
                         "domain '" + clusterDomain + "' is already registered")))
+                // DECISION 29a: the slug is UNIQUE too, and for a sharper reason than the
+                // natural key — two domains sharing it would read ONE Vault credential
+                // document (secret/<slug>/casdoor). Checked before the insert so the common
+                // case is a clean 409; uq_domain_registry_ns_prefix stays the race backstop.
+                .switchIfEmpty(Mono.defer(() -> repo.findByNsPrefix(slug)
+                        .flatMap(clash -> Mono.<DomainRegistration>error(ApiException.conflict(
+                                "slug '" + slug + "' is already used by domain '"
+                                        + clash.clusterDomain() + "'. The slug names the tenant "
+                                        + "namespace, the ArgoCD Application and the Vault path "
+                                        + DomainSlug.vaultPath(slug) + ", so it cannot be shared.")))))
                 // No existing row: insert with @system provision hook and race backstop.
-                .switchIfEmpty(Mono.defer(() -> insertDomainRegistration(draft, createdBySubject, clusterDomain)));
+                .switchIfEmpty(Mono.defer(() -> insertDomainRegistration(draft, createdBySubject, clusterDomain, slug)));
     }
 
     /**
@@ -97,6 +123,11 @@ public class DomainRegistryService {
      * {@code created_by_subject} are IMMUTABLE. A 404 if no such domain exists.
      */
     public Mono<DomainRegistration> update(String clusterDomain, UpdateDomainRequest req) {
+        var idpRefusal = req.idp() == null ? java.util.Optional.<String>empty()
+                : DomainIdp.refusalReason(req.idp());
+        if (idpRefusal.isPresent()) {
+            return Mono.error(ApiException.badRequest(idpRefusal.get()));
+        }
         return repo.findByClusterDomain(clusterDomain)
                 .switchIfEmpty(Mono.error(ApiException.notFound(
                         "no domain registered for cluster_domain '" + clusterDomain + "'")))
@@ -107,33 +138,69 @@ public class DomainRegistryService {
     /** Insert the new domain row, provision the @system account, and handle the duplicate-key race. */
     private Mono<DomainRegistration> insertDomainRegistration(DomainRegistration draft,
                                                                String createdBySubject,
-                                                               String clusterDomain) {
+                                                               String clusterDomain,
+                                                               String slug) {
         return repo.insert(draft, createdBySubject)
+                // DECISION 29c: the writer allocates the MCS pair, and an exhausted reserved
+                // range is a refusal, never a wrap-around onto a live category. Mapped here so
+                // it reaches the SUPERADMIN as a clean conflict with its reason, not a 500.
+                .onErrorMap(McsCategoryAllocator.Exhausted.class,
+                        ex -> ApiException.conflict(ex.getMessage()))
                 .doOnNext(saved -> log.info(
                         "[domain-registry] registered cluster_domain={} brand={} by={} (id={})",
                         saved.clusterDomain(), saved.brand(), createdBySubject, saved.id()))
                 // DOMAIN-CREATE HOOK: provision the per-domain @system notification sender.
                 .flatMap(saved -> provisionSystemAccount(saved.clusterDomain()).thenReturn(saved))
-                // Race backstop: concurrent insert trips UNIQUE — re-check and return 409.
-                .onErrorResume(e -> repo.findByClusterDomain(clusterDomain)
-                        .flatMap(now -> Mono.<DomainRegistration>error(ApiException.conflict(
-                                "domain '" + clusterDomain + "' is already registered")))
-                        .switchIfEmpty(Mono.error(e)));
+                // Race backstop: a concurrent insert trips one of the two UNIQUE constraints.
+                // The SLUG one is matched by constraint name rather than by re-reading, because
+                // the winning row carries a DIFFERENT cluster_domain — a cluster_domain re-check
+                // finds nothing and would let a DuplicateKeyException surface as a 500.
+                .onErrorResume(e -> DomainSlug.isSlugCollision(e)
+                        ? Mono.error(ApiException.conflict(
+                                "slug '" + slug + "' was registered by another domain "
+                                        + "concurrently; it names the Vault path "
+                                        + DomainSlug.vaultPath(slug) + " and cannot be shared"))
+                        : repo.findByClusterDomain(clusterDomain)
+                                .flatMap(now -> Mono.<DomainRegistration>error(ApiException.conflict(
+                                        "domain '" + clusterDomain + "' is already registered")))
+                                .switchIfEmpty(Mono.error(e)));
     }
 
-    /** Merge mutable update-request fields onto the current row and persist. */
+    /**
+     * Merge mutable update-request fields onto the current row and persist.
+     *
+     * <p>DECISION 29a makes {@code nsPrefix} IMMUTABLE: omitting it, or restating the current
+     * value, is accepted; a DIFFERENT value is refused with a 409 rather than silently ignored,
+     * because the caller who sent it believes the slug changed. A slug rename re-points the
+     * Vault path {@code secret/<slug>/casdoor} at a document that does not exist and renames
+     * the ArgoCD Application (pruning the old one) — it is a de-provision plus a re-provision,
+     * which is an explicit operation nobody has designed yet, not an UPDATE field.
+     */
     private Mono<DomainRegistration> mergeAndUpdateDomain(DomainRegistration current,
                                                            UpdateDomainRequest req) {
+        String requestedSlug = req.nsPrefix() == null ? null : req.nsPrefix().trim();
+        if (requestedSlug != null && !requestedSlug.equals(current.nsPrefix())) {
+            return Mono.error(ApiException.conflict(
+                    "nsPrefix is immutable: domain '" + current.clusterDomain() + "' is slug '"
+                            + current.nsPrefix() + "' and cannot be renamed to '" + requestedSlug
+                            + "'. The slug names the tenant namespace, the ArgoCD Application "
+                            + "and the Vault credential path, so a rename is a de-provision "
+                            + "followed by a re-provision, not an update."));
+        }
         DomainRegistration merged = new DomainRegistration(
                 current.id(), current.clusterDomain(),
                 req.brand() == null ? current.brand() : req.brand(),
                 req.org() == null ? current.org() : req.org(),
                 req.caRef() == null ? current.caRef() : req.caRef(),
-                req.nsPrefix() == null ? current.nsPrefix() : req.nsPrefix(),
+                current.nsPrefix(),
                 req.casdoorOrg() == null ? current.casdoorOrg() : req.casdoorOrg(),
                 req.meshTag() == null ? current.meshTag() : req.meshTag(),
                 req.enabled() == null ? current.enabled() : req.enabled(),
-                current.createdAt(), current.createdBySubject(), current.updatedAt());
+                current.createdAt(), current.createdBySubject(), current.updatedAt(),
+                current.caProvisioned(), current.appsetRegistered(),
+                current.lastReconciledGeneration(),
+                req.idp() == null ? current.idp() : DomainIdp.normalize(req.idp()),
+                current.selinuxLevel(), current.selinuxLevelPg());
         return repo.update(merged)
                 .doOnNext(saved -> log.info(
                         "[domain-registry] updated cluster_domain={} enabled={} (id={})",

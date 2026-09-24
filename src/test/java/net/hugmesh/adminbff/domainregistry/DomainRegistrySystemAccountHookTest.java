@@ -39,7 +39,13 @@ class DomainRegistrySystemAccountHookTest {
 
     private static CreateDomainRequest create(String clusterDomain) {
         return new CreateDomainRequest(clusterDomain, "acme", "Acme Inc", "vault:pki/acme",
-                "acme", "acme-org", "tag:acme", null);
+                slugOf(clusterDomain), "acme-org", "tag:acme", null, null);
+    }
+
+    /** The domain's SLUG (decision 29a: nsPrefix). UNIQUE per domain, so it is derived from
+     *  the cluster_domain here rather than hardcoded — two fixtures must not share one. */
+    private static String slugOf(String clusterDomain) {
+        return clusterDomain.replaceAll("[^a-z0-9]+", "-").replaceAll("(^-|-$)", "");
     }
 
     @Test
