@@ -175,9 +175,10 @@ class BackingServiceEndpointPlanTest {
         assertThat(BackingServiceEndpointPlan.forMode(
                 mode("vault-pki", BackingServiceMode.MODE_MANAGED, "v.example.net:8200", 1)))
                 .isEmpty();
-        // The catalog/registry id split (hugmesh-admin-bff-api#58): the admin catalog says
-        // `object-store`, the generator registry says `velero-objectstore`. Neither is actuatable
-        // here, so a recorded intent for either is refused rather than writing a key nothing reads.
+        // hugmesh-admin-bff-api#58: the catalog id is now the registry's `velero-objectstore`; its
+        // managed coordinates are the Velero BSL's own scalars, not a ConfigMap key, so it is not
+        // actuatable here. The retired `object-store` is no longer an id at all. Both are refused
+        // rather than writing a key nothing reads.
         assertThat(BackingServiceEndpointPlan.forMode(
                 mode("object-store", BackingServiceMode.MODE_MANAGED, "s3.example.net:443", 1)))
                 .isEmpty();

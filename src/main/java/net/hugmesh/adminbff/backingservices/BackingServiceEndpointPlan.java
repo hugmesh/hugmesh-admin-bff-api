@@ -150,9 +150,12 @@ public final class BackingServiceEndpointPlan {
     /**
      * The closed set of services this effector can actuate TODAY: exactly the ids that have BOTH
      * a {@code backing-services.yaml} tier-1/2 entry AND a checked-in ConfigMap key. An id outside
-     * it is REFUSED, never silently skipped — which is also what keeps the
-     * {@code object-store} / {@code velero-objectstore} id split (hugmesh-admin-bff-api#58) from
-     * quietly writing a key nothing reads.
+     * it is REFUSED, never silently skipped. {@code velero-objectstore} (the id
+     * hugmesh-admin-bff-api#58 unified with the generator registry) is deliberately NOT here: its
+     * managed coordinates are the Velero BackupStorageLocation's own scalars
+     * ({@code manifests/velero/backupstoragelocation.yaml}: bucket / region / s3Url), not a
+     * ConfigMap key this effector writes, so a recorded intent for it is refused rather than
+     * writing a key nothing reads.
      */
     static final Map<String, Entry> ENTRIES = Map.of(
             "postgres-admin-bff", new Entry("postgres-admin-bff", "hugmesh-backend",
