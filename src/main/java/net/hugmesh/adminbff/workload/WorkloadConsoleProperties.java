@@ -28,7 +28,8 @@ import java.util.Set;
  * </ul>
  * {@link #execReadOnlyCommands} is the read-only exec command allowlist (the safe
  * non-TTY exec variant); the full interactive TTY is gated by the danger tier + step-up +
- * Lease + device/SSH-license, not by this list.
+ * Lease + device/SSH-license, not by this list. Each entry is ONE exact argv and is
+ * matched against the WHOLE requested argv — see {@link #execReadOnlyAllowed}.
  */
 @ConfigurationProperties(prefix = "app.workload-console")
 public class WorkloadConsoleProperties {
@@ -44,7 +45,10 @@ public class WorkloadConsoleProperties {
     /** Curated (namespace, workload, port) port-forward triples (DECISION 2). */
     private List<PortForwardTarget> portForwardAllowlist = new ArrayList<>();
 
-    /** The read-only exec command allowlist (first token matched). */
+    /** The read-only exec command allowlist. Each entry is one EXACT argv, its tokens joined
+     *  by single spaces ({@code "ps -e"} is the two-token argv {@code [ps, -e]}); the whole
+     *  requested argv must equal one of them (see {@link #execReadOnlyAllowed}). EMPTY by
+     *  default (fail-closed: nothing is exec-able). */
     private List<String> execReadOnlyCommands = new ArrayList<>();
 
     /** Default grant TTL in hours (DECISION 4/6, ~24h). */
@@ -122,11 +126,94 @@ public class WorkloadConsoleProperties {
         return false;
     }
 
-    /** True iff the first command token is on the read-only exec allowlist. */
+    /**
+     * True iff {@code command} is, token for token, EXACTLY one allowlist entry's argv — the
+     * WHOLE argv is matched, never just its head.
+     *
+     * <p><b>Why not the first token.</b> This used to be
+     * {@code execReadOnlyCommands.contains(command.get(0))}, which was wrong in both
+     * directions. (1) Too PERMISSIVE: a bare entry licensed its command with ARBITRARY
+     * arguments, so the list was only as safe as every listed command under every flag and
+     * operand it accepts — the generator had already had to take {@code ps} ({@code ps eww}
+     * prints every process's environment), {@code date} ({@code date -f FILE} echoes FILE's
+     * lines back) and {@code du} ({@code --files0-from=FILE}, same echo) off the list for
+     * exactly that reason. (2) It made the generator's PINNED entries unreachable: the
+     * generator emits {@code "df -h"}, {@code "stat -t"}, {@code "ps -e"} and
+     * {@code "date -u"} (hugmesh-generator
+     * {@code specs/cluster/manifests/admin-bff-api/workload-console-patch.yaml}, env
+     * {@code WORKLOAD_CONSOLE_EXEC_READONLY}; the curation rules are in its
+     * {@code docs/OPTIONAL-SERVICES.md}), and the real argv {@code [ps, -e]} has the head
+     * {@code ps}, which is not an entry — so every pinned form was refused. The ONLY argv
+     * whose head did equal {@code "ps -e"} was the one-token {@code [ps -e]}, which names a
+     * program literally called "ps -e", not {@code ps}: the one shape the old guard let
+     * through for a pinned entry was a shape that does not run the pinned command.
+     *
+     * <p><b>The rule now.</b> Each entry is turned into its argv by {@link #entryArgv}, and
+     * {@code command} is allowed only when it is EQUAL to one of those argvs — same length,
+     * same tokens, same order, case-sensitive, char-for-char. Consequences, all deliberate:
+     * <ul>
+     *   <li>no PREFIX match: {@code "ps -e"} does not license {@code [ps, -e, eww]}. This
+     *       applies to bare entries too — {@code "ls"} now licenses {@code [ls]} and NOT
+     *       {@code [ls, -la, /]}. That is NARROWER than the old head match for every bare
+     *       entry and wider for none; it is the literal contract the generator asked for
+     *       ("match the WHOLE argv ... not command.get(0)"), and a capability that needs an
+     *       argument has to be listed as that exact argv;</li>
+     *   <li>no HEAD match of a multi-token entry: {@code [ps]} is refused when only
+     *       {@code "ps -e"} is listed;</li>
+     *   <li>no shell semantics and no normalisation of any kind: nothing is unquoted, split,
+     *       globbed, trimmed, case-folded or path-resolved on the {@code command} side, so
+     *       {@code [ps -e]} (ONE token containing a space), {@code [/bin/ps, -e]},
+     *       {@code [ps, -e;env]} and {@code [sh, -c, ps -e]} are all refused. This does not
+     *       depend on what the exec path downstream does with metacharacters
+     *       ({@code Fabric8WorkloadClient} passes the list on as a {@code String[]}): a
+     *       metacharacter is simply part of a token that fails to equal any entry token;</li>
+     *   <li>a MALFORMED entry licenses nothing (fail-closed) — see {@link #entryArgv}.</li>
+     * </ul>
+     * A null/empty command, or one containing a null token, is refused, and the default
+     * (empty) allowlist refuses everything.
+     */
     public boolean execReadOnlyAllowed(List<String> command) {
         if (command == null || command.isEmpty()) return false;
-        String head = command.get(0);
-        return head != null && execReadOnlyCommands.contains(head);
+        for (String entry : execReadOnlyCommands) {
+            List<String> argv = entryArgv(entry);
+            // List.equals is element-wise, length- and order-sensitive. argv never holds a
+            // null and the comparison calls equals() on argv's elements, so a null token in
+            // command is simply unequal rather than an NPE (pinned by the null-token test).
+            if (argv != null && argv.equals(command)) return true;
+        }
+        return false;
+    }
+
+    /**
+     * One allowlist entry as the exact argv it licenses, or {@code null} when the entry is
+     * MALFORMED and must license nothing.
+     *
+     * <p>The split is on the single ASCII space {@code ' '} and nothing else, because that is
+     * how the generator writes a pinned form (its argv "space-joined, flags only, no path").
+     * An entry is malformed when it is null/empty, when splitting it yields an EMPTY token (a
+     * leading, trailing or doubled space), or when a token contains any other whitespace,
+     * Unicode space or ISO control character. Refusing those instead of "cleaning them up" is
+     * the point: a mistyped {@code "ps  -e"} would otherwise license an argv carrying an
+     * empty-string argument, and a tab, newline or no-break space inside an entry has no
+     * reading that is both exact and obviously intended. (Spring's comma-delimited binding of
+     * {@code WORKLOAD_CONSOLE_EXEC_READONLY} already trims each element — pinned by
+     * {@code WorkloadConsolePropertiesTest} — so blanks around a comma never reach here; and
+     * that same comma split is why no entry can itself contain a comma.)
+     */
+    static List<String> entryArgv(String entry) {
+        if (entry == null || entry.isEmpty()) return null;
+        String[] tokens = entry.split(" ", -1);
+        for (String t : tokens) {
+            if (t.isEmpty()) return null;
+            for (int i = 0; i < t.length(); i++) {
+                char c = t.charAt(i);
+                if (Character.isWhitespace(c) || Character.isSpaceChar(c)
+                        || Character.isISOControl(c)) {
+                    return null;
+                }
+            }
+        }
+        return List.of(tokens);
     }
 
     /**

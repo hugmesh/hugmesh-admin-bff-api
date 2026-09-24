@@ -663,7 +663,12 @@ app:
     # observability) so a cross-TIER reach is impossible. EMPTY by default (fail-closed: every
     # {ns} is out-of-allowlist -> 403). The generator emits the real app-tier list.
     namespace-allowlist: "${WORKLOAD_CONSOLE_NAMESPACE_ALLOWLIST:}"
-    # The read-only exec command allowlist (first token). EMPTY by default.
+    # The read-only exec command allowlist. EMPTY by default (nothing is exec-able). Each
+    # comma-separated entry is ONE exact argv with its tokens joined by single spaces
+    # ("ls,df -h,ps -e"), and a request is allowed only when its WHOLE argv equals an entry
+    # token for token — no first-token/prefix match, so "ps -e" does not license "ps -e eww"
+    # and a bare "ls" licenses only "ls" with no arguments. No entry may contain a comma.
+    # See WorkloadConsoleProperties#execReadOnlyAllowed.
     exec-read-only-commands: "${WORKLOAD_CONSOLE_EXEC_READONLY:}"
     # Curated port-forward (namespace, workload, port) triples — EXCLUDING every datastore/
     # Vault/PKI/Casdoor. EMPTY by default; the generator emits the curated list. Bind via
