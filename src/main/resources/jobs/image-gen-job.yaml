@@ -133,9 +133,10 @@ spec:
           configMap:
             name: hugmesh-image-spec-${BUILD_ID}
             optional: true
-        # Per-DEVICE, not per-build (73b=B): the same Secret the admin-bff later mounts at
-        # <key-mount-path>/device-ssh-<DEVICE_ID>/ to dial this device, so a rebuild of the same
-        # device keeps pointing at one Secret. optional: absent => no SSH seed, build continues.
+        # Keyed by DEVICE id (73b=B): the same Secret the admin-bff later mounts at
+        # <key-mount-path>/device-ssh-<DEVICE_ID>/ to dial this device. DEVICE_ID is minted from
+        # the build id, so each build is a new device and a new Secret name.
+        # optional: absent => no SSH seed, build continues.
         - name: dial-key
           secret:
             secretName: device-ssh-${DEVICE_ID}   # ESO-synced from Vault ${VAULT_REF}

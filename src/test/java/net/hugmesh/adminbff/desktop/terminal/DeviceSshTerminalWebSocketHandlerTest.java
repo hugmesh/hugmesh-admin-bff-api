@@ -668,6 +668,58 @@ class DeviceSshTerminalWebSocketHandlerTest {
         }
     }
 
+    /**
+     * Decision 104, ORDER: each stdin chunk is recorded BEFORE it is written to the device, so an
+     * attempted input is on the chain even when the write itself fails. The device stub snapshots
+     * how many "in" entries the chain holds at the moment of each write, and fails the second
+     * write. RED if the append moves after {@code writeStdin}: the snapshots read [0, 1] and the
+     * failed chunk never reaches the chain.
+     */
+    @Test
+    void transcript_recordsStdinBeforeTheDeviceWrite_evenWhenTheWriteFails() {
+        String device = "dev-transcript-order";
+        when(authz.authorizeTerminal(eq(OPERATOR), eq(device), any(PrincipalDomain.class)))
+                .thenReturn(Mono.empty());
+        when(devices.findById(eq(device))).thenReturn(Mono.just(device(device, "brandx", "dt.mesh")));
+        DeviceSshTransport.Session tty = mock(DeviceSshTransport.Session.class);
+        when(tty.output()).thenReturn(Flux.never());
+        when(transport.open(eq(device), anyString(), eq(OPERATOR), anyInt(), anyInt()))
+                .thenReturn(Mono.just(tty));
+
+        WebSocketSession s = mockSession("/bff/admin/device-terminal/" + device, BRANDX, OPERATOR,
+                List.of("admin"), STEP_UP, null);
+        List<WebSocketMessage> frames = List.of(
+                frame("{\"type\":\"stdin\",\"data\":\"first-chunk\"}"),
+                frame("{\"type\":\"stdin\",\"data\":\"second-chunk\"}"));
+        when(s.receive()).thenReturn(Flux.fromIterable(frames));
+
+        var sink = TranscriptChainSupport.captureSink();
+        List<Integer> inEntriesAtWrite = new java.util.ArrayList<>();
+        org.mockito.Mockito.doAnswer(inv -> {
+            inEntriesAtWrite.add((int) TranscriptChainSupport.linesFor(sink, "device-terminal/" + device + "/")
+                    .stream().filter(l -> "in".equals(TranscriptChainSupport.parse(l).get("dir"))).count());
+            if (inEntriesAtWrite.size() == 2) {
+                throw new IllegalStateException("device write failed");
+            }
+            return null;
+        }).when(tty).writeStdin(any());
+        try {
+            run0(s, BRANDX, OPERATOR, List.of("admin"));
+
+            verify(tty, times(2)).writeStdin(any());
+            assertThat(inEntriesAtWrite).as("\"in\" entries already on the chain at each device write")
+                    .containsExactly(1, 2);
+            List<String> lines = TranscriptChainSupport.linesFor(sink, "device-terminal/" + device + "/");
+            assertThat(lines.stream().map(l -> TranscriptChainSupport.parse(l).get("data")))
+                    .as("the chunk whose write failed is still on the chain")
+                    .contains(net.hugmesh.adminbff.device.RegistrySigner.contentHash(
+                            "second-chunk".getBytes()));
+            assertThat(TranscriptChainSupport.verifyChain(lines, keys.publicKeyBase64())).isNull();
+        } finally {
+            TranscriptChainSupport.release(sink);
+        }
+    }
+
     /** A refused session (here: no step-up) opens no transport and so records no transcript. */
     @Test
     void transcript_refusedSession_recordsNothing() {

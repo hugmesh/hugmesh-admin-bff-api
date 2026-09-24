@@ -15,7 +15,9 @@ import java.util.Locale;
  *       from the in-cluster Job's report.</li>
  *   <li><b>73b = B — the name is {@code device-ssh-<deviceId>}</b>, the per-device Secret of
  *       hugmesh-generator {@code specs/cluster/manifests/external-secrets/device-ssh-externalsecret.tpl.yaml}
- *       (one Secret per DEVICE, not per build, so a rebuild keeps pointing at the same Secret).</li>
+ *       (keyed by the DEVICE id, not the build id). Note the device id is itself minted from the
+ *       build id (see {@link #mintDeviceId}), so today every build is a new device id and a new
+ *       Secret; a rebuild does NOT reuse an earlier device's Secret.</li>
  *   <li><b>73c = B — the BFF passes the Vault path to the Job</b> ({@code VAULT_REF} env) and the
  *       Job reports it back; {@code seedDial} stores it only when it equals {@link #vaultRefFor}.</li>
  * </ul>

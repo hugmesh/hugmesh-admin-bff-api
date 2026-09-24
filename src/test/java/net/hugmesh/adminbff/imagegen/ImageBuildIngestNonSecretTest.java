@@ -257,6 +257,35 @@ class ImageBuildIngestNonSecretTest {
     }
 
     /**
+     * 73c = B, EQUALITY not shape: a well-formed Vault path that belongs to ANOTHER device (or
+     * extends the minted one) is refused just like a foreign mount. RED if the check is weakened
+     * to a {@code hugmesh/device/} prefix or a {@code startsWith(minted)} match.
+     */
+    @Test
+    void ingestCompleted_wellFormedVaultRefOfAnotherDevice_noRow() {
+        List<java.util.function.UnaryOperator<String>> variants = List.of(
+                minted -> "hugmesh/device/dev-000000000000/ssh",   // another device's path
+                minted -> minted + "/dial_private_key");           // extends the minted path
+        for (var variant : variants) {
+            ImageBuildService service = newService();
+            ImageBuild persisted = queuedBuild("default");
+            service.events(null, persisted.id());
+            String deviceId = DeviceDialIdentity.mintDeviceId(persisted.id());
+            enroll(deviceId, "default");
+            String vaultRef = variant.apply(DeviceDialIdentity.vaultRefFor(deviceId));
+
+            service.ingest(persisted.id(), realShaped(persisted.id(), deviceId,
+                    "ssh-ed25519 AAAAhostpublic", "SHA256:hostfp", vaultRef)).block();
+
+            assertThat(dialRows(deviceId)).as("vaultRef %s", vaultRef).isZero();
+            assertThat(warnsFor(persisted.id())).as("vaultRef %s", vaultRef).singleElement()
+                    .satisfies(w -> assertThat(w)
+                            .contains("reported vaultRef '" + vaultRef + "'")
+                            .contains("is not the Vault path minted for device " + deviceId));
+        }
+    }
+
+    /**
      * 73b = B: the BFF is the source of the device id. A report naming a DIFFERENT (enrolled,
      * same-tenant) device — one the BFF did not mint for this build — seeds nothing. RED on
      * origin/main: the row was attached to whatever device the body named.
