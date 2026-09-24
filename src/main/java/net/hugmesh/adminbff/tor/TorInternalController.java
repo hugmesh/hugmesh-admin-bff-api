@@ -31,6 +31,12 @@ import java.util.Map;
  * residual as the self-report), so the report writes only {@code tor_node_report} and
  * nothing reads it to decide access. The ACK is minimal: accepted + this fingerprint's own
  * report count. A value the node agent could not have exported is a 422.
+ *
+ * <p>In particular the gateway's Host -&gt; tenancy-domain map (hugmesh-generator#582) IS an
+ * access decision and must NOT be built from this report as it stands: a holder of the shared
+ * token could map an onion to the wrong brand. That writer needs an authenticated source (the
+ * node's own HiddenService state on the node, or a report first bound to the reporter's mTLS
+ * identity).
  */
 @RestController
 @RequestMapping("/bff/internal/tor")

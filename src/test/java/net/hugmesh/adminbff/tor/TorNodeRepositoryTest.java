@@ -77,6 +77,30 @@ class TorNodeRepositoryTest {
         assertThat(r.domainOnions()).isEmpty();
     }
 
+    /**
+     * The PRIMARY half of "a re-report replaces the previous one": a node that reported
+     * before tor minted its onion (primary null, the normal boot order) must pick the onion up
+     * on its next report, and a re-minted primary (HS state lost, key rotated) must replace the
+     * old one. The domain-half test above sends the same primary twice, so it cannot see this.
+     */
+    @Test
+    void report_rereport_replacesThePrimary_nullToOnion_thenOnionToOnion() {
+        TorNodeReportRowRepository repo = reports();
+        repo.upsert("fp-3", null, "").block();
+        assertThat(repo.findByMachineKeyFp("fp-3").block().toDomain().primaryOnion()).isNull();
+
+        repo.upsert("fp-3", A, "").block();
+        TorNodeReport minted = repo.findByMachineKeyFp("fp-3").block().toDomain();
+        assertThat(minted.primaryOnion()).isEqualTo(A);
+        assertThat(minted.reportCount()).isEqualTo(2L);
+
+        repo.upsert("fp-3", B, "").block();
+        TorNodeReport reminted = repo.findByMachineKeyFp("fp-3").block().toDomain();
+        assertThat(reminted.primaryOnion()).isEqualTo(B);
+        assertThat(reminted.reportCount()).isEqualTo(3L);
+        assertThat(count("tor_node_report", "fp-3")).isEqualTo(1L);
+    }
+
     @Test
     void upstream_insertThenUpdate_managed_generationBumps_nullIsStored() {
         TorNodeConfigRowRepository repo = configs();

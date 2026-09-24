@@ -122,6 +122,24 @@ class TorExportServiceTest {
         assertThat(b.domains()).isEmpty();
     }
 
+    /**
+     * The kill switch must REACH the nodes: the agent applies only a generation strictly above
+     * the last one it applied, so revoking the ' global' row (a write stamped with the next
+     * table-wide generation) has to raise the export generation even when no brand row moved.
+     * Here the global row is the only row whose generation changes, and it sets the maximum.
+     */
+    @Test
+    void globalKillSwitchFlip_advancesTheGeneration_whenNoOtherRowMoves() {
+        TorExportBody live = TorExportService.compile("fp-1", null,
+                List.of(global(true, 5L), cap("brandb", true, true, 3L)));
+        TorExportBody killed = TorExportService.compile("fp-1", null,
+                List.of(global(false, 9L), cap("brandb", true, true, 3L)));
+        assertThat(live.domains()).containsExactly("brandb");
+        assertThat(killed.domains()).isEmpty();
+        assertThat(killed.generation()).isGreaterThan(live.generation());
+        assertThat(killed.generation()).isEqualTo(9L);
+    }
+
     @Test
     void generation_strictlyAdvancesOnAChangeToEitherSide() {
         List<DomainCapability> caps = new ArrayList<>(List.of(global(true, 5L), cap("brandb", true, true, 6L)));
@@ -151,6 +169,11 @@ class TorExportServiceTest {
         TorExportBody body = new TorExportBody("fp-1", 9L, true, "10.0.0.7:443", true, List.of("brandb"));
         SignedTorExport signed = svc.sign(body);
         assertThat(signed.signed()).isTrue();
+        // contentHash is on the #629 wire contract; pin it to the canonical bytes like every
+        // sibling export test does (DeviceRegistry/GoLive/DomainRegistry/NodeRadio/NodeStorage).
+        assertThat(signed.contentHash()).isEqualTo(
+                RegistrySigner.contentHash(TorExportService.canonicalBytes(body)));
+        assertThat(signed.contentHash()).isNotEqualTo(RegistrySigner.contentHash(new byte[0]));
         assertThat(RegistrySigner.verify(TorExportService.canonicalBytes(body), signed.signature(),
                 signed.publicKey())).isTrue();
         TorExportBody evil = new TorExportBody("fp-1", 9L, true, "203.0.113.9:443", true, List.of("brandb"));

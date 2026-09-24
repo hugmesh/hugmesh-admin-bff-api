@@ -60,6 +60,18 @@ class TorNodeServiceTest {
         assertThat(TorNodeService.reportRefusal(A, tooMany)).contains("at most");
     }
 
+    /** Exactly MAX_DOMAINS (64, the DTO's @Size max) is accepted; one more is refused. */
+    @Test
+    void reportRefusal_domainCountBoundary_exactly64Accepted_65Refused() {
+        assertThat(TorOnionRules.MAX_DOMAINS).isEqualTo(64);
+        Map<String, String> exactly = new HashMap<>();
+        for (int i = 0; i < TorOnionRules.MAX_DOMAINS; i++) exactly.put("d" + i, B);
+        assertThat(exactly).hasSize(64);
+        assertThat(TorNodeService.reportRefusal(A, exactly)).isNull();
+        exactly.put("d64", B);
+        assertThat(TorNodeService.reportRefusal(A, exactly)).contains("at most");
+    }
+
     @Test
     void report_refused_writesNothing_and422s() {
         TorNodeReportRowRepository reports = mock(TorNodeReportRowRepository.class);
