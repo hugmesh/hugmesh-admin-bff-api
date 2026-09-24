@@ -692,6 +692,23 @@ event path. See `src/main/resources/jobs/README.md` for the Job + RBAC + storage
   tailnet direct), per-domain and role-gated. `GET` (`hasAnyRole('ADMIN','SUPERADMIN')`)
   reads; mutations are `hasRole('SUPERADMIN')`. Secrets stay off-git (changelog
   `080-egress-vpn-configs`).
+- **`TorAdminController`** / **`TorInternalController`** — the admin-bff half of the node
+  Tor contract (#108; the node half is hugmesh-generator #583/#599). A tor-selected node
+  reports the onions it exports (`/var/lib/hugmesh/tor/hostname` and one
+  `/var/lib/hugmesh/tor/<slug>.hostname` per Tor domain) to
+  `POST /bff/internal/tor/onions` — the same `/bff/internal/**` SERVICE + mTLS channel
+  as the device-enrollment self-report, telemetry only. `GET /bff/admin/tor/nodes` lists
+  each node as `{primary, domains: {slug: onion}}`: a SUPERADMIN sees everything, a
+  domain ADMIN only their own domain's onion (the primary only for `default`) with node
+  identity and routing redacted. `PUT /bff/admin/tor/nodes/{fp}/upstream` (SUPERADMIN)
+  manages a node's `/etc/hugmesh/tor/upstream` (`null` = the agent's default
+  `127.0.0.1:443`), validated against the agent's own `host:port` rule. The per-domain
+  list `/etc/hugmesh/tor/domains` is the `tor-onion` key of `/bff/admin/domain-capabilities`
+  (unmanaged until a SUPERADMIN writes its `' global'` row). Both files reach the node
+  only through the signed per-node `GET /bff/admin/tor/export?node=` (canonical
+  `v1-tor` bytes + detached Ed25519, unknown fingerprint = empty body); the node-side
+  consumer that fetches it and writes the files is not built yet (changelog
+  `360-tor-node`).
 - **`StoragePoolController`** — `/bff/admin/device-storage-pools`
   (`hasAnyRole('ADMIN','SUPERADMIN')`): attach + register extra storage to a specific
   node (node-pinned local PV / local-path pool, FDE) so capacity-aware scheduling can
