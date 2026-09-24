@@ -55,7 +55,8 @@ import java.util.regex.Pattern;
  *   <li><b>Authenticate with the PER-DEVICE dial PRIVATE key.</b> Read at dial time from THIS
  *       DEVICE's own ESO-synced K8s Secret, at
  *       {@code <key-mount-path>/<device_ssh_dial.k8s_secret_name>/<key-file>}
- *       ({@link #resolveDialKeyPath}). The key bytes are loaded into sshj and NEVER logged,
+ *       ({@link #resolveDialKeyPath}; {@code key-file} defaults to {@code dial_private_key}, the key
+ *       the per-device {@code device-ssh-<deviceId>} Secret carries). The key bytes are loaded into sshj and NEVER logged,
  *       persisted, returned, or {@code toString}'d.</li>
  * </ol>
  *
@@ -550,9 +551,10 @@ public class SshjDeviceSshChannelFactory implements DeviceSshChannelFactory {
      *   <li>the {@code key-file} SETTING must be ONE plain file name ({@link #keyFileRefusal}) —
      *       so operator config cannot climb back out of the device directory either. The
      *       2026-09-16 skeptic pass on this branch measured that with only the mount-root check
-     *       below, {@code key-file=../id_dial} resolved EVERY device to
-     *       {@code <key-mount-path>/id_dial} — the retired mesh-wide path — and was ACCEPTED,
-     *       silently. That is why this rule exists and why the containment check is now against
+     *       below, {@code key-file=../<key-file>} (then {@code ../id_dial}, the former default
+     *       name — the default is {@code dial_private_key} since decision 73d) resolved EVERY
+     *       device to {@code <key-mount-path>/<key-file>} — the retired mesh-wide path — and was
+     *       ACCEPTED, silently. That is why this rule exists and why the containment check is now against
      *       the device directory rather than the mount root;</li>
      *   <li>whatever the two settings say, the NORMALIZED result must still be a descendant of
      *       {@code <key-mount-path>/<k8s_secret_name>} — belt-and-braces on both rules above.</li>
@@ -597,7 +599,7 @@ public class SshjDeviceSshChannelFactory implements DeviceSshChannelFactory {
      * name inside each per-device Secret mount — never blank, never {@code .} or {@code ..}, never
      * a path with a separator. A Kubernetes Secret key cannot contain a separator anyway, so no
      * legitimate deployment loses anything; what this refuses is a setting that would climb out of
-     * the device directory (the {@code ../id_dial} shape) or name the directory itself.
+     * the device directory (the {@code ../dial_private_key} shape) or name the directory itself.
      *
      * <p>Shared by {@link #resolveDialKeyPath} (dial time) and {@link DeviceTerminalConfig}
      * (startup, logged at ERROR) so a mis-set deployment learns at startup, not on the first dial.

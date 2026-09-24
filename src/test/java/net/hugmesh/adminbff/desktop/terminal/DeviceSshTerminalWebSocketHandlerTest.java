@@ -84,6 +84,7 @@ class DeviceSshTerminalWebSocketHandlerTest {
     private DeviceSshTransport.Session ttySession;
     private DeviceTerminalProperties props;
     private DeviceSshTerminalWebSocketHandler handler;
+    private TranscriptChainSupport.Keys keys;
 
     // capture of the close status the handler used.
     private CloseStatus closedWith;
@@ -114,9 +115,12 @@ class DeviceSshTerminalWebSocketHandlerTest {
         props.setEnabled(true); // flag ON for most tests; the dark proof flips it off.
         closedWith = null;
 
+        // A REAL, signing WorkloadExecService: every ALLOW test below also runs the decision-104
+        // session record, and the transcript test verifies the chain it writes.
+        keys = TranscriptChainSupport.ephemeralKeys();
         handler = new DeviceSshTerminalWebSocketHandler(
                 authz, devices, REGISTRY, stepUp, stepUpGate, mfaStepUp, transport, props,
-                new ObjectMapper());
+                new ObjectMapper(), TranscriptChainSupport.realTranscripts(keys.signer()));
 
         // Attach a list appender to the handler's logger to verify the server-side audit path.
         LoggerContext ctx = (LoggerContext) LoggerFactory.getILoggerFactory();
@@ -590,5 +594,151 @@ class DeviceSshTerminalWebSocketHandlerTest {
         return new Device(id, "fp-" + id, hostname, "tn-1", Device.IMAGE_MESH_EXTENSION,
                 "amd64-laptop", Device.OWNER_ADMIN, "owner-1", domain, "mesh-1",
                 Instant.now(), Instant.now());
+    }
+
+    // ── decision 104 (hugmesh-admin-bff-api#11 D1): the session record ────────────────────────
+
+    /**
+     * Every stdin chunk and every output chunk of an opened session is appended to the workload
+     * console's signed hash chain — N inputs + M outputs = N+M entries, in the SAME v1 format, which
+     * a verifier holding only the log lines and the public key accepts — and NO entry carries the
+     * bytes themselves. A resize frame has no content and is not recorded (workload parity).
+     * RED on origin/main 86cdf79: the handler writes no transcript at all (zero entries).
+     */
+    @Test
+    void transcript_recordsEveryChunk_inSignedChain_withoutPlaintext() {
+        String device = "dev-transcript";
+        when(authz.authorizeTerminal(eq(OPERATOR), eq(device), any(PrincipalDomain.class)))
+                .thenReturn(Mono.empty());
+        when(devices.findById(eq(device))).thenReturn(Mono.just(device(device, "brandx", "dt.mesh")));
+        DeviceSshTransport.Session tty = mock(DeviceSshTransport.Session.class);
+        // M = 2 output chunks; the second echoes the secret back, as a real shell would. The shell
+        // then stays open (never completes): the handler zips send+receive, and a COMPLETED output
+        // would end the session before the client's frames are read — so the session here ends
+        // when the CLIENT side completes, after all its frames.
+        when(tty.output()).thenReturn(Flux.just(
+                "login ok\r\n".getBytes(), "echo: secret-typed\r\n".getBytes())
+                .concatWith(Flux.never()));
+        when(transport.open(eq(device), anyString(), eq(OPERATOR), anyInt(), anyInt()))
+                .thenReturn(Mono.just(tty));
+
+        WebSocketSession s = mockSession("/bff/admin/device-terminal/" + device, BRANDX, OPERATOR,
+                List.of("admin"), STEP_UP, null);
+        // N = 3 stdin chunks, plus one resize frame that must NOT be recorded. (Frames are built
+        // BEFORE the stubbing call: a mock stubbed inside another when(...) is unfinished stubbing.)
+        List<WebSocketMessage> frames = List.of(
+                frame("{\"type\":\"stdin\",\"data\":\"secret-typed\"}"),
+                frame("{\"type\":\"resize\",\"cols\":100,\"rows\":30}"),
+                frame("{\"type\":\"stdin\",\"data\":\"\\r\"}"),
+                frame("{\"type\":\"stdin\",\"data\":\"exit\\r\"}"));
+        when(s.receive()).thenReturn(Flux.fromIterable(frames));
+
+        var sink = TranscriptChainSupport.captureSink();
+        try {
+            run0(s, BRANDX, OPERATOR, List.of("admin"));
+
+            verify(tty).writeStdin(org.mockito.AdditionalMatchers.aryEq("secret-typed".getBytes()));
+            verify(tty, times(3)).writeStdin(any());
+            verify(tty).resize(100, 30);
+            List<String> lines = TranscriptChainSupport.linesFor(sink,
+                    "device-terminal/" + device + "/");
+            assertThat(lines).hasSize(3 + 2);
+            assertThat(lines.stream().map(l -> TranscriptChainSupport.parse(l).get("dir")))
+                    .containsExactlyInAnyOrder("in", "in", "in", "out", "out");
+            assertThat(lines).allSatisfy(l -> {
+                TranscriptChainSupport.Entry e = TranscriptChainSupport.parse(l);
+                assertThat(e.get("actor")).isEqualTo(OPERATOR);
+                assertThat(e.get("session")).startsWith("device-terminal/" + device + "/");
+                assertThat(e.get("sig")).isNotEqualTo("UNSIGNED");
+                // NEVER the bytes — only their hash. (Both probes contain a character base64 never
+                // emits — '-' and ' ' — so a hash or signature cannot match them by chance.)
+                assertThat(l).doesNotContain("secret-typed").doesNotContain("login ok");
+            });
+            assertThat(lines.stream().map(l -> TranscriptChainSupport.parse(l).get("data")))
+                    .contains(net.hugmesh.adminbff.device.RegistrySigner.contentHash(
+                            "secret-typed".getBytes()));
+            assertThat(TranscriptChainSupport.verifyChain(lines, keys.publicKeyBase64())).isNull();
+
+            // Negative control: the verifier is not vacuous — drop one entry and it refuses.
+            List<String> dropped = new java.util.ArrayList<>(lines);
+            dropped.remove(1);
+            assertThat(TranscriptChainSupport.verifyChain(dropped, keys.publicKeyBase64())).isNotNull();
+        } finally {
+            TranscriptChainSupport.release(sink);
+        }
+    }
+
+    /**
+     * Decision 104, ORDER: each stdin chunk is recorded BEFORE it is written to the device, so an
+     * attempted input is on the chain even when the write itself fails. The device stub snapshots
+     * how many "in" entries the chain holds at the moment of each write, and fails the second
+     * write. RED if the append moves after {@code writeStdin}: the snapshots read [0, 1] and the
+     * failed chunk never reaches the chain.
+     */
+    @Test
+    void transcript_recordsStdinBeforeTheDeviceWrite_evenWhenTheWriteFails() {
+        String device = "dev-transcript-order";
+        when(authz.authorizeTerminal(eq(OPERATOR), eq(device), any(PrincipalDomain.class)))
+                .thenReturn(Mono.empty());
+        when(devices.findById(eq(device))).thenReturn(Mono.just(device(device, "brandx", "dt.mesh")));
+        DeviceSshTransport.Session tty = mock(DeviceSshTransport.Session.class);
+        when(tty.output()).thenReturn(Flux.never());
+        when(transport.open(eq(device), anyString(), eq(OPERATOR), anyInt(), anyInt()))
+                .thenReturn(Mono.just(tty));
+
+        WebSocketSession s = mockSession("/bff/admin/device-terminal/" + device, BRANDX, OPERATOR,
+                List.of("admin"), STEP_UP, null);
+        List<WebSocketMessage> frames = List.of(
+                frame("{\"type\":\"stdin\",\"data\":\"first-chunk\"}"),
+                frame("{\"type\":\"stdin\",\"data\":\"second-chunk\"}"));
+        when(s.receive()).thenReturn(Flux.fromIterable(frames));
+
+        var sink = TranscriptChainSupport.captureSink();
+        List<Integer> inEntriesAtWrite = new java.util.ArrayList<>();
+        org.mockito.Mockito.doAnswer(inv -> {
+            inEntriesAtWrite.add((int) TranscriptChainSupport.linesFor(sink, "device-terminal/" + device + "/")
+                    .stream().filter(l -> "in".equals(TranscriptChainSupport.parse(l).get("dir"))).count());
+            if (inEntriesAtWrite.size() == 2) {
+                throw new IllegalStateException("device write failed");
+            }
+            return null;
+        }).when(tty).writeStdin(any());
+        try {
+            run0(s, BRANDX, OPERATOR, List.of("admin"));
+
+            verify(tty, times(2)).writeStdin(any());
+            assertThat(inEntriesAtWrite).as("\"in\" entries already on the chain at each device write")
+                    .containsExactly(1, 2);
+            List<String> lines = TranscriptChainSupport.linesFor(sink, "device-terminal/" + device + "/");
+            assertThat(lines.stream().map(l -> TranscriptChainSupport.parse(l).get("data")))
+                    .as("the chunk whose write failed is still on the chain")
+                    .contains(net.hugmesh.adminbff.device.RegistrySigner.contentHash(
+                            "second-chunk".getBytes()));
+            assertThat(TranscriptChainSupport.verifyChain(lines, keys.publicKeyBase64())).isNull();
+        } finally {
+            TranscriptChainSupport.release(sink);
+        }
+    }
+
+    /** A refused session (here: no step-up) opens no transport and so records no transcript. */
+    @Test
+    void transcript_refusedSession_recordsNothing() {
+        String device = "dev-transcript-deny";
+        when(stepUp.validate(eq(OPERATOR), any())).thenReturn(false);
+        WebSocketSession s = mockSession("/bff/admin/device-terminal/" + device, BRANDX, OPERATOR,
+                List.of("admin"), null, null);
+        var sink = TranscriptChainSupport.captureSink();
+        try {
+            run0(s, BRANDX, OPERATOR, List.of("admin"));
+            assertThat(TranscriptChainSupport.linesFor(sink, "device-terminal/" + device + "/")).isEmpty();
+        } finally {
+            TranscriptChainSupport.release(sink);
+        }
+    }
+
+    private static WebSocketMessage frame(String json) {
+        WebSocketMessage m = mock(WebSocketMessage.class);
+        when(m.getPayloadAsText()).thenReturn(json);
+        return m;
     }
 }
