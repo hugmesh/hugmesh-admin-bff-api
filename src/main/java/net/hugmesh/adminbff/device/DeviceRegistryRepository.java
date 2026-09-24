@@ -46,7 +46,11 @@ public class DeviceRegistryRepository {
         return repo.findById(id).map(DeviceRow::toDomain);
     }
 
-    /** ALL devices (every brand). UNSCOPED — used by the signed export only. */
+    /**
+     * ALL devices (every brand). UNSCOPED — used by the signed export, and by the Tor operator
+     * view ({@code TorNodeService.list}), which is ADMIN-reachable but passes every row through
+     * {@code TorNodeService.redactFor} before a non-SUPERADMIN sees it.
+     */
     public Flux<Device> listAll() {
         return repo.findAllByOrderByDomainAscHostnameAsc().map(DeviceRow::toDomain);
     }
