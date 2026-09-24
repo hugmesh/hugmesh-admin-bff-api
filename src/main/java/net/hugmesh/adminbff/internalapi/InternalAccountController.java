@@ -873,8 +873,9 @@ public class InternalAccountController {
      *
      * <p><b>Responses.</b> {@code 204 No Content} on every WELL-FORMED call (the caller has
      * nothing useful to read back). {@code 400} with the shared {@code {"error":"validation
-     * failed","fields":{...}}} body when {@code handle} or {@code action} is missing or blank
-     * (the body is {@code @Valid}, see {@link RecordUsageRequest}); {@code 400}/{@code 415}
+     * failed","fields":{...}}} body when {@code handle} or {@code action} is missing or blank,
+     * or longer than its cap ({@code handle} 400, {@code action} 128 characters, decision 105;
+     * the body is {@code @Valid}, see {@link RecordUsageRequest}); {@code 400}/{@code 415}
      * for an unparseable body or a non-JSON content type, as on every other endpoint here.
      * Unlike {@code AuthController}'s {@code .subscribe()} idiom this method RETURNS the
      * {@link UsageService#record} Mono, so the 204 is sent only after the usage write has

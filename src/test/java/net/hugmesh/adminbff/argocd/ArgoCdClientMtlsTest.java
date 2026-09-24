@@ -103,6 +103,37 @@ class ArgoCdClientMtlsTest {
         }
     }
 
+    /**
+     * The one misconfiguration where "only the cluster CA" does not hold (skeptic finding on
+     * PR #78): gate ON, key-store present, trust-store file ABSENT. {@link
+     * net.hugmesh.adminbff.config.OutboundMtlsClient} then falls back to the JVM default anchors
+     * (the mod-bff behaviour). Pin that the fallback is JDK trust and NOT trust-all: the JDK
+     * anchors do not know the cluster CA, so even a cluster-CA-issued leaf is refused, and a
+     * self-signed leaf is refused too. A trust-all fallback would pass both handshakes.
+     */
+    @Test
+    void enabledButTrustStoreAbsent_fallsBackToJvmTrust_notTrustAll() throws Exception {
+        String absent = dir.resolve("no-such-truststore-" + System.nanoTime() + ".p12").toString();
+        TestPki.Issued caLeaf = TestPki.serverLeaf(clusterCa, "argocd-server");
+        TestPki.Issued selfSigned = TestPki.selfSignedServer("O=Argo CD");
+        for (TestPki.Issued leaf : new TestPki.Issued[] {caLeaf, selfSigned}) {
+            java.security.cert.X509Certificate[] chain = leaf == caLeaf
+                    ? new java.security.cert.X509Certificate[] {clusterCa.cert()}
+                    : new java.security.cert.X509Certificate[0];
+            try (TlsTestServer server = TlsTestServer.start(leaf, chain, ClientAuth.NONE, null)) {
+                runner(server.baseUrl(), true)
+                        .withPropertyValues("hugmesh.mtls.client.trust-store=" + absent)
+                        .run(ctx -> {
+                            assertThat(ctx).hasNotFailed();
+                            ArgoCdClient client = ctx.getBean(ArgoCdClient.class);
+                            assertThatThrownBy(() -> client.createApplication("svc-a", "https://git/x.git",
+                                    "deploy", "main", "ns-a").block(WAIT)).hasStackTraceContaining("SSL");
+                        });
+                assertThat(server.seen()).as("no request may reach HTTP over a JDK-trust handshake").isEmpty();
+            }
+        }
+    }
+
     /** The pre-fix behaviour (JDK trust): even a cluster-CA-issued ArgoCD cert is refused. */
     @Test
     void mtlsDisabled_jdkTrust_refusesEvenAClusterCaIssuedCertificate() throws Exception {

@@ -42,6 +42,13 @@ import java.security.KeyStore;
  * certificate). Enabled but with no key-store file present, it logs a warning and also
  * keeps the default connector (the mod-bff behaviour): the https call then fails its
  * handshake loudly rather than the pod crash-looping at boot.
+ *
+ * <p>ONE MISCONFIGURATION WHERE "ONLY THE CLUSTER CA" DOES NOT HOLD: enabled, key-store
+ * present, but no trust-store file. Then (again the mod-bff behaviour) it logs a warning and
+ * trusts the JVM DEFAULT anchors instead — never trust-all. The JDK anchors do not include the
+ * cluster CA, so every in-cluster callee's handshake is refused in that state, and
+ * {@code ArgoCdClientMtlsTest#enabledButTrustStoreAbsent_fallsBackToJvmTrust_notTrustAll} pins
+ * that. In-cluster the build-keystore init container always writes both stores.
  */
 @ConfigurationProperties(prefix = "hugmesh.mtls.client")
 public class OutboundMtlsClient {
