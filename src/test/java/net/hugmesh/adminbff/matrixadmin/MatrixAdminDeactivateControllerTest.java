@@ -134,7 +134,32 @@ class MatrixAdminDeactivateControllerTest {
                         MatrixAdminOutcome.degraded("no-admin-token"))));
 
         confirm(as("admin-sub", "ADMIN"), "tok").expectStatus().isEqualTo(502)
-                .expectBody().jsonPath("$.outcome").isEqualTo("degraded:no-admin-token");
+                .expectBody().jsonPath("$.outcome").isEqualTo("degraded:no-admin-token")
+                .jsonPath("$.note").value(n -> org.assertj.core.api.Assertions.assertThat((String) n)
+                        .startsWith("The deactivate was NOT posted"));
+    }
+
+    /**
+     * A degrade that can follow tuwunel ACCEPTING the PUT must never be reported as "not posted":
+     * an ADMIN who believed that would re-propose a one-way verb without checking.
+     */
+    @Test
+    void confirm_degradedAfterAPossibleSend_saysItMayHaveBeenPosted() {
+        for (String reason : new String[] {"timeout", "transport-IOException", "http-500", "no-event-id"}) {
+            when(service.confirm(eq("admin-sub"), anyString(), any())).thenReturn(Mono.just(
+                    new MatrixDeactivateService.Confirmation("p-1", "@victim:hugmesh.net",
+                            MatrixAdminOutcome.degraded(reason))));
+
+            confirm(as("admin-sub", "ADMIN"), "tok").expectStatus().isEqualTo(502)
+                    .expectBody().jsonPath("$.outcome").isEqualTo("degraded:" + reason)
+                    .jsonPath("$.note").value(n -> org.assertj.core.api.Assertions.assertThat((String) n)
+                            .as(reason).startsWith("The deactivate MAY have been posted")
+                            .doesNotContain("NOT posted"));
+        }
+        for (String reason : new String[] {"no-admin-token", "bad-target", "no-admin-room"}) {
+            org.assertj.core.api.Assertions.assertThat(MatrixAdminDeactivateController.degradedNote(
+                    MatrixAdminOutcome.degraded(reason))).as(reason).startsWith("The deactivate was NOT posted");
+        }
     }
 
     @Test

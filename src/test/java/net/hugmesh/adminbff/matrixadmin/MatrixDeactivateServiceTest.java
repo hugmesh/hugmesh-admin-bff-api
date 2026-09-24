@@ -84,7 +84,9 @@ class MatrixDeactivateServiceTest extends AdminBffPostgresTestSupport {
 
     @BeforeEach
     void setUp() {
-        clock = new MutableClock(Instant.now());
+        // Seeded at the SAME precision propose stores (micros), so advance(TTL) lands EXACTLY on
+        // expires_at and refused_expiredToken really tests the boundary it claims.
+        clock = new MutableClock(Instant.now().truncatedTo(java.time.temporal.ChronoUnit.MICROS));
         tuwunel = new TuwunelStub();
         repo = R2dbcRepos.of(db, MatrixDeactivateProposalRepository.class);
         // One database per test CLASS: start every method from an empty table.
@@ -178,6 +180,32 @@ class MatrixDeactivateServiceTest extends AdminBffPostgresTestSupport {
         assertThat(refusalOf(svc.confirm(ALICE_ADMIN, "victim", p.token()))).isEqualTo(Refusal.EXPIRED);
         assertThat(tuwunel.seen).isEmpty();
         assertThat(repo.findById(p.proposalId()).block().state()).isEqualTo("proposed");
+    }
+
+    /**
+     * The consume CAS on its OWN, bypassing the service pre-checks that otherwise mask it: each
+     * binding it re-asserts (expiry, minting admin, account, state) must refuse by itself, since
+     * it is the only guard in the window between the read and the write.
+     */
+    @Test
+    void theConsumeCas_reassertsEveryBinding_withoutThePreChecks() {
+        MatrixDeactivateService svc = service(true);
+        MatrixDeactivateService.Proposal p = svc.propose(ALICE_ADMIN, "victim").block();
+        Instant inWindow = clock.instant();
+
+        assertThat(repo.consume(p.proposalId(), ALICE_ADMIN, p.mxid(), p.expiresAt()).block())
+                .as("exactly at expiry").isZero();
+        assertThat(repo.consume(p.proposalId(), BOB_ADMIN, p.mxid(), inWindow).block())
+                .as("another admin").isZero();
+        assertThat(repo.consume(p.proposalId(), ALICE_ADMIN, "@someone-else:hugmesh.net", inWindow).block())
+                .as("another account").isZero();
+        assertThat(repo.findById(p.proposalId()).block().state()).isEqualTo("proposed");
+
+        assertThat(repo.consume(p.proposalId(), ALICE_ADMIN, p.mxid(), inWindow).block())
+                .as("the one legitimate consume").isEqualTo(1L);
+        assertThat(repo.consume(p.proposalId(), ALICE_ADMIN, p.mxid(), inWindow).block())
+                .as("already spent").isZero();
+        assertThat(tuwunel.seen).isEmpty();
     }
 
     @Test

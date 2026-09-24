@@ -27,7 +27,7 @@ import reactor.core.publisher.Mono;
  * {@code POST /bff/mod/ban} writes that same suspension) — and expects every one of them to
  * be undone later by {@code activateMatrix}. tuwunel has no {@code activate} verb, so wiring
  * this class into that seam would make EVERY Matrix suspension permanent. The separation is
- * load-bearing and pinned by {@code MatrixDeactivateReachabilityTest}: nothing outside this
+ * load-bearing and pinned by {@code MatrixSuspensionNeverDeactivatesTest}: nothing outside this
  * package may reference it.
  *
  * <h3>Transport (ported from hugmesh-mod-bff-api {@code MatrixAdminClient})</h3>

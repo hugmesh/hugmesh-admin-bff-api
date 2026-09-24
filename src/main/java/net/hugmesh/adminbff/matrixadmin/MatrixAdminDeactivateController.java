@@ -4,6 +4,7 @@ import io.swagger.v3.oas.annotations.Operation;
 import jakarta.validation.Valid;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Set;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -46,6 +47,15 @@ import net.hugmesh.commons.web.ApiException;
 @RequestMapping("/bff/admin/matrix/deactivations")
 @Validated
 public class MatrixAdminDeactivateController {
+
+    /**
+     * Degrades that fail BEFORE any PUT to the admin room: the command certainly never reached
+     * tuwunel. Every other degrade (a timeout, a transport error, a non-2xx reply, a 2xx without
+     * an event id) can follow tuwunel having ACCEPTED the command, so its copy must not claim
+     * "not posted" — an ADMIN who believed that would re-propose a one-way verb blind.
+     */
+    static final Set<String> NEVER_SENT = Set.of(
+            "degraded:no-admin-token", "degraded:bad-target", "degraded:no-admin-room");
 
     private final MatrixDeactivateService service;
 
@@ -103,7 +113,7 @@ public class MatrixAdminDeactivateController {
         return ResponseEntity.status(HttpStatus.CREATED).body(out);
     }
 
-    /** 202 when the command reached the admin room; 502 when it did not (the token is spent). */
+    /** 202 when the command reached the admin room; 502 on any degrade (the token is spent). */
     private static ResponseEntity<Map<String, Object>> confirmed(MatrixDeactivateService.Confirmation c) {
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("proposalId", c.proposalId());
@@ -114,9 +124,18 @@ public class MatrixAdminDeactivateController {
                     + "asynchronously and its reply is not read back yet.");
             return ResponseEntity.status(HttpStatus.ACCEPTED).body(out);
         }
-        out.put("note", "The deactivate was NOT posted. The token is spent; propose again "
-                + "once the cause is fixed.");
+        out.put("note", degradedNote(c.outcome()));
         return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(out);
+    }
+
+    static String degradedNote(MatrixAdminOutcome outcome) {
+        if (NEVER_SENT.contains(outcome.result())) {
+            return "The deactivate was NOT posted: it failed before anything was sent to tuwunel. "
+                    + "The token is spent; propose again once the cause is fixed.";
+        }
+        return "The deactivate MAY have been posted: this failure can follow tuwunel accepting the "
+                + "command. Check the tuwunel admin room and whether the account can still sign in "
+                + "BEFORE proposing again. The token is spent.";
     }
 
     private static Mono<ResponseEntity<Map<String, Object>>> mapError(Throwable e) {
