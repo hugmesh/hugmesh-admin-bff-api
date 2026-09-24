@@ -10741,11 +10741,6 @@
             "minLength" : 0,
             "type" : "string"
           },
-          "k8sSecretName" : {
-            "maxLength" : 253,
-            "minLength" : 0,
-            "type" : "string"
-          },
           "message" : {
             "maxLength" : 1024,
             "minLength" : 0,

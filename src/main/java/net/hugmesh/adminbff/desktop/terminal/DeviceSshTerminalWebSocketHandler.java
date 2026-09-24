@@ -24,9 +24,11 @@ import net.hugmesh.adminbff.device.Device;
 import net.hugmesh.adminbff.device.DeviceRegistryRepository;
 import net.hugmesh.commons.security.DomainRegistry;
 import net.hugmesh.commons.security.PrincipalDomain;
+import net.hugmesh.adminbff.workload.WorkloadExecService;
 import net.hugmesh.adminbff.workload.WorkloadStepUpService;
 
 import java.nio.charset.StandardCharsets;
+import java.util.UUID;
 
 /**
  * The LIVE in-UI SSH-TERMINAL transport WebSocket handler (the missing piece the
@@ -63,6 +65,19 @@ import java.nio.charset.StandardCharsets;
  * <h3>Protocol (xterm.js attach addon style — identical to workload-exec)</h3>
  * Inbound text frames are JSON {@code {"type":"stdin","data":"..."}} /
  * {@code {"type":"resize","cols":N,"rows":N}}; outbound frames carry the shell's stdout/stderr.
+ *
+ * <h3>Session record — the workload console's signed hash chain (decision 104 = B)</h3>
+ * Operator answer of 2026-09-23 to D1 on hugmesh-admin-bff-api#11. EVERY stdin chunk (before it is
+ * written to the device) and EVERY output chunk (before it is sent to the browser) is appended to a
+ * {@link WorkloadExecService.Transcript} — the SAME signed, hash-chained, append-only log the
+ * workload console's TTY writes ({@code WorkloadExecWebSocketHandler}), in the SAME v1 format:
+ * sequence, session, actor, time, direction, the previous entry's hash and a hash of the chunk.
+ * The chunk BYTES are never recorded — only their hash — so the record proves a session's shape
+ * (when, how much, in which direction, in which order, by whom) and can verify a copy of the
+ * transcript kept elsewhere, but cannot show what was typed or shown. Resize frames carry no
+ * content and are not recorded, exactly as on the workload console. The session id is
+ * {@code device-terminal/<deviceId>/<uuid>} so the chain names the device without changing the
+ * canonical entry format.
  */
 public class DeviceSshTerminalWebSocketHandler implements WebSocketHandler {
 
@@ -128,6 +143,7 @@ public class DeviceSshTerminalWebSocketHandler implements WebSocketHandler {
     private final DeviceSshTransport transport;
     private final DeviceTerminalProperties props;
     private final ObjectMapper mapper;
+    private final WorkloadExecService transcripts;
 
     public DeviceSshTerminalWebSocketHandler(DesktopRemoteInstallService authz,
                                              DeviceRegistryRepository devices,
@@ -137,7 +153,8 @@ public class DeviceSshTerminalWebSocketHandler implements WebSocketHandler {
                                              MfaStepUpService mfaStepUp,
                                              DeviceSshTransport transport,
                                              DeviceTerminalProperties props,
-                                             ObjectMapper mapper) {
+                                             ObjectMapper mapper,
+                                             WorkloadExecService transcripts) {
         this.authz = authz;
         this.devices = devices;
         this.domainRegistry = domainRegistry;
@@ -147,6 +164,7 @@ public class DeviceSshTerminalWebSocketHandler implements WebSocketHandler {
         this.transport = transport;
         this.props = props;
         this.mapper = mapper;
+        this.transcripts = transcripts;
     }
 
     /** Advertise ONLY the generic selector so the server echoes it and the browser handshake
@@ -268,28 +286,38 @@ public class DeviceSshTerminalWebSocketHandler implements WebSocketHandler {
         if (mfaFresh) {
             mfaStepUp.consume(sessionToken).subscribe();
         }
-        log.info("[device-terminal] AUTHORIZED + transport opening device={} operator={} real={}",
-                device.id(), operator, transport.isReal());
+        String transcriptSession = "device-terminal/" + device.id() + "/" + UUID.randomUUID();
+        log.info("[device-terminal] AUTHORIZED + transport opening device={} operator={} real={}"
+                + " transcript={}", device.id(), operator, transport.isReal(), transcriptSession);
         return transport.open(device.id(), device.hostname(), operator, cols, rows)
                 .flatMap(tty -> {
+                    // One chain per opened session (decision 104): created only once a transport
+                    // exists, so a refused/failed open records nothing beyond the audit lines above.
+                    WorkloadExecService.Transcript transcript =
+                            transcripts.newTranscript(transcriptSession, operator);
                     Flux<WebSocketMessage> out = tty.output()
+                            .doOnNext(bytes -> transcript.append("out", bytes))
                             .map(bytes -> session.textMessage(new String(bytes, StandardCharsets.UTF_8)));
                     Mono<Void> in = session.receive()
-                            .doOnNext(msg -> handleInbound(msg, tty))
+                            .doOnNext(msg -> handleInbound(msg, tty, transcript))
                             .doFinally(sig -> tty.close())
                             .then();
                     return Mono.zip(session.send(out), in).then();
                 });
     }
 
-    private void handleInbound(WebSocketMessage msg, DeviceSshTransport.Session tty) {
+    private void handleInbound(WebSocketMessage msg, DeviceSshTransport.Session tty,
+                               WorkloadExecService.Transcript transcript) {
         try {
             JsonNode node = mapper.readTree(msg.getPayloadAsText());
             String type = node.path("type").asText("stdin");
             if ("resize".equals(type)) {
                 tty.resize(node.path("cols").asInt(80), node.path("rows").asInt(24));
             } else {
-                tty.writeStdin(node.path("data").asText("").getBytes(StandardCharsets.UTF_8));
+                byte[] data = node.path("data").asText("").getBytes(StandardCharsets.UTF_8);
+                // Recorded BEFORE it reaches the device (hash only, never the bytes).
+                transcript.append("in", data);
+                tty.writeStdin(data);
             }
         } catch (Exception e) {
             log.debug("[device-terminal] bad inbound frame: {}", e.toString());
