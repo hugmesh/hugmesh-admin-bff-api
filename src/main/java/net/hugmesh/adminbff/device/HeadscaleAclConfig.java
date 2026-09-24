@@ -55,43 +55,58 @@ public class HeadscaleAclConfig {
         return new WebClientHeadscalePolicyClient(http, props.getApiKey(), props.getTimeoutMs(), mapper);
     }
 
+    /** The only {@code policy.mode} value under which headscale accepts {@code PUT /api/v1/policy}. */
+    static final String DATABASE_POLICY_MODE = "database";
+
     /**
      * THE SINGLE-WRITER GATE. {@code PUT /api/v1/policy} — the only write this leg has — is a
-     * DB-policy-mode call; headscale in {@code policy: mode: file} rejects it with 4xx. This
-     * fleet ships file mode (hugmesh-generator {@code specs/etc/headscale/config.yaml}) with the
-     * node-side {@code gen-headscale-policy.sh} as the writer of {@code policy.hujson}.
+     * DATABASE-policy-mode call: headscale v0.23.0 refuses {@code SetPolicy} unless its
+     * {@code policy.mode} is {@code database}. Decision 101 = B (2026-09-23) made this BFF the
+     * ONLY writer of the tailnet policy, so the declared mode must be headscale's own spelling,
+     * {@code database}; anything else — the retired {@code file} mode whose writer was the
+     * node-side {@code gen-headscale-policy.sh}, or this BFF's old spelling {@code db}, which
+     * headscale itself rejects with a fatal "Unknown ACL policy mode" — is a mismatch.
      *
-     * <p>Without this gate, flipping {@code enabled=true} on the fleet as shipped produces a
-     * PERMANENT SILENT NO-OP: every 60 s tick compiles, PUTs, gets a 4xx, logs one WARN line
+     * <p>Without this gate, flipping {@code enabled=true} against a file-mode headscale produces
+     * a PERMANENT SILENT NO-OP: every 60 s tick compiles, PUTs, gets a 4xx, logs one WARN line
      * ("degraded — keeping last-good"), and retries forever. Nothing is applied, nothing is
      * obviously broken, and the operator believes Layer-A push is live. So the mismatch is made
      * IMPOSSIBLE TO MISS: the bean refuses to be created and the context fails to start, naming
-     * both sides of the mismatch and the decision that has to be made first.
+     * both sides of the mismatch.
      *
      * <p>Only reached on the enabled path — with the push off (the default) this method never
-     * runs and boot is unchanged.
+     * runs and boot is unchanged. The declaration is trimmed and compared case-insensitively;
+     * headscale's own comparison is exact, so write {@code database} in its config.
      *
-     * @throws IllegalStateException when the declared policy mode is anything but {@code db}
+     * @throws IllegalStateException when the declared policy mode is anything but {@code database}
      */
     static void requireDbPolicyMode(HeadscaleAclProperties props) {
         String declared = props.getPolicyMode() == null ? "" : props.getPolicyMode().trim();
-        if ("db".equalsIgnoreCase(declared)) {
+        if (DATABASE_POLICY_MODE.equalsIgnoreCase(declared)) {
             return;
         }
+        String hint = "db".equalsIgnoreCase(declared)
+                ? "'db' was this BFF's old spelling and is NOT a headscale value: headscale accepts "
+                        + "only 'file' or 'database' and log.Fatal's on anything else "
+                        + "(\"Unknown ACL policy mode\"), so a control node configured with 'db' "
+                        + "never starts. Declare 'database'. "
+                : "";
         throw new IllegalStateException(
                 "[headscale-acl] POLICY-MODE MISMATCH — refusing to wire the Layer-A push client. "
                         + "app.registry.headscale-acl.enabled=true but "
-                        + "app.registry.headscale-acl.policy-mode='" + declared + "' (expected 'db'). "
-                        + "PUT /api/v1/policy is a DB-POLICY-MODE-ONLY call; headscale in file mode "
-                        + "rejects it with 4xx, so an enabled push would be a permanent silent no-op. "
-                        + "This fleet ships file mode: hugmesh-generator specs/etc/headscale/config.yaml "
-                        + "sets policy.mode=file and specs/usr/sbin/gen-headscale-policy.sh is the single "
-                        + "writer of /etc/headscale/policy.hujson (headscale policy set -f). "
-                        + "DECIDE THE SINGLE WRITER FIRST: either keep file mode and leave this leg "
-                        + "disabled (app.registry.headscale-acl.enabled=false), or move headscale to "
-                        + "policy.mode=db AND stop the node-side hugmesh-policy-sync writer, then set "
-                        + "app.registry.headscale-acl.policy-mode=db. Two writers against one policy "
-                        + "will flap the mesh.");
+                        + "app.registry.headscale-acl.policy-mode='" + declared + "' (expected '"
+                        + DATABASE_POLICY_MODE + "'). " + hint
+                        + "PUT /api/v1/policy is a DATABASE-POLICY-MODE-ONLY call; headscale in "
+                        + "file mode rejects it with 4xx, so an enabled push would be a permanent "
+                        + "silent no-op. Decision 101 = B made this BFF the ONLY writer of the "
+                        + "tailnet policy: the control node's headscale must run policy.mode=database "
+                        + "(hugmesh-generator specs/etc/headscale/config.yaml) and the retired "
+                        + "node-side writer (specs/usr/sbin/gen-headscale-policy.sh, run by the "
+                        + "hugmesh-policy-sync cron) must be gone. Move headscale to "
+                        + "policy.mode=database and set app.registry.headscale-acl.policy-mode="
+                        + DATABASE_POLICY_MODE + ", or leave this leg disabled "
+                        + "(app.registry.headscale-acl.enabled=false). Two writers against one "
+                        + "policy will flap the mesh.");
     }
 
     @Bean
