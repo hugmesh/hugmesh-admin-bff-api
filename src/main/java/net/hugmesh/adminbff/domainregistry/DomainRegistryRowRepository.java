@@ -31,13 +31,22 @@ public interface DomainRegistryRowRepository extends ReactiveCrudRepository<Doma
      * false/false/0 (exactly the fresh-domain shape the effector later flips). The supplied
      * columns match the {@link DomainRegistryRow} column order (id + the three
      * provisioning-status columns excluded).
+     *
+     * <p>DECISION 29 (2026-09-17): {@code idp} and the MCS pair {@code selinux_level} /
+     * {@code selinux_level_pg} are supplied EXPLICITLY by this INSERT — the pair is what
+     * {@link McsCategoryAllocator} allocated for this row. That is deliberate: the allocation
+     * has to be part of the insert statement so the
+     * {@code uq_domain_registry_selinux_level}/{@code _pg} constraints arbitrate a concurrent
+     * allocation. {@code idp} would otherwise take its {@code superdomain} column default; it
+     * is passed explicitly so the request's value reaches the row.
      */
     String INSERT_RETURNING_ID = """
             INSERT INTO domain_registry \
             (cluster_domain, brand, org, ca_ref, ns_prefix, casdoor_org, mesh_tag, enabled, \
-             created_at, created_by_subject, updated_at) \
+             created_at, created_by_subject, updated_at, idp, selinux_level, selinux_level_pg) \
             VALUES (:cluster_domain, :brand, :org, :ca_ref, :ns_prefix, :casdoor_org, \
-             :mesh_tag, :enabled, :created_at, :created_by_subject, :updated_at) \
+             :mesh_tag, :enabled, :created_at, :created_by_subject, :updated_at, \
+             :idp, :selinux_level, :selinux_level_pg) \
             RETURNING id""";
 
     @Query(INSERT_RETURNING_ID)
@@ -51,11 +60,21 @@ public interface DomainRegistryRowRepository extends ReactiveCrudRepository<Doma
                                    @Param("enabled") boolean enabled,
                                    @Param("created_at") Instant createdAt,
                                    @Param("created_by_subject") String createdBySubject,
-                                   @Param("updated_at") Instant updatedAt);
+                                   @Param("updated_at") Instant updatedAt,
+                                   @Param("idp") String idp,
+                                   @Param("selinux_level") String selinuxLevel,
+                                   @Param("selinux_level_pg") String selinuxLevelPg);
 
     /** Every registered domain, natural-key ordered ({@code ORDER BY cluster_domain}). */
     Flux<DomainRegistryRow> findAllByOrderByClusterDomain();
 
     /** The domain with this {@code cluster_domain}, if any (the UNIQUE natural-key lookup). */
     Mono<DomainRegistryRow> findByClusterDomain(String clusterDomain);
+
+    /**
+     * The domain holding this SLUG, if any (decision 29a: {@code ns_prefix} IS the slug, and it
+     * is UNIQUE — {@code uq_domain_registry_ns_prefix}). The find-before-insert check behind the
+     * service's clean 409; the constraint remains the race backstop.
+     */
+    Mono<DomainRegistryRow> findByNsPrefix(String nsPrefix);
 }

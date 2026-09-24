@@ -44,6 +44,12 @@ public record CreateDomainRequest(
         @Nullable
         String caRef,
 
+        /** The domain's SLUG (decision 29a): REQUIRED, DNS-1123 label, cluster-UNIQUE. It
+         *  names the tenant namespace {@code <nsPrefix>-pki}, the ArgoCD Application and the
+         *  Vault path {@code secret/<nsPrefix>/casdoor}, so it is validated in
+         *  {@link net.hugmesh.adminbff.domainregistry.DomainSlug} (a 400) rather than merely
+         *  length-checked. Kept {@code @Nullable} here so the refusal carries that full reason
+         *  instead of a bare "must not be blank". */
         @Size(max = 64, message = "nsPrefix is too long")
         @Nullable
         String nsPrefix,
@@ -59,5 +65,13 @@ public record CreateDomainRequest(
         /** Desired-state on/off. {@code null} (omitted) is treated as {@code true} by the
          *  service so a create defaults to an enabled domain. */
         @Nullable
-        Boolean enabled) {
+        Boolean enabled,
+
+        /** Which Casdoor serves this domain's sign-in (decision 29b):
+         *  {@code superdomain} (the default when omitted &mdash; ride the mesh's central
+         *  Casdoor, provisioning nothing per-domain) or {@code own} (the domain runs its own
+         *  per-domain Casdoor). Anything else is a 400. */
+        @Size(max = 16, message = "idp is too long")
+        @Nullable
+        String idp) {
 }
