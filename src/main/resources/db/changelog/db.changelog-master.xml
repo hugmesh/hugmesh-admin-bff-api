@@ -704,4 +704,11 @@
       backing_service_mode (310) exists by here.
     -->
     <include file="db/changelog/350-backing-service-id-velero-objectstore.xml"/>
+    <!--
+      360 — the node Tor contract's admin-bff half (hugmesh-admin-bff-api#108):
+      tor_node_report (node-reported onion hostnames over /bff/internal/**, telemetry only)
+      and tor_node_config (the SUPERADMIN's per-node upstream carried by the signed
+      GET /bff/admin/tor/export?node=). Two net-new tables; appended LAST.
+    -->
+    <include file="db/changelog/360-tor-node.xml"/>
 </databaseChangeLog>
