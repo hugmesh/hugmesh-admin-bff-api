@@ -38,6 +38,8 @@ class TorOnionRulesTest {
         assertThat(TorOnionRules.isSlug("-brand")).isFalse();
         assertThat(TorOnionRules.isSlug("brand.b")).isFalse();
         assertThat(TorOnionRules.isSlug("my domain")).isFalse();
+        // matches(), not find(): Java's $ also matches before a final line terminator.
+        assertThat(TorOnionRules.isSlug("brandb\n")).isFalse();
         assertThat(TorOnionRules.isSlug("BrandB")).isFalse();
         assertThat(TorOnionRules.isSlug(" global")).isFalse();                    // the capability sentinel
         assertThat(TorOnionRules.isSlug("")).isFalse();
@@ -59,6 +61,7 @@ class TorOnionRulesTest {
         assertThat(TorOnionRules.upstreamRefusal("10.0.0.7 :443")).isPresent();   // inner whitespace
         assertThat(TorOnionRules.upstreamRefusal(" 10.0.0.7:443")).isPresent();   // outer whitespace
         assertThat(TorOnionRules.upstreamRefusal("10.0.0.7")).isPresent();        // no port
+        assertThat(TorOnionRules.upstreamRefusal("10.0.0.7:443\n")).isPresent(); // trailing newline
         assertThat(TorOnionRules.upstreamRefusal("fd00::1:443")).isPresent();     // unbracketed v6
         assertThat(TorOnionRules.upstreamRefusal("10.0.0.7:443\nHiddenServicePort 80 x:1")).isPresent();
         assertThat(TorOnionRules.upstreamRefusal("10.0.0.7:123456")).isPresent(); // 6 digits
