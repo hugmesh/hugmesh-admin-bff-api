@@ -164,6 +164,30 @@ class MatrixAdminDeactivateControllerTest {
         verify(service, never()).propose(anyString(), anyString());
     }
 
+    /**
+     * The per-method gate is the decision's own wording (hasRole('ADMIN')). MOD is ALSO kept out
+     * by the /bff/admin/** path matcher, so the HTTP tests above cannot tell whether the method
+     * gate exists; this pins it directly, so moving the controller off /bff/admin/** (or widening
+     * the path table) cannot silently open the one-way door to another role.
+     */
+    @Test
+    void everyMappingMethod_isGatedHasRoleAdmin() {
+        int mapped = 0;
+        for (java.lang.reflect.Method m : MatrixAdminDeactivateController.class.getDeclaredMethods()) {
+            if (m.isAnnotationPresent(org.springframework.web.bind.annotation.PostMapping.class)
+                    || m.isAnnotationPresent(org.springframework.web.bind.annotation.GetMapping.class)
+                    || m.isAnnotationPresent(org.springframework.web.bind.annotation.RequestMapping.class)) {
+                mapped++;
+                org.springframework.security.access.prepost.PreAuthorize pa =
+                        m.getAnnotation(org.springframework.security.access.prepost.PreAuthorize.class);
+                org.assertj.core.api.Assertions.assertThat(pa).as(m.getName()).isNotNull();
+                org.assertj.core.api.Assertions.assertThat(pa.value()).as(m.getName())
+                        .isEqualTo("hasRole('ADMIN')");
+            }
+        }
+        org.assertj.core.api.Assertions.assertThat(mapped).isEqualTo(2);
+    }
+
     private static MatrixDeactivateService.RefusedException refused(MatrixDeactivateService.Refusal r) {
         return new MatrixDeactivateService.RefusedException(r);
     }
