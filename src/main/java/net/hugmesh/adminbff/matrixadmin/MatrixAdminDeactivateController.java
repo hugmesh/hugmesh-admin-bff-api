@@ -71,18 +71,7 @@ public class MatrixAdminDeactivateController {
             return Mono.error(ApiException.unauthorized("no subject on token"));
         }
         return service.propose(actor, body.mxid())
-                .map(p -> {
-                    Map<String, Object> out = new LinkedHashMap<>();
-                    out.put("proposalId", p.proposalId());
-                    out.put("mxid", p.mxid());
-                    out.put("token", p.token());
-                    out.put("expiresAt", p.expiresAt().toString());
-                    out.put("ttlSeconds", p.ttlSeconds());
-                    out.put("oneWay", true);
-                    out.put("note", "Deactivating a Matrix account cannot be undone: tuwunel has no "
-                            + "re-activate. Confirm with this token before it expires.");
-                    return ResponseEntity.status(HttpStatus.CREATED).body(out);
-                })
+                .map(MatrixAdminDeactivateController::proposed)
                 .onErrorResume(e -> mapError(e));
     }
 
@@ -97,21 +86,37 @@ public class MatrixAdminDeactivateController {
             return Mono.error(ApiException.unauthorized("no subject on token"));
         }
         return service.confirm(actor, body.mxid(), body.token())
-                .map(c -> {
-                    Map<String, Object> out = new LinkedHashMap<>();
-                    out.put("proposalId", c.proposalId());
-                    out.put("mxid", c.mxid());
-                    out.put("outcome", c.outcome().result());
-                    if (c.outcome().isPosted()) {
-                        out.put("note", "Command posted to the tuwunel admin room; tuwunel applies it "
-                                + "asynchronously and its reply is not read back yet.");
-                        return ResponseEntity.status(HttpStatus.ACCEPTED).body(out);
-                    }
-                    out.put("note", "The deactivate was NOT posted. The token is spent; propose again "
-                            + "once the cause is fixed.");
-                    return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(out);
-                })
+                .map(MatrixAdminDeactivateController::confirmed)
                 .onErrorResume(e -> mapError(e));
+    }
+
+    private static ResponseEntity<Map<String, Object>> proposed(MatrixDeactivateService.Proposal p) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("proposalId", p.proposalId());
+        out.put("mxid", p.mxid());
+        out.put("token", p.token());
+        out.put("expiresAt", p.expiresAt().toString());
+        out.put("ttlSeconds", p.ttlSeconds());
+        out.put("oneWay", true);
+        out.put("note", "Deactivating a Matrix account cannot be undone: tuwunel has no "
+                + "re-activate. Confirm with this token before it expires.");
+        return ResponseEntity.status(HttpStatus.CREATED).body(out);
+    }
+
+    /** 202 when the command reached the admin room; 502 when it did not (the token is spent). */
+    private static ResponseEntity<Map<String, Object>> confirmed(MatrixDeactivateService.Confirmation c) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("proposalId", c.proposalId());
+        out.put("mxid", c.mxid());
+        out.put("outcome", c.outcome().result());
+        if (c.outcome().isPosted()) {
+            out.put("note", "Command posted to the tuwunel admin room; tuwunel applies it "
+                    + "asynchronously and its reply is not read back yet.");
+            return ResponseEntity.status(HttpStatus.ACCEPTED).body(out);
+        }
+        out.put("note", "The deactivate was NOT posted. The token is spent; propose again "
+                + "once the cause is fixed.");
+        return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(out);
     }
 
     private static Mono<ResponseEntity<Map<String, Object>>> mapError(Throwable e) {

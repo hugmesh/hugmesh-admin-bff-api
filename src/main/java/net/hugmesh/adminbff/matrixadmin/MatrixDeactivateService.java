@@ -182,24 +182,32 @@ public class MatrixDeactivateService {
         if (!mxid.equals(row.mxid())) {
             return refuse(actor, mxid, row.id(), Refusal.OTHER_ACCOUNT);
         }
-        return repo.consume(row.id(), actor, mxid, now).flatMap(won -> {
-            if (won == null || won != 1L) {
-                // Lost the race to a concurrent confirm (or the row changed under us).
-                return refuse(actor, mxid, row.id(), Refusal.ALREADY_USED);
-            }
-            return client.deactivate(mxid)
-                    .flatMap(outcome -> repo.recordOutcome(row.id(), outcome.result())
-                            // The command may already be in the admin room: a failed outcome
-                            // write must not turn a sent deactivate into an error response.
-                            .onErrorResume(e -> {
-                                log.error("[matrix-admin] outcome write for proposal={} failed: {}",
-                                        row.id(), e.toString());
-                                return Mono.just(0L);
-                            })
-                            .thenReturn(new Confirmation(row.id(), mxid, outcome)))
-                    .doOnNext(c -> log.warn("[matrix-admin] AUDIT confirm deactivate actor={} mxid={} "
-                            + "proposal={} outcome={}", actor, mxid, c.proposalId(), c.outcome().result()));
-        });
+        return repo.consume(row.id(), actor, mxid, now)
+                .flatMap(won -> won != null && won == 1L
+                        ? deactivateSpent(actor, mxid, row.id())
+                        // Lost the race to a concurrent confirm (or the row changed under us).
+                        : refuse(actor, mxid, row.id(), Refusal.ALREADY_USED));
+    }
+
+    /** The token is spent: post the one-way command, then stamp its outcome on the row. */
+    private Mono<Confirmation> deactivateSpent(String actor, String mxid, String proposalId) {
+        return client.deactivate(mxid)
+                .flatMap(outcome -> recordOutcome(proposalId, outcome)
+                        .thenReturn(new Confirmation(proposalId, mxid, outcome)))
+                .doOnNext(c -> log.warn("[matrix-admin] AUDIT confirm deactivate actor={} mxid={} "
+                        + "proposal={} outcome={}", actor, mxid, c.proposalId(), c.outcome().result()));
+    }
+
+    /**
+     * The command may already be in the admin room: a failed outcome write must not turn a sent
+     * deactivate into an error response.
+     */
+    private Mono<Long> recordOutcome(String proposalId, MatrixAdminOutcome outcome) {
+        return repo.recordOutcome(proposalId, outcome.result())
+                .onErrorResume(e -> {
+                    log.error("[matrix-admin] outcome write for proposal={} failed: {}", proposalId, e.toString());
+                    return Mono.just(0L);
+                });
     }
 
     private static <T> Mono<T> refuse(String actor, String mxid, String proposalId, Refusal why) {
