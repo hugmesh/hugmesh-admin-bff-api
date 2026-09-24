@@ -167,9 +167,13 @@ public class DeviceTerminalConfig {
             net.hugmesh.authcore.casdoor.MfaStepUpService mfaStepUp,
             DeviceSshTransport transport,
             DeviceTerminalProperties props,
-            ObjectMapper mapper) {
+            ObjectMapper mapper,
+            net.hugmesh.adminbff.workload.WorkloadExecService transcripts) {
+        // transcripts: the workload console's signed hash-chained session log, reused for device
+        // terminal sessions (decision 104 = B, hugmesh-admin-bff-api#11).
         return new DeviceSshTerminalWebSocketHandler(
-                authz, devices, domainRegistry, stepUp, stepUpGate, mfaStepUp, transport, props, mapper);
+                authz, devices, domainRegistry, stepUp, stepUpGate, mfaStepUp, transport, props, mapper,
+                transcripts);
     }
 
     /**

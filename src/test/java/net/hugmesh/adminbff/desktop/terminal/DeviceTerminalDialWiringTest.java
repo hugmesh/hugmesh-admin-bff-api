@@ -43,7 +43,10 @@ class DeviceTerminalDialWiringTest {
                     () -> mock(net.hugmesh.authcore.casdoor.MfaStepUpService.class))
             // the sshj factory bean depends on the dial repo — supply a mock for the wiring slice
             .withBean(DeviceSshDialRepository.class, () -> mock(DeviceSshDialRepository.class))
-            .withBean(ObjectMapper.class, ObjectMapper::new);
+            .withBean(ObjectMapper.class, ObjectMapper::new)
+            // decision 104: the handler records sessions into the workload console's signed chain.
+            .withBean(net.hugmesh.adminbff.workload.WorkloadExecService.class,
+                    () -> mock(net.hugmesh.adminbff.workload.WorkloadExecService.class));
 
     @Test
     void dialDefaultsToUnconfigured_failsClosed_sshjBeanAbsent() {
