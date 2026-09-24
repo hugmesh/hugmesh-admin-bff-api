@@ -1,7 +1,9 @@
 package net.hugmesh.adminbff.servicecatalog.federation;
 
+import net.hugmesh.adminbff.config.OutboundMtlsClient;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -22,8 +24,14 @@ import org.springframework.context.annotation.Configuration;
  * <p>Endpoint + token come from {@code app.appstore.federation.*} (env-driven). NO secret in git —
  * the token defaults empty and is injected by the deployment (it must be a Casdoor JWT carrying
  * ROLE_SUPERADMIN, per federation-api's admin-API guard).
+ *
+ * <p>Transport: the real client is built on {@link OutboundMtlsClient#httpClient()} (the
+ * {@code hugmesh.mtls.client.*} block, decision 81a = A), so in-cluster — where the deployment
+ * sets {@code HUGMESH_MTLS_CLIENT_ENABLED=true} — it presents the pod's keystore identity and
+ * trusts only the cluster CA.
  */
 @Configuration(proxyBeanMethods = false)
+@EnableConfigurationProperties(OutboundMtlsClient.class)
 public class FederationModuleClientConfig {
 
     /** Ships-dark default — used whenever the federate leg is not enabled. */
@@ -40,7 +48,8 @@ public class FederationModuleClientConfig {
     FederationModuleClient restFederationModuleClient(
             @Value("${app.appstore.federation.base-url:http://hugmesh-federation-api.hugmesh-backend.svc.cluster.local:8080}")
                     String baseUrl,
-            @Value("${app.appstore.federation.auth-token:}") String authToken) {
-        return new RestFederationModuleClient(baseUrl, authToken);
+            @Value("${app.appstore.federation.auth-token:}") String authToken,
+            OutboundMtlsClient mtls) {
+        return new RestFederationModuleClient(baseUrl, authToken, mtls.httpClient());
     }
 }

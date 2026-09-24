@@ -2,6 +2,7 @@ package net.hugmesh.adminbff.internalapi;
 
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
 import org.jspecify.annotations.Nullable;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
@@ -300,15 +301,29 @@ public class InternalAccountController {
      * {@code UsageService.moduleOf}). Without {@code @Valid} a record's constraints are inert —
      * the class-level {@code @Validated} only covers path/query parameters.
      *
+     * <p>Both are also LENGTH-capped ({@link Size}, hugmesh-admin-bff-api#105): {@code handle}
+     * at {@value #USAGE_HANDLE_MAX} characters (the {@code account.id} column width and the
+     * {@code user} cap on AdminController's routes; real handles are {@code varchar(320)}) and
+     * {@code action} at {@value #USAGE_ACTION_MAX} (every recorded action is a short dotted
+     * token such as {@code admin.forum.moderation.approve}). An over-long value is the same
+     * {@code 400 validation failed}, so a 200 KB handle is refused rather than stored in
+     * {@code UsageService}'s in-memory log.
+     *
      * <p>Role dialect: {@code roles} are the LOWERCASE {@code Account.roles} tokens
      * ({@code "user"}, {@code "admin"} — {@code RoleName.*.value()}), exactly what {@code
      * AuthController} forwards from the account object. {@link UsageService#record} tags an
      * event {@code admin} only when the list contains {@code "admin"}; a caller sending the
      * Spring authority spelling ({@code "ROLE_ADMIN"}) gets every event tagged {@code user}.
      */
-    public record RecordUsageRequest(@NotBlank String handle, @Nullable List<String> roles,
-                                     @NotBlank String action) {
+    public record RecordUsageRequest(@NotBlank @Size(max = USAGE_HANDLE_MAX) String handle,
+                                     @Nullable List<String> roles,
+                                     @NotBlank @Size(max = USAGE_ACTION_MAX) String action) {
     }
+
+    /** {@code @Size} cap on {@link RecordUsageRequest#handle()} (hugmesh-admin-bff-api#105). */
+    static final int USAGE_HANDLE_MAX = 400;
+    /** {@code @Size} cap on {@link RecordUsageRequest#action()} (hugmesh-admin-bff-api#105). */
+    static final int USAGE_ACTION_MAX = 128;
 
     /**
      * Get-or-create the durable account for a provider handle.
@@ -858,8 +873,9 @@ public class InternalAccountController {
      *
      * <p><b>Responses.</b> {@code 204 No Content} on every WELL-FORMED call (the caller has
      * nothing useful to read back). {@code 400} with the shared {@code {"error":"validation
-     * failed","fields":{...}}} body when {@code handle} or {@code action} is missing or blank
-     * (the body is {@code @Valid}, see {@link RecordUsageRequest}); {@code 400}/{@code 415}
+     * failed","fields":{...}}} body when {@code handle} or {@code action} is missing or blank,
+     * or longer than its cap ({@code handle} 400, {@code action} 128 characters, decision 105;
+     * the body is {@code @Valid}, see {@link RecordUsageRequest}); {@code 400}/{@code 415}
      * for an unparseable body or a non-JSON content type, as on every other endpoint here.
      * Unlike {@code AuthController}'s {@code .subscribe()} idiom this method RETURNS the
      * {@link UsageService#record} Mono, so the 204 is sent only after the usage write has

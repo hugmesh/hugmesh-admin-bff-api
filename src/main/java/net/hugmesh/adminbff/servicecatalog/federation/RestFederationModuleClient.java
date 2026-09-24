@@ -2,8 +2,10 @@ package net.hugmesh.adminbff.servicecatalog.federation;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
+import reactor.netty.http.client.HttpClient;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -41,8 +43,17 @@ public class RestFederationModuleClient implements FederationModuleClient {
 
     private final WebClient http;
 
-    public RestFederationModuleClient(String baseUrl, String authToken) {
+    /**
+     * Build the client on {@code httpClient} — in production the outbound client-mTLS connector
+     * from {@link net.hugmesh.adminbff.config.OutboundMtlsClient} (decision 81a = A,
+     * hugmesh-admin-bff-api#82): it presents this pod's keystore identity and trusts the cluster
+     * CA, which federation-api's {@code client-auth=need} listener requires. A bare
+     * {@code WebClient.builder()} here (JDK trust, no client certificate) dies at the TLS
+     * handshake before the Bearer token is ever sent.
+     */
+    public RestFederationModuleClient(String baseUrl, String authToken, HttpClient httpClient) {
         this(WebClient.builder()
+                .clientConnector(new ReactorClientHttpConnector(httpClient))
                 .baseUrl(baseUrl)
                 .defaultHeader("Authorization", "Bearer " + (authToken == null ? "" : authToken))
                 .build());
