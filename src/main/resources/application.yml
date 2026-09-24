@@ -556,10 +556,32 @@ app:
       # single-stick) boots clean: the loop compiles + diffs every tick through the Noop client
       # and mutates NOTHING. Flip true ONLY after (1) the canonical machine_key_fp field is
       # live-confirmed (docs/CANONICAL-FP.md — same blocker the READ side carries; the compiled
-      # policy keys nodes by that fp) and (2) an API key is provisioned.
+      # policy keys nodes by that fp), (2) an API key is provisioned, and (3) the control node
+      # runs headscale with policy.mode=database and the node-side hugmesh-policy-sync agent is
+      # removed (the generator cut-over for decision 101 = B, hugmesh-generator#634, not landed
+      # yet — see policy-mode). The startup gate only checks policy-mode below, which already
+      # declares `database`, so it CANNOT catch a flip made before that cut-over.
       enabled: "${APP_REGISTRY_HEADSCALE_ACL_ENABLED:false}"
       # The headscale control-plane gRPC-gateway REST base URL (only used when enabled).
-      base-url: "${APP_REGISTRY_HEADSCALE_ACL_BASE_URL:http://headscale.headscale.svc.cluster.local:8080}"
+      # headscale is a HOST OpenRC service on the pki node fronted by a selector-less Service
+      # `headscale` in ns `hugmesh-pki` (generator specs/cluster/manifests/headscale/service.yaml
+      # + apps/07-headscale-svc.yaml). The old default named headscale.headscale.svc, a namespace
+      # this platform does not have; it survived here after the 2026-07-30 fix reached only
+      # HeadscaleAclProperties, and this file's value is the one that wins at boot.
+      base-url: "${APP_REGISTRY_HEADSCALE_ACL_BASE_URL:http://headscale.hugmesh-pki.svc.cluster.local:8080}"
+      # The policy mode the TARGET headscale runs in — an operator DECLARATION, not a knob, spelled
+      # exactly as headscale's own policy.mode value. Decision 101 = B (2026-09-23): this BFF's
+      # PUT /api/v1/policy is the ONLY writer of the tailnet policy, so headscale keeps it in its
+      # DATABASE, which headscale v0.23.0 spells `database` (NOT `db` — headscale log.Fatal's on
+      # an unknown mode). The node-side writer (generator specs/usr/sbin/gen-headscale-policy.sh,
+      # the 60 s hugmesh-policy-sync cron, file mode) is RETIRED; its removal and the
+      # config.yaml switch to mode: database are generator work still to land. enabled=true with
+      # anything but `database` here FAILS THE CONTEXT at wiring time, naming the mismatch.
+      policy-mode: "${APP_REGISTRY_HEADSCALE_ACL_POLICY_MODE:database}"
+      # The node-local privileged unix account each compiled ssh rule opens the session AS —
+      # the node side's TS_SSH_USER (provision.sh resolve_ssh_user; its own fallback is
+      # "admin"). A value that does not match the node's resolved account yields unusable edges.
+      ssh-user: "${APP_REGISTRY_HEADSCALE_ACL_SSH_USER:admin}"
       # The headscale admin API key — Vault hugmesh/headscale-admin property `api-key`
       # via ESO, injected as APP_REGISTRY_HEADSCALE_ACL_API_KEY. PLACEHOLDER-ONLY, NEVER inline
       # a real key. Blank by default → no Authorization header (a real enabled push REQUIRES it).

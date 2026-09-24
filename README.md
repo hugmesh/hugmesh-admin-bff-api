@@ -109,7 +109,14 @@ for the narrower ones):
   Kaniko in-cluster image builder, by contrast, is live).
 - Device-license Layer-A headscale enforcement needs a live control node to confirm
   which reported key is canonical — tracked in [`docs/CANONICAL-FP.md`](docs/CANONICAL-FP.md),
-  unresolved.
+  unresolved. The tailnet ACL policy's single writer is decided (decision 101 = B,
+  2026-09-23): this BFF's direct `PUT /api/v1/policy`, with headscale keeping the policy in
+  its database (`policy.mode: database`, headscale's own spelling; the BFF declares it in
+  `app.registry.headscale-acl.policy-mode`, default `database`). The node-side agent
+  (hugmesh-generator `gen-headscale-policy.sh`, run every 60 s by the `hugmesh-policy-sync`
+  cron in file mode) is retired as a writer, but its removal and the control node's switch
+  to database mode are generator work that has not landed, so the push still ships dark
+  (`app.registry.headscale-acl.enabled=false`).
 - The SSH-terminal dial's real, host-key-pinned `SshjDeviceSshChannelFactory` (sshj,
   no TOFU — refuses without an ACTIVE `device_ssh_dial` row and a matching pinned
   `host_key_fp`) **already exists and is tested** (merged 2026-06-18, #81). It ships
@@ -1275,7 +1282,10 @@ them as shipped.
   per-brand ArgoCD `ApplicationSet` (namespaces / CA / Casdoor org / gateway / BFF / UI).
 - 🔭 **Device-license enforcement Layer-A** — the registry + signed export are shipped
   and the `device_enrollment` self-report channel exists; the live **headscale ACL push**
-  + `machine_key` auto-capture admission (needs a live control node) is deferred.
+  + `machine_key` auto-capture admission (needs a live control node) is deferred. The push
+  is the tailnet policy's only writer by decision 101 = B (headscale in `policy.mode:
+  database`; the node-side `gen-headscale-policy.sh` / `hugmesh-policy-sync` agent retired,
+  its removal still to land in hugmesh-generator).
 - 🔭 **MDM phone-lock real device push** — the control plane (ingest, fleet registry,
   management/lockout mutations, the fleet-entitlement gate) is shipped and tested; the
   three enforcement legs the aggregate (`DefaultPhoneLockEnforcer`) fans out to —

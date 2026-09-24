@@ -11,17 +11,19 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /**
  * THE POLICY-MODE MISMATCH GUARD — the single most dangerous property of the Layer-A push leg.
  *
- * <p>The fleet's headscale runs {@code policy: mode: file} (hugmesh-generator
- * {@code specs/etc/headscale/config.yaml}) with the node-side {@code gen-headscale-policy.sh} as
- * the single writer of {@code /etc/headscale/policy.hujson}. This BFF's ONLY write is
- * {@code PUT /api/v1/policy}, which headscale answers with 4xx unless the policy is DB-owned.
- * Before this guard, flipping {@code enabled=true} on the fleet as shipped produced a PERMANENT
- * SILENT NO-OP — one WARN line per 60 s tick, nothing applied, and an operator convinced the
- * push was live.
+ * <p>Decision 101 = B (2026-09-23): this BFF's {@code PUT /api/v1/policy} is the ONLY writer of
+ * the tailnet policy, so the control node's headscale must keep that policy in its database —
+ * {@code policy: mode: database}, headscale v0.23.0's own spelling. The node-side
+ * {@code gen-headscale-policy.sh} (file mode, run by the {@code hugmesh-policy-sync} cron) is
+ * retired as a writer. headscale answers {@code PUT /api/v1/policy} with 4xx in file mode, so
+ * an enabled push against a file-mode headscale is a PERMANENT SILENT NO-OP — one WARN line per
+ * 60 s tick, nothing applied, and an operator convinced the push was live.
  *
- * <p>These tests prove the mismatch now fails LOUDLY and EARLY (at wiring time, naming both
- * sides) and that the DARK default is untouched: with the push off nothing dials headscale and
- * no guard runs.
+ * <p>These tests pin the decided DEFAULT ({@code database}), prove a file-mode (or the old,
+ * non-headscale {@code db}) declaration still fails LOUDLY and EARLY at wiring time naming both
+ * sides, and that the DARK default is untouched: with the push off nothing dials headscale and
+ * no guard runs. {@link HeadscaleAclWiringTest} proves the same through a real Spring context
+ * built from the shipped {@code application.yml}.
  */
 class HeadscaleAclPolicyModeGuardTest {
 
@@ -35,11 +37,12 @@ class HeadscaleAclPolicyModeGuardTest {
     }
 
     @Test
-    void shippedDefaults_areFileMode_andPushDisabled() {
+    void shippedDefaults_areDatabaseMode_andPushDisabled() {
         HeadscaleAclProperties p = new HeadscaleAclProperties();
-        // The dark contract: the push is OFF and the declared mode is the one the fleet ships.
+        // The dark contract: the push is OFF, and the declared mode is decision 101 = B's
+        // target, spelled the way headscale spells it ("database", never "file" or "db").
         assertThat(p.isEnabled()).isFalse();
-        assertThat(p.getPolicyMode()).isEqualTo("file");
+        assertThat(p.getPolicyMode()).isEqualTo("database");
         // ...and the base URL names the namespace headscale's Service is actually in.
         assertThat(p.getBaseUrl()).isEqualTo("http://headscale.hugmesh-pki.svc.cluster.local:8080");
         assertThat(p.getBaseUrl()).doesNotContain("headscale.headscale.svc");
@@ -55,15 +58,18 @@ class HeadscaleAclPolicyModeGuardTest {
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("POLICY-MODE MISMATCH")
                 .hasMessageContaining("policy-mode='file'")
-                .hasMessageContaining("expected 'db'")
-                .hasMessageContaining("DB-POLICY-MODE-ONLY")
+                .hasMessageContaining("expected 'database'")
+                .hasMessageContaining("DATABASE-POLICY-MODE-ONLY")
+                .hasMessageContaining("Decision 101 = B")
+                .hasMessageContaining("hugmesh-policy-sync")
                 .hasMessageContaining("gen-headscale-policy.sh")
                 .hasMessageContaining("specs/etc/headscale/config.yaml");
     }
 
     @Test
-    void enabledWithAnyNonDbMode_alsoRefuses_includingBlankAndNull() {
-        for (String mode : new String[] {"", "  ", "FILE-ish", "database", "dbb", "none"}) {
+    void enabledWithAnyNonDatabaseMode_alsoRefuses_includingBlankNullAndTheOldDbSpelling() {
+        for (String mode : new String[] {"", "  ", "file", "FILE", "FILE-ish", "db", "DB", " db ",
+                "dbb", "databases", "data base", "none", "sqlite"}) {
             assertThatThrownBy(() -> HeadscaleAclConfig.requireDbPolicyMode(props(true, mode)))
                     .as("mode=%s", mode)
                     .isInstanceOf(IllegalStateException.class)
@@ -75,8 +81,30 @@ class HeadscaleAclPolicyModeGuardTest {
     }
 
     @Test
-    void declaredDbMode_isAccepted_caseAndWhitespaceInsensitive() {
-        for (String mode : new String[] {"db", "DB", " db ", "Db"}) {
+    void theOldDbSpelling_isRefused_withAHintThatHeadscaleOnlyKnowsDatabase() {
+        // headscale v0.23.0 log.Fatal's on policy.mode=db ("Unknown ACL policy mode"), so a
+        // declaration of "db" can never be true of a running control node.
+        assertThatThrownBy(() -> HeadscaleAclConfig.requireDbPolicyMode(props(true, "db")))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("policy-mode='db'")
+                .hasMessageContaining("'db' was this BFF's old spelling")
+                .hasMessageContaining("Unknown ACL policy mode");
+        // ...in any case and with surrounding whitespace, the way the gate reads the declaration.
+        for (String mode : new String[] {"DB", "Db", " db ", "\tdb\n"}) {
+            assertThatThrownBy(() -> HeadscaleAclConfig.requireDbPolicyMode(props(true, mode)))
+                    .as("mode=%s", mode)
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("'db' was this BFF's old spelling");
+        }
+        // ...and the hint is specific to "db": a file-mode declaration does not get it.
+        assertThatThrownBy(() -> HeadscaleAclConfig.requireDbPolicyMode(props(true, "file")))
+                .isInstanceOf(IllegalStateException.class)
+                .message().doesNotContain("old spelling");
+    }
+
+    @Test
+    void declaredDatabaseMode_isAccepted_caseAndWhitespaceInsensitive() {
+        for (String mode : new String[] {"database", "DATABASE", " database ", "Database"}) {
             assertThatCode(() -> HeadscaleAclConfig.requireDbPolicyMode(props(true, mode)))
                     .as("mode=%s", mode)
                     .doesNotThrowAnyException();
