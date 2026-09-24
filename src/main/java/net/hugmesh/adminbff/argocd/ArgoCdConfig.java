@@ -1,7 +1,9 @@
 package net.hugmesh.adminbff.argocd;
 
+import net.hugmesh.adminbff.config.OutboundMtlsClient;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -21,8 +23,14 @@ import org.springframework.context.annotation.Configuration;
  *
  * <p>Endpoint + token come from {@code app.appstore.argocd.*} (env-driven). NO secret in
  * git — the token defaults empty and is injected by the deployment.
+ *
+ * <p>Transport: the real client is built on {@link OutboundMtlsClient#httpClient()} (the
+ * {@code hugmesh.mtls.client.*} block, decisions 81a = A / 81b = B), so it trusts the cluster
+ * CA and nothing else. ArgoCD's stock self-signed server certificate is therefore refused until
+ * hugmesh-generator issues argocd-server's certificate from the cluster CA (hugmesh-admin-bff-api#62).
  */
 @Configuration(proxyBeanMethods = false)
+@EnableConfigurationProperties(OutboundMtlsClient.class)
 public class ArgoCdConfig {
 
     /** Ships-dark default — used whenever the effector is not enabled. */
@@ -39,7 +47,8 @@ public class ArgoCdConfig {
     ArgoCdClient restArgoCdClient(
             @Value("${app.appstore.argocd.base-url:https://argocd-server.argocd.svc.cluster.local}") String baseUrl,
             @Value("${app.appstore.argocd.auth-token:}") String authToken,
-            @Value("${app.appstore.argocd.project:default}") String project) {
-        return new RestArgoCdClient(baseUrl, authToken, project);
+            @Value("${app.appstore.argocd.project:default}") String project,
+            OutboundMtlsClient mtls) {
+        return new RestArgoCdClient(baseUrl, authToken, project, mtls.httpClient());
     }
 }
