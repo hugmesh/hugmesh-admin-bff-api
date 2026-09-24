@@ -50,11 +50,20 @@ import static org.assertj.core.api.Assertions.assertThat;
  *
  * <h3>Provenance of the fixtures</h3>
  * {@code src/test/resources/optionalservices/*.yaml} are VERBATIM copies of
- * {@code hugmesh-generator} {@code specs/cluster/...} at commit {@code 056a0e78} (main,
- * 2026-08-26), vendored because they are the cross-repo source of truth and CI builds this BFF
+ * {@code hugmesh-generator} {@code specs/cluster/...} at commit {@code e6838857} (main,
+ * 2026-09-23), vendored because they are the cross-repo source of truth and CI builds this BFF
  * alone. {@link OptionalServiceManifestDriftTest} compares them back to a generator checkout
  * when one is present; that check SKIPS when it is not, so a stale vendored copy is a real
  * residual risk — see that class.
+ *
+ * <p>That risk is not hypothetical. The previous copies (generator {@code 056a0e78}) lacked
+ * {@code meshbridge} in the CRD enum and seed CRs and lacked apps/16's
+ * {@code /data/character-forge} and {@code /data/meshbridge} pointers after the generator had
+ * gained all of them, so every assertion here passed while the registry refused a slug the
+ * API server accepted and warned about a selfHeal revert that no longer happens
+ * (hugmesh-admin-bff-api#106). The generator's slug-closure gate, which reads the registry
+ * source directly, is what caught it. Refreshing the copies alone turns four tests below red;
+ * the registry change makes them green again.
  */
 class OptionalServiceRegistryParityTest {
 
@@ -236,6 +245,40 @@ class OptionalServiceRegistryParityTest {
     }
 
     /**
+     * The SAME regression a second time, for {@code meshbridge} (#106), pinned by name for the
+     * same reason. It differs from character-forge in one way worth pinning: it was not merely
+     * missing, it was CLASSIFIED — parked as {@code NOT_IN_CRD_ENUM}, a reason that stopped
+     * being true when the generator added the enum value. So this also checks the field values
+     * the fix derived from the manifests, and that the stale reason is gone rather than
+     * shadowed.
+     */
+    @Test
+    void meshbridge_isManaged_notParkedAsNotInCrdEnum() {
+        assertThat(crdEnumSlugs()).as("fixture sanity: the CRD enum offers meshbridge")
+                .contains("meshbridge");
+        assertThat(seedSlugs()).as("fixture sanity: a seed CR exists for meshbridge")
+                .contains("meshbridge");
+        assertThat(appSetSlugs()).as("fixture sanity: 13a has a meshbridge element")
+                .contains("meshbridge");
+        assertThat(apps16ProtectedSlugs()).as("fixture sanity: apps/16 carries /data/meshbridge")
+                .contains("meshbridge");
+
+        assertThat(REGISTRY.isKnown("meshbridge"))
+                .as("meshbridge MUST be reconcilable: the API server accepts its seeded CR, and a "
+                        + "registry that does not know it makes the reconciler log 'unknown slug "
+                        + "— ignoring' and skip that CR's status")
+                .isTrue();
+        assertThat(REGISTRY.notToggleableReason("meshbridge"))
+                .as("meshbridge must not still carry the stale NOT_IN_CRD_ENUM refusal")
+                .isNull();
+        OptionalServiceRegistry.Entry entry = REGISTRY.entry("meshbridge");
+        assertThat(entry.namespace()).isEqualTo("hugmesh-backend");
+        assertThat(entry.mountAt()).as("backend-only bridge: no host-shell mount").isNull();
+        assertThat(entry.configMapSelfHealProtected()).isTrue();
+        assertThat(REGISTRY.applicationName("meshbridge")).isEqualTo("optional-meshbridge");
+    }
+
+    /**
      * CLOSURE: the registry's known set (managed + not-toggleable) is EXACTLY the union of every
      * upstream source. Nothing upstream is unclassified; nothing here is invented.
      */
@@ -328,14 +371,21 @@ class OptionalServiceRegistryParityTest {
     }
 
     /**
-     * Known partial actuation, pinned deliberately: {@code apps/16} is missing four pointers,
-     * one of which ({@code character-forge}) is now a MANAGED slug. That is a generator-side
-     * defect this repo cannot fix, so it is recorded here as an explicit expectation instead of
-     * being silently tolerated — if the generator adds the pointer and the fixture is refreshed,
-     * this test goes red and the registry flag gets flipped with it.
+     * Partial actuation, pinned deliberately as an explicit expectation rather than tolerated:
+     * the set of MANAGED slugs whose greying key apps/16 does not shield from selfHeal. It was
+     * {@code [character-forge]} against the 056a0e78 fixtures; the generator has since added
+     * {@code /data/character-forge} and {@code /data/meshbridge}, so against the current
+     * fixtures it is EMPTY, and every managed toggle's greying mirror now survives selfHeal
+     * (as far as the manifests say — no live ArgoCD sync was exercised). apps/16 still omits
+     * {@code headwind} and {@code attestation-server} on purpose: they are not-toggleable here
+     * (no 13a element), so nothing writes those keys and they stay git-enforced. A new managed
+     * slug added without its pointer turns this red, which is the point: either get the pointer
+     * added upstream, or record the gap on purpose — its {@code configMapSelfHealProtected}
+     * false (the test above demands that anyway, and it makes the admin surface warn) AND its
+     * name pinned here as the known exception.
      */
     @Test
-    void managedSlugsMissingApps16Protection_areExactlyTheKnownSet() {
+    void managedSlugsMissingApps16Protection_isEmpty() {
         Set<String> protectedSlugs = apps16ProtectedSlugs();
         Set<String> unprotectedManaged = new TreeSet<>();
         for (String slug : REGISTRY.slugs()) {
@@ -345,12 +395,10 @@ class OptionalServiceRegistryParityTest {
         }
         assertThat(unprotectedManaged)
                 .as("MANAGED slugs whose installed-services greying key apps/16 does NOT shield "
-                        + "from ArgoCD selfHeal — their toggle half-actuates. Today that is exactly "
-                        + "character-forge (generator: apps/16 also omits headwind, "
-                        + "attestation-server and meshbridge, but those are not-toggleable here "
-                        + "for other reasons). Refresh the fixture and flip "
-                        + "Entry.configMapSelfHealProtected when the generator adds the pointer")
-                .containsExactly("character-forge");
+                        + "from ArgoCD selfHeal — their toggle half-actuates. None today: the "
+                        + "generator's apps/16 carries a pointer for every managed slug, "
+                        + "character-forge and meshbridge included")
+                .isEmpty();
     }
 
     /** namespace / mountAt / displayName are copied from services.json, so check them against it. */

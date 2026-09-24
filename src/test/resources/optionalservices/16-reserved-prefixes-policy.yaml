@@ -32,11 +32,43 @@ spec:
     # (docs/OPTIONAL-SERVICES.md §7). services.json + workloadConsole + the
     # reserved-prefixes ConfigMap stay fully selfHeal-enforced (not ignored).
     syncOptions: [CreateNamespace=true, RespectIgnoreDifferences=true]
-  # The 12 cluster-service boolean keys of the installed-services ConfigMap are the
-  # runtime greying mirror the OptionalServiceReconciler owns (a targeted merge-patch
-  # of exactly these keys). Let ONLY these diverge from git; every other key
-  # (services.json, workloadConsole) stays git-enforced. Keep this list in sync with
-  # the OptionalService CRD slug enum + the reconciler's OptionalServiceRegistry.
+  # ── THE ignoreDifferences KEYSTONE — A DERIVED SET, NOT A HAND LIST ─────────
+  # These are the installed-services ConfigMap data keys the admin-bff
+  # OptionalServiceReconciler owns at runtime (a targeted merge-patch of exactly
+  # these keys). Only these may diverge from git; every other key in that
+  # ConfigMap — services.json and the build-determined booleans — stays fully
+  # selfHeal-enforced.
+  #
+  # THE RULE (mechanical, do not eyeball it): the set is
+  #     G = { slug : slug has a 13a ApplicationSet element
+  #                  AND an installed-services ConfigMap boolean }
+  # because that is precisely the set the reconciler can actuate — it needs the
+  # element to create/prune the Application and the boolean to mirror the
+  # greying. G is the SAME set as the OptionalService CRD spec.slug enum, the
+  # seed CRs, and the controller's OptionalServiceRegistry. Today |G| = 14.
+  #
+  # WHY THIS COMMENT EXISTS. The list below was hand-maintained and silently fell
+  # behind: it carried 12 pointers while 13a had grown to 14 elements, so
+  # character-forge and meshbridge had no exemption and a superadmin toggle of
+  # either would have been selfHealed straight back to git's baseline — the
+  # runtime write undone within a sync interval, with the CR still reporting
+  # enabled:true. An ArgoCD Application manifest cannot compute G (no templating
+  # in apps/ — app-of-apps syncs these as static files), so the derivation is
+  # enforced from OUTSIDE by a guard that recomputes G from 13a + the ConfigMap
+  # and FAILS on any drift, in either direction:
+  #     tests/scripts/test-optional-service-slug-closure.sh
+  # Add a slug to 13a + the ConfigMap and that guard names this file until the
+  # matching /data/<slug> lands. Do not edit this list by hand from a diff —
+  # run the guard and paste the set it prints.
+  #
+  # DELIBERATELY ABSENT, and this is not an oversight: workloadConsole, headwind
+  # and attestation-server each HAVE an installed-services boolean but NO 13a
+  # element (their Applications are hardcoded — apps/14-workload-console-rbac.yaml,
+  # apps/23-headwind.yaml, apps/24-attestation-server.yaml). They are outside G,
+  # the reconciler never writes them, and exempting them from selfHeal would
+  # un-enforce a key nothing owns while implying a runtime toggle that does not
+  # exist. They stay git-enforced until a cut-over gives them 13a elements, at
+  # which point G grows and the guard demands their pointers here.
   ignoreDifferences:
     - group: ""
       kind: ConfigMap
@@ -50,8 +82,10 @@ spec:
         - /data/owncast
         - /data/tube
         - /data/character-studio
+        - /data/character-forge
         - /data/anubis
         - /data/coturn
+        - /data/meshbridge
         - /data/edge-ai
         - /data/edge-ai-analysis
         - /data/edge-ai-tts

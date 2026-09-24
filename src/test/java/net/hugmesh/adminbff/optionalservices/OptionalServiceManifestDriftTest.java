@@ -13,9 +13,10 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 /**
  * DRIFT GUARD for the vendored optional-services manifests that
  * {@link OptionalServiceRegistryParityTest} derives from. Those five files are VERBATIM copies
- * of {@code hugmesh-generator}'s {@code specs/cluster/...} (commit {@code 056a0e78}, main,
- * 2026-08-26); this test asserts the copies still match a generator checkout when one is
- * present, so an upstream slug addition/removal cannot pass unnoticed on a dev box.
+ * of {@code hugmesh-generator}'s {@code specs/cluster/...} (commit {@code e6838857}, main,
+ * 2026-09-23; refreshed for #106 from {@code 056a0e78}); this test asserts the copies still
+ * match a generator checkout when one is present, so an upstream slug addition/removal cannot
+ * pass unnoticed on a dev box.
  *
  * <p><b>Read this before trusting it.</b> Like the {@code ImageCatalogDriftTest} precedent it
  * follows, this test SKIPS when no generator checkout is found — and admin-bff's CI builds this
@@ -23,9 +24,14 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  * <ul>
  *   <li>the PARITY check ({@link OptionalServiceRegistryParityTest}) always runs and is what
  *       actually gates the registry — it needs no generator checkout;</li>
- *   <li>a STALE vendored fixture is a real residual risk this test only covers locally. The
- *       durable fix is a generator-side check that fails when its own manifests move without
- *       this repo's fixtures moving; that is cross-repo work and is NOT done here.</li>
+ *   <li>a STALE vendored fixture is a real residual risk this test only covers locally. It
+ *       happened: the 056a0e78 copies hid two registry defects for weeks (#106). What caught
+ *       them was the generator's slug-closure gate
+ *       ({@code tests/scripts/test-optional-service-slug-closure.sh}), which parses the
+ *       REGISTRY SOURCE against the generator's live manifests — it does not read these
+ *       fixtures, so it bounds the consequence of a stale copy, not the staleness itself. A
+ *       check that fails when the generator's manifests move without these copies moving is
+ *       still NOT built.</li>
  * </ul>
  * Point it at a checkout with {@code -Doptionalservices.source.dir=<generator>/specs/cluster}
  * (the pom forwards the property to the forked test JVM).
