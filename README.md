@@ -746,7 +746,32 @@ These surfaces are the unscoped infra control plane; an ADMIN never reaches them
   `AppProfileController` (`/bff/superadmin/app-profiles`), and
   `ServiceDeploymentController` (`/bff/superadmin/service-store/{domain}/deployments`, now
   in the `servicecatalog` package). Backed by changelogs `100-service-curation` /
-  `101-app-profile` / `102-service-deployment`. The deployment plane now exposes
+  `101-app-profile` / `102-service-deployment`.
+  > **`profileJson` is validated on save (#55).** `POST`/`PUT /bff/superadmin/app-profiles`
+  > check the body against `src/main/resources/schema/app-profile.schema.json` — a
+  > **byte-identical** copy of the Service Catalog console's
+  > `schemas/app-profile.schema.json` — before the write, so a direct API call or a stale
+  > tab cannot store a body the console would refuse. Sections `resources` / `roles` /
+  > `certs` / `exposure`, every object closed; a refusal is the ordinary
+  > `{"error":"validation failed","fields":{path:message}}` 400 with EVERY offending path
+  > named, in the same message vocabulary the console uses. Three things it deliberately
+  > does not do: it never rewrites a body, it never validates a READ (a row written before
+  > the schema existed is still returned in full — it is WARN-logged on the superadmin read
+  > and fixed in the console), and it does not RESOLVE the values (that effector is still
+  > open, catalog-ui#3). `AppProfileSchemaMirrorTest` guards the copy with TWO checks: a
+  > local sha256 pin (which makes an edit deliberate but proves nothing about the other
+  > repo — moving the schema and the literal together in one repo satisfies it, and that
+  > left both suites green with the files diverged when it was measured), and a **mirror
+  > check that reads the console's file and compares bytes**, which is the one that
+  > actually enforces byte-identity. The mirror check SKIPS when the console checkout is
+  > absent, so CI clones it and passes `-Dappprofile.schema.mirror.required=true` to turn
+  > that skip into a failure; locally a sibling checkout satisfies it
+  > (`-Dappprofile.schema.console.dir` overrides). Un-parked by operator decision 37
+  > (hugmesh-generator#347, 2026-09-17): `ROLE_<UPPER>` roles, strict on unknown keys,
+  > `exposure.mfaRequired` kept. The wire shape is UNCHANGED — `profileJson` is still a
+  > bounded string and `openapi.json` does not move.
+
+  The deployment plane now exposes
   `POST …/deployments/{id}/provision` (#147), which drives the **`AddServiceEffector`**
   (AddService → ArgoCD `create/deleteApplication`) and returns a `ProvisionOutcome`
   carrying an `effectorReal` flag (false when the injected `NoopArgoCdClient` ran, i.e.
@@ -1263,8 +1288,27 @@ them as shipped.
   (catalog + mode-intent recording + step-up) is shipped; the actual cluster prune /
   managed-endpoint re-point is still a `NoopBackingServiceEffector` (logs only) pending
   a follow-on generator/effector leg — today's mutation is genuinely intent-only.
-- 🔭 **Platform roadmap (org-wide, dependent on this BFF):** egress VPN drop-in `.conf`,
-  per-node attached storage, and A/V via coturn/TURN (currently LAN-only, no TURN/SFU).
+- ✅🔭 **Platform roadmap (org-wide, dependent on this BFF) — two of three shipped, dark:**
+  - ✅ **Egress VPN drop-in `.conf`** — shipped, both halves. This side: admin-bff PR #18
+    (`be40e144`, on `main` as `d059af8`) added `VpnConfigSecretWriter` /
+    `Fabric8VpnConfigSecretWriter` + `VpnEgressLabeler`. Node side: hugmesh-generator
+    `a265cb89` (`specs/cluster/manifests/egress-vpn/secret-projector-daemonset.yaml`,
+    `specs/usr/sbin/hugmesh-vpn-reconcile`, `specs/usr/sbin/hugmesh-egress-vpn`), made
+    interoperable by `47f526de` (the shared `specs/cluster/egress-vpn-secret-contract.env`
+    contract + its guard test). Both sides ship behind default-off flags — a stock
+    deployment has this off, not absent.
+  - ✅ **Per-node attached storage** — shipped: hugmesh-generator `e8850c9c` + `ea059902`
+    (`specs/cluster/apps/13b-node-storage.yaml`, the graceful-degrade leg,
+    `docs/NODE-STORAGE.md`, `specs/usr/sbin/hugmesh-node-storage-reconcile` with an OpenRC
+    service + cron timer, baked by every `build-*-stage4.sh` builder).
+  - 🔭 **A/V — TURN is landed but still LAN-only by default.** hugmesh-generator `6ca52bc7`
+    added the coturn TURN/STUN optional service (RFC-5766 REST-credential mode); it is
+    **default-off** — a default build deploys no coturn and clients keep `iceServers: []`.
+    `1ec3f8f6` added `specs/cluster/manifests/coturn-public`, a further opt-in,
+    operator-deferred public-reachability overlay. So off-LAN A/V is reachable **by
+    configuration**, not absent — but a stock build is still LAN-only. **SFU stays
+    genuinely 🔭 roadmap**, with no landed work yet.
+
   These ride the surfaces above as they land.
 
   > **Note:** encrypted versioned backups (Velero + kopia/restic) and desktop app

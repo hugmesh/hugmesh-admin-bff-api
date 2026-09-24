@@ -53,13 +53,16 @@ import java.util.Set;
  * changing the fail-open HTTP behaviour itself.
  *
  * <h3>Caching — mirrors the gateway's {@code BffJwtExchangeWebFilter} exactly</h3>
- * See {@link SessionExchangeCache}. Positive-only, {@code sha256(token)}-keyed, default 5s
- * hard-clamped to a 60s ceiling; {@code cache-ttl-ms<=0} disables the cache entirely (every
- * call re-consults the exchange gate — zero suspension-bypass window). <b>The TTL IS the
- * suspension-bypass window</b>: a cache hit skips {@code InternalAccountController}'s own
- * {@code suspensionGate()} re-check, so the TTL bounds how stale a just-banned account's
- * continued federation-api access can be via this path — the SAME reasoning the gateway's
- * cache already worked through, reproduced here rather than re-derived.
+ * See {@link SessionExchangeCache}. Positive-only, {@code sha256(token)}-keyed. Default
+ * {@code cache-ttl-ms} is {@code 0} (cache OFF) since 2026-09-18 — operator Decision 60
+ * ("extend"), matching the gateway's own zero-window default (hugmesh-gateway#30) —
+ * hard-clamped to a 60s ceiling when a deployment opts into a positive value; {@code
+ * cache-ttl-ms<=0} disables the cache entirely (every call re-consults the exchange gate
+ * — zero suspension-bypass window). <b>The TTL IS the suspension-bypass window</b>: a
+ * cache hit skips {@code InternalAccountController}'s own {@code suspensionGate()}
+ * re-check, so the TTL bounds how stale a just-banned account's continued federation-api
+ * access can be via this path — the SAME reasoning the gateway's cache already worked
+ * through, reproduced here rather than re-derived. The previous default was 5s.
  *
  * <p><b>Public visibility.</b> {@code FederationApiConfig} (same package) is the sole
  * consumer today, but this type is kept public — matching mod-bff-api's canonical copy of

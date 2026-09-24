@@ -2297,6 +2297,13 @@
         "summary" : "Session out",
         "operationId" : "authSessionOut",
         "parameters" : [ {
+          "name" : "bff_session",
+          "in" : "cookie",
+          "required" : false,
+          "schema" : {
+            "type" : "string"
+          }
+        }, {
           "name" : "Authorization",
           "in" : "header",
           "required" : false,
@@ -2609,6 +2616,27 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/bff/internal/usage" : {
+      "post" : {
+        "tags" : [ "internal-account-controller" ],
+        "operationId" : "recordUsage",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/RecordUsageRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "204" : {
+            "description" : "No Content"
           }
         }
       }
@@ -9503,6 +9531,11 @@
           },
           "enabled" : {
             "type" : "boolean"
+          },
+          "idp" : {
+            "maxLength" : 16,
+            "minLength" : 0,
+            "type" : "string"
           }
         }
       },
@@ -9556,6 +9589,15 @@
           "lastReconciledGeneration" : {
             "type" : "integer",
             "format" : "int64"
+          },
+          "idp" : {
+            "type" : "string"
+          },
+          "selinuxLevel" : {
+            "type" : "string"
+          },
+          "selinuxLevelPg" : {
+            "type" : "string"
           }
         }
       },
@@ -10537,6 +10579,26 @@
           "secret" : {
             "maxLength" : 4096,
             "minLength" : 0,
+            "type" : "string"
+          }
+        }
+      },
+      "RecordUsageRequest" : {
+        "required" : [ "action", "handle" ],
+        "type" : "object",
+        "properties" : {
+          "handle" : {
+            "minLength" : 1,
+            "type" : "string"
+          },
+          "roles" : {
+            "type" : "array",
+            "items" : {
+              "type" : "string"
+            }
+          },
+          "action" : {
+            "minLength" : 1,
             "type" : "string"
           }
         }
@@ -11707,6 +11769,11 @@
           },
           "enabled" : {
             "type" : "boolean"
+          },
+          "idp" : {
+            "maxLength" : 16,
+            "minLength" : 0,
+            "type" : "string"
           }
         }
       },
@@ -13153,6 +13220,15 @@
           "generation" : {
             "type" : "integer",
             "format" : "int64"
+          },
+          "idp" : {
+            "type" : "string"
+          },
+          "selinuxLevel" : {
+            "type" : "string"
+          },
+          "selinuxLevelPg" : {
+            "type" : "string"
           }
         }
       },

@@ -47,6 +47,18 @@ class Fabric8PlatformCapabilityProbeTest {
         assertThat(new Fabric8PlatformCapabilityProbe(() -> null).isReal()).isTrue();
     }
 
+    /**
+     * Pins the literal namespace, not just the symbol: every other test below passes the
+     * {@code ARGOCD_NAMESPACE} constant to BOTH the mock stub and the production call, so a
+     * drift in the constant's VALUE (e.g. back to {@code "argocd"}, which does not exist on
+     * this platform — the real namespace is {@code "devops"}, see #59) is invisible to them.
+     * Only a literal comparison here catches that class of regression.
+     */
+    @Test
+    void argocdNamespace_isDevops_notTheUpstreamDefault() {
+        assertThat(Fabric8PlatformCapabilityProbe.ARGOCD_NAMESPACE).isEqualTo("devops");
+    }
+
     // ── all absent ─────────────────────────────────────────────────────────────────────────
 
     @Test

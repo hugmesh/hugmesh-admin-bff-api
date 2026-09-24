@@ -26,6 +26,9 @@ import java.util.Map;
  *   <li>{@link ConstraintViolationException} — a {@code @Validated} controller's
  *       {@code @PathVariable}/{@code @RequestParam} constraint failure (e.g. the
  *       {@code pathPrefix} guard on {@code DELETE /bff/admin/routes/{pathPrefix}}).</li>
+ *   <li>{@link FieldValidationException} — a SERVICE-raised field map, for a validation the
+ *       jakarta annotations cannot express (the app-profile JSON Schema, issue #55). Same
+ *       body, so the console's existing {@code fields}-folding renders it unchanged.</li>
  * </ul>
  *
  * <p>The body shape is {@code {"error":"validation failed","fields":{field:msg}}}.
@@ -62,6 +65,16 @@ public class ValidationExceptionHandler {
         // Accumulate field→message pairs from each per-parameter validation result.
         ex.getParameterValidationResults().forEach(result -> collectValidationErrors(result, fields));
         return badRequest(fields);
+    }
+
+    /**
+     * A service-raised {@link FieldValidationException} — a validation the bean-validation
+     * annotations cannot express (today: the app-profile JSON Schema, issue #55) — rendered in
+     * the SAME body shape, so the console renders it field by field with no change on its side.
+     */
+    @ExceptionHandler(FieldValidationException.class)
+    public ResponseEntity<Map<String, Object>> handleFieldValidation(FieldValidationException ex) {
+        return badRequest(ex.fields());
     }
 
     @ExceptionHandler(ConstraintViolationException.class)

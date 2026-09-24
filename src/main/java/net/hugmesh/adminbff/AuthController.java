@@ -483,14 +483,47 @@ public class AuthController {
      * denied at the gateway). Carrier-agnostic — resolves the token from the cookie-bridged
      * {@code Authorization} header. Idempotent: an unknown/expired token returns
      * {@code {loggedOut:true}} with no row to delete.
+     *
+     * <p>hugmesh-generator#549: the fe route tables now send the browser-facing
+     * {@code POST /bff/sessionOut} to user-bff's alias instead, so a browser should never
+     * reach this copy at all.
+     *
+     * <p><b>Correction (land-lane re-review, admin-bff-api#102):</b> this method also takes a
+     * {@code @CookieValue} for the {@code bff_} session cookie and resolves via
+     * {@code bffTokenFrom(cookie, header)} rather than the prior {@code bffTokenFrom(null,
+     * header)}. The PR that added this originally claimed that closed a live "silent no-op" for
+     * a cookie-only caller — that claim does NOT hold for any request this running app actually
+     * serves. {@link SessionCookieWebFilter} is unconditionally component-scanned into this app
+     * ({@code AdminBffApplication}'s {@code scanBasePackages} includes
+     * {@code net.hugmesh.authcore}) and runs at {@code Ordered.HIGHEST_PRECEDENCE + 5} — before
+     * every controller, on every request — so a cookie-only caller's {@code bff_session} is
+     * ALREADY bridged into a synthesised {@code Authorization} header before this method is
+     * ever entered. {@code bffTokenFrom(null, header)} (the pre-#102 code) would have resolved
+     * the SAME token via that bridged header. Proven by mutation testing: reverting this
+     * parameter still leaves {@code AuthControllerSessionCookieTest
+     * #sessionOut_viaCookieOnly_deletesRow} green, because that test (correctly, matching the
+     * real app) imports the filter.
+     *
+     * <p>What DOES hold: reading the cookie directly here is still the more explicit,
+     * carrier-agnostic form, matching {@link #session(Authentication, String)} / {@code /me}
+     * above, and it is independently correct in isolation from the filter — see
+     * {@code AuthControllerSessionOutUnitTest}, a plain Mockito unit test with NO Spring context
+     * (a {@code @WebFluxTest} slice cannot isolate the filter here: it inherits
+     * {@code AdminBffApplication}'s {@code scanBasePackages} and auto-detects the filter
+     * regardless of any {@code @Import} list — see that class's javadoc for the full story).
+     * That test goes RED on the pre-#102 code. Treat this change as hardening / explicit
+     * precedence for a caller that might one day reach this method without the filter in front
+     * of it (a different composition, a future refactor) — NOT as a fix for any behavior
+     * reachable in the app as deployed today.
      */
     @Operation(summary = "Session out", operationId = "authSessionOut")
     @PostMapping("/sessionOut")
     public Mono<Map<String, Object>> sessionOut(
             Authentication auth,
+            @CookieValue(value = SessionCookieWebFilter.SESSION_COOKIE, required = false) String cookie,
             @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String header,
             ServerWebExchange exchange) {
-        String token = SessionCookieWebFilter.bffTokenFrom(null, header);
+        String token = SessionCookieWebFilter.bffTokenFrom(cookie, header);
         // Expire the cookie regardless of carrier (a Bearer-auth logout must still clear any
         // cookie the browser holds). No-op when cookie mode is disabled.
         ResponseCookie expired = cookies.expire();

@@ -116,6 +116,7 @@ class InternalSurfaceRoleMatrixTest {
                 arguments(HttpMethod.GET, "/bff/internal/session/introspect"),
                 arguments(HttpMethod.POST, "/bff/internal/custody/stamp"),
                 arguments(HttpMethod.POST, "/bff/internal/session/exchange"),
+                arguments(HttpMethod.POST, "/bff/internal/usage"),
                 // The node / Job / host-agent / IdP legs.
                 arguments(HttpMethod.POST, "/bff/internal/device-enrollment/self-report"),
                 arguments(HttpMethod.POST, "/bff/internal/device-registry/phone-ingest"),

@@ -57,6 +57,18 @@
          classification they pin, so an upstream slug addition surfaces as a parity failure a
          human must resolve rather than as a silent re-vendor. -->
     <optionalservices.source.dir>${project.basedir}/../hugmesh-generator/specs/cluster</optionalservices.source.dir>
+
+    <!-- The CONSOLE checkout dir holding the OTHER half of the app-profile schema contract
+         (operator decision 37; issue #55). src/main/resources/schema/app-profile.schema.json
+         here must be BYTE-IDENTICAL to schemas/app-profile.schema.json in
+         hugmesh-superadmin-service-catalog-ui, or the console and this service validate saves
+         against different rules. AppProfileSchemaMirrorTest compares the two files directly
+         when this directory is present and SKIPS when it is not — so CI clones the console and
+         passes -Dappprofile.schema.mirror.required=true, which turns that skip into a failure.
+         Without that flag a failed clone would send the test back to its skip branch and the
+         job would be green while checking nothing, which is exactly how catalog.source.dir was
+         dark in CI for months. Default assumes the console is checked out as a sibling. -->
+    <appprofile.schema.console.dir>${project.basedir}/../hugmesh-superadmin-service-catalog-ui/schemas</appprofile.schema.console.dir>
   </properties>
 
   <dependencies>
@@ -306,6 +318,9 @@
           <!-- Same reason: forward the optional-services manifest source dir to the FORKED test
                JVM so OptionalServiceManifestDriftTest can find a generator checkout. -->
           <optionalservices.source.dir>${optionalservices.source.dir}</optionalservices.source.dir>
+          <!-- Same reason again: forward the console checkout dir so AppProfileSchemaMirrorTest
+               can read the OTHER repo's copy of the app-profile schema and compare bytes. -->
+          <appprofile.schema.console.dir>${appprofile.schema.console.dir}</appprofile.schema.console.dir>
         </systemPropertyVariables>
       </configuration>
     </plugin>

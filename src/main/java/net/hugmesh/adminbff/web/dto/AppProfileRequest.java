@@ -13,9 +13,15 @@ import org.jspecify.annotations.Nullable;
  *   <li>{@code name} — the UNIQUE natural key (required on create; ignored on update, where
  *       the path {@code {name}} identifies the row). Validated non-blank + bounded so a
  *       malformed create is a clean 400; a duplicate is a clean 409 from the service.</li>
- *   <li>{@code profileJson} — opaque resource/role/cert/exposure DEFAULTS as a JSON
- *       document string. Bounded but otherwise unparsed in PR1 (the later effector resolves
- *       it).</li>
+ *   <li>{@code profileJson} — resource/role/cert/exposure DEFAULTS as a JSON document string.
+ *       The WIRE shape is unchanged (still a bounded string, so the generated clients and this
+ *       repo's {@code openapi.json} do not move), but since issue #55 the CONTENT is validated
+ *       on save against the committed JSON Schema
+ *       ({@link net.hugmesh.adminbff.servicecatalog.AppProfileSchema}, a byte-identical copy of
+ *       the Service Catalog console's {@code schemas/app-profile.schema.json}). A body the
+ *       console would refuse is a 400 here too, with every offending path named — so a direct
+ *       API call or a stale browser tab cannot store one. The values are still not RESOLVED by
+ *       anything; that is the effector, open on catalog-ui#3.</li>
  * </ul>
  */
 public record AppProfileRequest(

@@ -32,6 +32,24 @@ import java.time.Instant;
  * hard-deleted). {@link #createdBySubject()} is stamped from the SUPERADMIN's
  * {@code jwt.getSubject()}.
  *
+
+ * <h3>Decision-29 fields (2026-09-17 &mdash; appended to Liquibase 012)</h3>
+ * The three columns the generator's per-domain element schema required and this row could not
+ * supply, so the provisioning leg was unbuildable:
+ * <ul>
+ *   <li>{@link #idp()} &mdash; {@link DomainIdp#OWN} or {@link DomainIdp#SUPERDOMAIN}
+ *       (decision 29b: a real column, not derived). {@code superdomain} is the DB default and
+ *       the Studio default; only an {@code own} domain ever gets a per-domain IdP.</li>
+ *   <li>{@link #selinuxLevel()} / {@link #selinuxLevelPg()} &mdash; the domain's two
+ *       cluster-unique MCS categories, ALLOCATED BY THE WRITER AT INSERT under the
+ *       {@code uq_domain_registry_selinux_level*} constraints (decision 29c). See
+ *       {@link McsCategoryAllocator}. {@code null} on a row that predates the allocator; never
+ *       back-filled with a guess.</li>
+ * </ul>
+ * {@link #nsPrefix()} also gains a THIRD identity under decision 29a: it IS the domain's slug,
+ * so it names the tenant namespace, the Application and the Vault path alike &mdash; see
+ * {@link DomainSlug}. It is UNIQUE in the schema and immutable after create.
+ *
  * <h3>Provisioning-status fields (Liquibase band 190)</h3>
  * {@link #caProvisioned()} / {@link #appsetRegistered()} / {@link #lastReconciledGeneration()}
  * are the bridge between a SUPERADMIN-REGISTERED domain (this table) and an actually
@@ -58,7 +76,24 @@ public record DomainRegistration(
         Instant updatedAt,
         boolean caProvisioned,
         boolean appsetRegistered,
-        long lastReconciledGeneration) {
+        long lastReconciledGeneration,
+        String idp,
+        String selinuxLevel,
+        String selinuxLevelPg) {
+
+    /**
+     * Pre-decision-29 15-arg shape. Defaults {@code idp} to {@link DomainIdp#SUPERDOMAIN} (the
+     * ride-the-central-Casdoor floor) and leaves the MCS pair UNALLOCATED.
+     */
+    public DomainRegistration(
+            String id, String clusterDomain, String brand, String org, String caRef,
+            String nsPrefix, String casdoorOrg, String meshTag, boolean enabled,
+            Instant createdAt, String createdBySubject, Instant updatedAt,
+            boolean caProvisioned, boolean appsetRegistered, long lastReconciledGeneration) {
+        this(id, clusterDomain, brand, org, caRef, nsPrefix, casdoorOrg, meshTag, enabled,
+                createdAt, createdBySubject, updatedAt, caProvisioned, appsetRegistered,
+                lastReconciledGeneration, DomainIdp.SUPERDOMAIN, null, null);
+    }
 
     /**
      * Back-compat constructor for the pre-band-190 12-arg shape (CRUD that never sets the
@@ -72,6 +107,7 @@ public record DomainRegistration(
             String nsPrefix, String casdoorOrg, String meshTag, boolean enabled,
             Instant createdAt, String createdBySubject, Instant updatedAt) {
         this(id, clusterDomain, brand, org, caRef, nsPrefix, casdoorOrg, meshTag, enabled,
-                createdAt, createdBySubject, updatedAt, false, false, 0L);
+                createdAt, createdBySubject, updatedAt, false, false, 0L,
+                DomainIdp.SUPERDOMAIN, null, null);
     }
 }
