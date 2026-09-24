@@ -102,7 +102,7 @@ class BackingServiceControllerTest {
     void catalog_superadmin_carriesEnabledFlagAndState() {
         when(service.isEnabled()).thenReturn(false);
         when(service.catalogWithState()).thenReturn(Mono.just(List.of(
-                Map.of("id", "object-store", "kind", "object-storage", "tier", 1,
+                Map.of("id", "velero-objectstore", "kind", "object-storage", "tier", 1,
                         "docsOnly", false, "currentMode", "self-hosted"),
                 Map.of("id", "vault-pki", "kind", "pki", "tier", 3,
                         "docsOnly", true, "currentMode", "self-hosted"))));
@@ -110,7 +110,7 @@ class BackingServiceControllerTest {
                 .exchange().expectStatus().isOk()
                 .expectBody()
                 .jsonPath("$.enabled").isEqualTo(false)
-                .jsonPath("$.services[0].id").isEqualTo("object-store")
+                .jsonPath("$.services[0].id").isEqualTo("velero-objectstore")
                 .jsonPath("$.services[0].currentMode").isEqualTo("self-hosted")
                 .jsonPath("$.services[1].docsOnly").isEqualTo(true)
                 .jsonPath("$.note").value(org.hamcrest.Matchers.containsString("byte-identical default"));

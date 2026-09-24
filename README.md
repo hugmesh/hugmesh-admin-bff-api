@@ -868,7 +868,7 @@ operator-side (Headwind + `phone-wizard.sh`) half.
 `BackingServiceController` (`hasRole('SUPERADMIN')` + step-up
 `X-BackingServices-StepUp` on the mutating verb) is the admin web-UI half of the
 managed/self-hosted axis (cloud-deploy DESIGN I8-DESIGN, Lane M3): `GET ""` returns the
-closed `BackingServiceCatalog` (object-store / SMTP / Kafka / ClickHouse / federation
+closed `BackingServiceCatalog` (Velero object store `velero-objectstore` / SMTP / Kafka / ClickHouse / federation
 bundles / the per-service Postgres set / Cassandra / Harbor / Vault-KV / Vault-PKI, each
 tagged trivial/easy/docs-only-tier) joined with each service's current recorded mode;
 `PUT /{id}/mode` records a self-hosted/managed **mode intent** (a `backing_service_mode`
