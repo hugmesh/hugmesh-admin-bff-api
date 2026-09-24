@@ -145,6 +145,28 @@ homeserver:
   domainlock:
     enabled: "${HOMESERVER_DOMAINLOCK_ENABLED:false}"
 
+# ADMIN-only, ONE-WAY Matrix account deactivate (hugmesh-mod-bff-api#23; decisions 83a = C,
+# 83b = B). Posts tuwunel's `!admin users deactivate <mxid>` into the admin room after a
+# propose/confirm pair (MatrixDeactivateService). DELIBERATELY SEPARATE from homeserver.admin
+# above: that block is the REVERSIBLE access-suspension seam, and arming it must never arm this
+# verb (tuwunel has no re-activate). Env names are distinct from mod-bff-api's
+# MATRIX_ADMIN_ENABLED so one variable can never arm both services. SHIPS DARK.
+matrix-admin:
+  enabled: "${MATRIX_ADMIN_DEACTIVATE_ENABLED:false}"
+  base-url: "${MATRIX_ADMIN_DEACTIVATE_BASE_URL:http://tuwunel.hugmesh-backend.svc.cluster.local:8008}"
+  # Access token of an ADMIN-ROOM MEMBER — Vault hugmesh/tuwunel-admin (property "token") via
+  # the ESO ExternalSecret 'tuwunel-admin'. Placeholder only; NEVER inline. Blank => every
+  # confirm degrades (no-admin-token), never a false success.
+  admin-token: "${MATRIX_ADMIN_DEACTIVATE_TOKEN:}"
+  # The homeserver's server_name; a bare localpart target is qualified to @localpart:<this>.
+  server-name: "${MATRIX_ADMIN_DEACTIVATE_SERVER_NAME:hugmesh.net}"
+  # tuwunel's admin room alias (admin_room_default), resolved once per process.
+  admin-room: "${MATRIX_ADMIN_DEACTIVATE_ROOM:#admins:hugmesh.net}"
+  timeout: "${MATRIX_ADMIN_DEACTIVATE_TIMEOUT:PT10S}"
+  deactivate:
+    # The propose -> confirm window. Must be > 0 and <= PT15M or the service refuses to boot.
+    confirm-ttl: "${MATRIX_ADMIN_DEACTIVATE_CONFIRM_TTL:PT2M}"
+
 # Resilience4j circuit breakers for the access_suspension reconcile + expiry loop.
 # akkoma/tuwunel guard the per-homeserver suspend seam; casdoor (reused) guards the
 # expiry role re-add. Tuning mirrors the hugmesh-actions routeAccess/casdoor

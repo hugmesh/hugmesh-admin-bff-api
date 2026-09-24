@@ -3979,6 +3979,70 @@
         }
       }
     },
+    "/bff/admin/matrix/deactivations/propose" : {
+      "post" : {
+        "tags" : [ "matrix-admin-deactivate-controller" ],
+        "summary" : "Propose a one-way Matrix account deactivate (step 1 of 2)",
+        "operationId" : "matrixDeactivatePropose",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/MatrixDeactivateProposeRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "type" : "object",
+                  "additionalProperties" : {
+                    "type" : "object"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bff/admin/matrix/deactivations/confirm" : {
+      "post" : {
+        "tags" : [ "matrix-admin-deactivate-controller" ],
+        "summary" : "Confirm a proposed Matrix account deactivate (step 2 of 2)",
+        "operationId" : "matrixDeactivateConfirm",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/MatrixDeactivateConfirmRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "type" : "object",
+                  "additionalProperties" : {
+                    "type" : "object"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/bff/admin/image-builds" : {
       "get" : {
         "tags" : [ "image-build-controller" ],
@@ -11579,6 +11643,33 @@
             "format" : "date-time"
           },
           "domain" : {
+            "type" : "string"
+          }
+        }
+      },
+      "MatrixDeactivateProposeRequest" : {
+        "required" : [ "mxid" ],
+        "type" : "object",
+        "properties" : {
+          "mxid" : {
+            "maxLength" : 255,
+            "minLength" : 0,
+            "type" : "string"
+          }
+        }
+      },
+      "MatrixDeactivateConfirmRequest" : {
+        "required" : [ "mxid" ],
+        "type" : "object",
+        "properties" : {
+          "mxid" : {
+            "maxLength" : 255,
+            "minLength" : 0,
+            "type" : "string"
+          },
+          "token" : {
+            "maxLength" : 128,
+            "minLength" : 0,
             "type" : "string"
           }
         }
