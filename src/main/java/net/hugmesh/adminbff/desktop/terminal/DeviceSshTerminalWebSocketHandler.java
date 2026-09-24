@@ -290,20 +290,26 @@ public class DeviceSshTerminalWebSocketHandler implements WebSocketHandler {
         log.info("[device-terminal] AUTHORIZED + transport opening device={} operator={} real={}"
                 + " transcript={}", device.id(), operator, transport.isReal(), transcriptSession);
         return transport.open(device.id(), device.hostname(), operator, cols, rows)
-                .flatMap(tty -> {
-                    // One chain per opened session (decision 104): created only once a transport
-                    // exists, so a refused/failed open records nothing beyond the audit lines above.
-                    WorkloadExecService.Transcript transcript =
-                            transcripts.newTranscript(transcriptSession, operator);
-                    Flux<WebSocketMessage> out = tty.output()
-                            .doOnNext(bytes -> transcript.append("out", bytes))
-                            .map(bytes -> session.textMessage(new String(bytes, StandardCharsets.UTF_8)));
-                    Mono<Void> in = session.receive()
-                            .doOnNext(msg -> handleInbound(msg, tty, transcript))
-                            .doFinally(sig -> tty.close())
-                            .then();
-                    return Mono.zip(session.send(out), in).then();
-                });
+                .flatMap(tty -> bridge(session, tty, transcriptSession, operator));
+    }
+
+    /**
+     * Pipe an OPENED device session to the WS session, recording both directions (decision 104).
+     * One chain per opened session: created only once a transport exists, so a refused/failed open
+     * records nothing beyond the audit lines.
+     */
+    private Mono<Void> bridge(WebSocketSession session, DeviceSshTransport.Session tty,
+                              String transcriptSession, String operator) {
+        WorkloadExecService.Transcript transcript =
+                transcripts.newTranscript(transcriptSession, operator);
+        Flux<WebSocketMessage> out = tty.output()
+                .doOnNext(bytes -> transcript.append("out", bytes))
+                .map(bytes -> session.textMessage(new String(bytes, StandardCharsets.UTF_8)));
+        Mono<Void> in = session.receive()
+                .doOnNext(msg -> handleInbound(msg, tty, transcript))
+                .doFinally(sig -> tty.close())
+                .then();
+        return Mono.zip(session.send(out), in).then();
     }
 
     private void handleInbound(WebSocketMessage msg, DeviceSshTransport.Session tty,

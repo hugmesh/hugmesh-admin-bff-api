@@ -462,27 +462,32 @@ public class ImageBuildService {
         return devices.findById(in.deviceId())
                 .map(Optional::of)
                 .defaultIfEmpty(Optional.empty())
-                .flatMap(found -> {
-                    if (found.isEmpty()) {
-                        // Not yet enrolled (no registry row): the dial seed is skipped, exactly as
-                        // before — we can only attach a dial to a device whose residency we can
-                        // verify — but now with a WARN naming the reason, because with the
-                        // BFF-minted dev-<id> this is the FIRST thing a real build hits
-                        // (enrollment issues its own id).
-                        log.warn("[imagegen] non-secret dial seed for build {} skipped: reported device"
-                                + " '{}' is not enrolled (no device_registry row with that id)",
-                                buildId, printable(in.deviceId()));
-                        return Mono.<Void>empty();
-                    }
-                    if (build.domain() == null || !build.domain().equals(found.get().domain())) {
-                        // Cross-tenant attach attempt — fail closed. Do NOT leak the device's brand.
-                        log.warn("[imagegen] DENY cross-tenant dial seed for build {} (build domain {}, "
-                                + "target device residency differs)", buildId, build.domain());
-                        return Mono.<Void>error(ApiException.forbidden(
-                                "ingest device does not belong to this build's tenant"));
-                    }
-                    return seedDial(buildId, in);
-                });
+                .flatMap(found -> seedIfResidentInBuildDomain(buildId, build, in, found));
+    }
+
+    /** The per-device half of {@link #seedNonSecretRegistry}: not enrolled -> WARN skip; resident in
+     *  another tenant -> 403 (fail closed); otherwise the dial seed. */
+    private Mono<Void> seedIfResidentInBuildDomain(String buildId, ImageBuild build,
+                                                   ImageBuildIngestRequest in,
+                                                   Optional<net.hugmesh.adminbff.device.Device> found) {
+        if (found.isEmpty()) {
+            // Not yet enrolled (no registry row): the dial seed is skipped, exactly as before — we
+            // can only attach a dial to a device whose residency we can verify — but now with a
+            // WARN naming the reason, because with the BFF-minted dev-<id> this is the FIRST thing
+            // a real build hits (enrollment issues its own id).
+            log.warn("[imagegen] non-secret dial seed for build {} skipped: reported device"
+                    + " '{}' is not enrolled (no device_registry row with that id)",
+                    buildId, printable(in.deviceId()));
+            return Mono.empty();
+        }
+        if (build.domain() == null || !build.domain().equals(found.get().domain())) {
+            // Cross-tenant attach attempt — fail closed. Do NOT leak the device's brand.
+            log.warn("[imagegen] DENY cross-tenant dial seed for build {} (build domain {}, "
+                    + "target device residency differs)", buildId, build.domain());
+            return Mono.error(ApiException.forbidden(
+                    "ingest device does not belong to this build's tenant"));
+        }
+        return seedDial(buildId, in);
     }
 
     /**
