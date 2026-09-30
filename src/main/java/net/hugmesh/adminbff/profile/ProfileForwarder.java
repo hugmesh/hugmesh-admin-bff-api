@@ -1,5 +1,6 @@
 package net.hugmesh.adminbff.profile;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -41,6 +42,8 @@ import java.util.Map;
  * deployment once the user-bff exposes the internal upsert; until then the seam stays
  * gated off (config-only flip, no code change).
  */
+@SuppressFBWarnings(value = "EI_EXPOSE_REP2",
+        justification = "Spring constructor injection: the container owns this singleton collaborator and it is never mutated by this class after construction; a defensive copy of a bean is meaningless (not caller-owned mutable data).")
 public class ProfileForwarder {
 
     private static final Logger log = LoggerFactory.getLogger(ProfileForwarder.class);

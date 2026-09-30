@@ -1,5 +1,7 @@
 package net.hugmesh.adminbff.device;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 /**
@@ -13,4 +15,8 @@ import java.util.List;
 public record DeviceWithLicenses(
         Device device,
         List<SshLicense> deviceLicenses) {
+
+    public DeviceWithLicenses {
+        deviceLicenses = deviceLicenses == null ? null : Collections.unmodifiableList(new ArrayList<>(deviceLicenses));
+    }
 }

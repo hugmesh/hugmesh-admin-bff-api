@@ -1,6 +1,8 @@
 package net.hugmesh.adminbff.cloudbackup;
 
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 /**
@@ -47,6 +49,10 @@ public record BackupSet(
         Instant createdAt,
         Instant startedAt,
         Instant completedAt) {
+
+    public BackupSet {
+        services = services == null ? null : Collections.unmodifiableList(new ArrayList<>(services));
+    }
 
     public static final String STATUS_PENDING = "pending";
     public static final String STATUS_RUNNING = "running";

@@ -1,5 +1,6 @@
 package net.hugmesh.adminbff.phone;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /**
@@ -26,6 +27,8 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * that fires only for an {@code 'azure-intune'} device).
  */
 @ConfigurationProperties(prefix = "app.phone-lock")
+@SuppressFBWarnings(value = {"EI_EXPOSE_REP", "EI_EXPOSE_REP2"},
+        justification = "Spring Boot @ConfigurationProperties nested-bean binding: the binder must reach and populate the live Headwind/MeshDeny/AzureIntune holders through these accessors; copies would silently drop bound values. Configuration holders, not caller-owned mutable data.")
 public class PhoneLockProperties {
 
     private Headwind headwind = new Headwind();

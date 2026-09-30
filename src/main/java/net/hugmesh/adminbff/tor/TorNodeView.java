@@ -1,6 +1,9 @@
 package net.hugmesh.adminbff.tor;
 
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
@@ -39,4 +42,8 @@ public record TorNodeView(
         long configGeneration,
         Instant lastReportedAt,
         long reportCount) {
+
+    public TorNodeView {
+        domains = domains == null ? null : Collections.unmodifiableMap(new LinkedHashMap<>(domains));
+    }
 }

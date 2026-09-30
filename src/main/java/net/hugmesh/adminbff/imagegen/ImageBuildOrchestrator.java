@@ -1,5 +1,6 @@
 package net.hugmesh.adminbff.imagegen;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -34,6 +35,8 @@ import java.util.concurrent.ConcurrentHashMap;
  * mount, never the manifest); {@code imageRef} / {@code keysRef} are non-secret pointers.
  */
 @Component
+@SuppressFBWarnings(value = "EI_EXPOSE_REP2",
+        justification = "Spring constructor injection: the container owns this singleton collaborator and it is never mutated by this class after construction; a defensive copy of a bean is meaningless (not caller-owned mutable data).")
 public class ImageBuildOrchestrator {
 
     private static final Logger log = LoggerFactory.getLogger(ImageBuildOrchestrator.class);

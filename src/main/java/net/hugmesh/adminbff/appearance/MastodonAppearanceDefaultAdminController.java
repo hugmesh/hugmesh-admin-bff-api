@@ -3,6 +3,9 @@ package net.hugmesh.adminbff.appearance;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.constraints.NotEmpty;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.validation.annotation.Validated;
@@ -58,7 +61,11 @@ public class MastodonAppearanceDefaultAdminController {
     }
 
     /** PUT body: one or more AppearancePreferences fields to set as the brand default. */
-    public record AppearanceDefaultUpdate(@NotEmpty Map<String, Object> prefs) {}
+    public record AppearanceDefaultUpdate(@NotEmpty Map<String, Object> prefs) {
+
+        public AppearanceDefaultUpdate {
+            prefs = prefs == null ? null : Collections.unmodifiableMap(new LinkedHashMap<>(prefs));
+        }}
 
     @PreAuthorize("hasRole('ADMIN')")
     @Operation(summary = "Set my brand's mastodon-ui appearance default.",

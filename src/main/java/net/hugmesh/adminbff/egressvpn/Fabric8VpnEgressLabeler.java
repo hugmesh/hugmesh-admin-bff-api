@@ -1,5 +1,6 @@
 package net.hugmesh.adminbff.egressvpn;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.fabric8.kubernetes.api.model.HasMetadata;
 import io.fabric8.kubernetes.api.model.LabelSelector;
 import io.fabric8.kubernetes.api.model.Pod;
@@ -45,6 +46,8 @@ import java.util.TreeSet;
  * {@code boundedElastic}, and every failure swallowed to a 0 count (retry next tick / next
  * mutation — the admin mutation that triggered a fast-path reconcile never fails on it).
  */
+@SuppressFBWarnings(value = "EI_EXPOSE_REP2",
+        justification = "Spring constructor injection: the container owns this singleton collaborator and it is never mutated by this class after construction; a defensive copy of a bean is meaningless (not caller-owned mutable data).")
 public class Fabric8VpnEgressLabeler implements VpnEgressLabeler {
 
     private static final Logger log = LoggerFactory.getLogger(Fabric8VpnEgressLabeler.class);

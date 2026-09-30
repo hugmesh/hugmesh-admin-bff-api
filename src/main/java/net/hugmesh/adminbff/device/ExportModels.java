@@ -1,5 +1,7 @@
 package net.hugmesh.adminbff.device;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 /**
@@ -41,6 +43,10 @@ public final class ExportModels {
             List<String> keyFingerprints,
             String via) {
 
+        public AuthorizedOperator {
+            keyFingerprints = keyFingerprints == null ? null : Collections.unmodifiableList(new ArrayList<>(keyFingerprints));
+        }
+
         // POST-VERIFY CORRECTION (2026-06-12): the export carries ONLY explicit ADMIN
         // licenses. The former VIA_SUPERADMIN_MESH provenance is REMOVED — the unscoped
         // signed export cannot see operator roles, so it must NEVER assert SUPERADMIN
@@ -60,6 +66,10 @@ public final class ExportModels {
             String meshId,
             long generation,
             List<AuthorizedOperator> operators) {
+
+        public ExportBody {
+            operators = operators == null ? null : Collections.unmodifiableList(new ArrayList<>(operators));
+        }
     }
 
     /**
