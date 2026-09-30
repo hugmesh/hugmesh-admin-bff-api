@@ -172,12 +172,18 @@ behind the same flag. Tests: `OptionalServiceReconcilerTest`,
 > `specs/cluster/apps/31-admin-bff-api.yaml` carries `automated:{prune,selfHeal}` with no
 > `ignoreDifferences`, so a manual `kubectl set env` is reverted on the next selfHeal pass.
 > Until that changes the toggle surface is honest but inert, and answers 503.
-> (2) `apps/16` is missing `/data/character-forge`, `/data/headwind`,
-> `/data/attestation-server` and `/data/meshbridge` pointers, so those greying mirrors are
-> selfHealed back to git; `character-forge` is the one of the four that is a MANAGED slug, and
-> the catalogue/toggle responses carry an explicit `warnings` entry for it.
-> (3) `meshbridge` has a 13a element and a ConfigMap key but no CRD enum value or seed CR, so
-> it is un-toggleable from the CR API at all (it at least fails loud, at the API server).
+> (2) CLOSED (#106) — this used to say `apps/16` lacked `/data/character-forge` and
+> `/data/meshbridge` and that `meshbridge` had no CRD enum value or seed CR. The generator had
+> fixed all of that while the registry and this repo's vendored fixtures still described the
+> old state, so `meshbridge` was refused as `NOT_IN_CRD_ENUM` (and its seeded CR ignored by
+> the reconciler) and `character-forge` carried a false selfHeal warning. Both are corrected
+> and the fixtures refreshed. `apps/16` still deliberately omits `/data/headwind` and
+> `/data/attestation-server`: those slugs are not-toggleable here, so nothing writes their keys.
+> (3) The risk that hid (2) is still open: the parity test cannot see a stale vendored
+> fixture, and `OptionalServiceManifestDriftTest` skips in this repo's CI. The generator's
+> slug-closure gate (`tests/scripts/test-optional-service-slug-closure.sh`), which parses
+> `OptionalServiceRegistry.java` against the live manifests, is what catches the resulting
+> registry drift. It does not compare the fixtures themselves.
 > (4) The `installed-services` ConfigMap (`hugmesh-policy` ns) that
 > `Fabric8InstalledServicesConfigMapWriter` writes is WRITE-ONLY: no Deployment mounts it, no
 > `configMapKeyRef` names it, and the user-facing greying reads `federation_modules` in

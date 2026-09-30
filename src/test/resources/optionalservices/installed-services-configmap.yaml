@@ -22,6 +22,38 @@
 #
 # Deployed by the policy bundle (manifests/policy/kustomization.yaml ->
 # apps/16-reserved-prefixes-policy.yaml, namespace hugmesh-policy).
+#
+# ⚠ RECORDED, NOT FIXED (measured 2026-08-26): THIS ConfigMap IS WRITE-ONLY.
+# A grep for the literal "installed-services" across every .java/.ts/.py/.go in the
+# org returns exactly ONE distinct line that names THIS object — CONFIGMAP_NAME in
+# admin-bff's Fabric8InstalledServicesConfigMapWriter, i.e. the writer itself. No
+# Deployment mounts it, no container has a configMapKeyRef to it, and no frontend
+# fetches it. Both the build-time renderer and the (dark) reconciler faithfully
+# maintain per-slug booleans that nothing reads back.
+#
+# WHAT ACTUALLY DRIVES THE USER-FACING GREYING: the `federation_modules` table in
+# the federation Postgres. The host shell resolves its remotes from
+# GET /api/federation/capabilities, which reads that table — which is why
+# manifests/federation-modules-gate/ exists at all: a USB built with
+# `--exclude-services akkoma` pruned every artefact and rendered installed:"false"
+# in BOTH places here, and the Mastodon entry STILL rendered in the shell, because
+# the selection had never touched federation_modules. _opt_render_federation_modules()
+# (scripts/_optional-services-lib.sh) now renders that table's UPDATEs from each
+# service's `federationModule.slug` in specs/cluster/optional-services.yaml, applied
+# by a PostSync hook Job. THAT is the greying path. See docs/OPTIONAL-SERVICES.md §3.1.
+#
+# WHY THE ABSENCE OF A CONSUMER IS EASY TO MISS: the name collides. A DIFFERENT,
+# per-brand ConfigMap `hugmesh-installed-services-<domainSlug>` in hugmesh-backend
+# IS read — by admin-bff's ConfigMapRunningServiceProvider (CONFIGMAP_PREFIX =
+# "hugmesh-installed-services") for the cloud-backup menu. Grepping the phrase finds
+# that reader and it looks like this object has one. It does not.
+#
+# DO NOT "FIX" THIS BY INVENTING A CONSUMER. The object still earns its place: it is
+# the ApplicationSet-adjacent declarative record of install state and the exemption
+# surface apps/16 keys off, and a consumer (a public-safe install-state endpoint) is
+# a deliberate design decision, not a gap to be filled by whoever reads this next.
+# It is documented here so the next person does not conclude from the writer's
+# existence that something downstream is reading it.
 apiVersion: v1
 kind: ConfigMap
 metadata:

@@ -16,7 +16,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class Fabric8InstalledServicesConfigMapWriterTest {
 
-    // The 12 controller-owned slugs (== OptionalServiceRegistry.slugs() == CRD enum).
+    // The controller-owned slugs (== OptionalServiceRegistry.slugs() == CRD enum). No count on
+    // purpose: the "12" that stood here was stale twice over (character-forge, then meshbridge).
     private static final List<String> MANAGED = new OptionalServiceRegistry().slugs();
 
     private Fabric8InstalledServicesConfigMapWriter writer() {
@@ -33,10 +34,13 @@ class Fabric8InstalledServicesConfigMapWriterTest {
         // it is pinned against the CRD spec.slug enum + the seed CRs by
         // OptionalServiceRegistryParityTest, and the literal 12 that used to sit here went stale
         // the moment character-forge was (correctly) added. What matters HERE is the write's
-        // SHAPE: every not-toggleable slug stays out, and the slug this writer used to omit is in.
+        // SHAPE: every not-toggleable slug stays out, and the slugs this writer used to omit are in.
         assertThat(patch.keySet())
                 .as("character-forge must now be written (it was a silently inert toggle)")
                 .contains("character-forge");
+        assertThat(patch.keySet())
+                .as("meshbridge must now be written (#106: the same silently inert shape)")
+                .contains("meshbridge");
         assertThat(patch.keySet())
                 .as("no platform-known-but-unactionable slug may be written")
                 .doesNotContainAnyElementsOf(new OptionalServiceRegistry().notToggleable().keySet());

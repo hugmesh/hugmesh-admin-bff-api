@@ -138,6 +138,26 @@ spec:
   enabled: false
   reason: build-seed (DEFAULT-OFF, runtime-only)
   requestedBy: generator:_opt_render_optionalservice_cr
+# meshbridge — BACKFILL 2026-08-26. This slug had a 13a ApplicationSet element and
+# an installed-services ConfigMap key since #374 but no CRD enum value and no seed
+# CR, so `spec.slug: meshbridge` was REJECTED by the API server and the runtime
+# add/remove path could not govern it at all. Enum value + this CR close that.
+# Like coturn it is RUNTIME-ONLY: the stage4 builders' _opt_render_optionalservice_cr
+# loop does NOT rewrite it (meshbridge is not in that hardcoded slug list), so this
+# literal `false` is the shipped value on every image and the bridge stays dark
+# until someone deliberately flips it — byte-identical behaviour to today.
+---
+apiVersion: platform.hugmesh.net/v1alpha1
+kind: OptionalService
+metadata:
+  name: meshbridge
+  namespace: devops
+  labels: { app.kubernetes.io/part-of: hugmesh.net }
+spec:
+  slug: meshbridge
+  enabled: false
+  reason: build-seed (DEFAULT-OFF, runtime-only; dependsOn tuwunel)
+  requestedBy: generator:_opt_render_optionalservice_cr
 ---
 apiVersion: platform.hugmesh.net/v1alpha1
 kind: OptionalService

@@ -915,11 +915,10 @@ tree; this is the post-deploy lever.
 - `GET ""` — the CATALOGUE: **every slug the platform knows**, joined with its live
   `OptionalService` CR state, plus `toggleable` and — when false — a NAMED
   `notToggleableReason`. A slug the reconciler cannot action is reported as such rather than
-  listed as if it worked. Today `meshbridge` is `NOT_IN_CRD_ENUM` (it has an `apps/13a`
-  element and an `installed-services` key but no CRD `spec.slug` enum value, so the API
-  server rejects its CR outright) and `workloadConsole` / `headwind` /
-  `attestation-server` are `NO_APPLICATIONSET_ELEMENT` (ConfigMap greying booleans with no
-  Application to create or prune).
+  listed as if it worked. Today `workloadConsole` / `headwind` / `attestation-server` are
+  `NO_APPLICATIONSET_ELEMENT` (ConfigMap greying booleans with no Application to create or
+  prune). The other reason, `NOT_IN_CRD_ENUM` (a 13a element but no CRD `spec.slug` enum
+  value, so the API server rejects the CR outright), applies to no slug today.
 - `PUT /{slug}` — set `enabled` with an audit `reason`, written to the CR's
   `spec.enabled` / `spec.reason` / `spec.requestedBy` (the SUPERADMIN's JWT subject). The
   Lease-gated `OptionalServiceReconciler` converges it onto the `apps/13a` ApplicationSet
@@ -930,9 +929,11 @@ carrying the named reason, with **no write attempted**; the reconciler wired to 
 (`app.optional-services.reconcile.enabled=false`, the shipped default) → 503 `dark: true`
 with no write, while the catalogue stays readable and says `reconcilerEnabled: false`; an
 API-server rejection → 422. A managed slug whose `/data/<slug>` pointer is missing from
-`apps/16`'s `ignoreDifferences` (today: `character-forge`) toggles for real on the
-ApplicationSet side but has its greying mirror reverted by ArgoCD `selfHeal`, and says so in
-a `warnings` entry on both the catalogue row and the toggle response.
+`apps/16`'s `ignoreDifferences` toggles for real on the ApplicationSet side but has its
+greying mirror reverted by ArgoCD `selfHeal`, and says so in a `warnings` entry on both the
+catalogue row and the toggle response. No managed slug has that gap today (the generator's
+`apps/16` carries a pointer for all of them); `character-forge` raised the warning until
+#106 even though its pointer had already landed.
 
 `character-forge` used to be a **silently inert toggle**: the CRD enum accepted it, a seed CR
 shipped for it, it had a 13a element and a ConfigMap key — and it was missing from
@@ -942,6 +943,15 @@ the reconciler logged "unknown slug — ignoring", wrote neither target and skip
 the CRD enum, the seed CRs, the 13a elements, the ConfigMap booleans and the `apps/16`
 pointers from vendored copies of the generator manifests and fails when any two disagree — an
 empty derivation is a hard failure, not a free pass.
+
+That test is only as current as its vendored copies, and #106 is what that costs: `meshbridge`
+had the same silently inert shape (the generator's CRD enum and seed CRs carried it while the
+registry refused it as `NOT_IN_CRD_ENUM` and the reconciler ignored its CR) and the test
+stayed green, because the copies predated the generator change. The generator's slug-closure
+gate (`tests/scripts/test-optional-service-slug-closure.sh`), which parses
+`OptionalServiceRegistry.java` against the live manifests, caught it. `meshbridge` is now
+managed and the copies were refreshed. `OptionalServiceManifestDriftTest` flags a stale copy
+only when a generator checkout is present, so this repo's own CI still cannot catch one.
 
 ### Internal (service-to-service, mTLS-bounded)
 

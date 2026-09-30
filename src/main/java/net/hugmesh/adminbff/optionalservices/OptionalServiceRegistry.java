@@ -39,6 +39,20 @@ import java.util.Map;
  * every field below) from the vendored generator manifests, so a slug added upstream fails
  * the build until it is classified here.
  *
+ * <h3>...and why the parity test alone did not stop it recurring (meshbridge, #106)</h3>
+ * The parity test is only as current as its VENDORED fixtures. {@code meshbridge} was parked
+ * in the not-toggleable half as {@link NotToggleable#NOT_IN_CRD_ENUM} while the generator's
+ * CRD enum and seed CRs already carried it (hugmesh-admin-bff-api#106 dates both to
+ * 2026-08-26), so the reconciler ignored its seeded CR exactly as it had ignored
+ * character-forge — and the parity test stayed green, because the vendored CRD copy it read
+ * still lacked the enum value. The same stale copy hid that apps/16 had gained a
+ * {@code /data/character-forge} pointer, so character-forge raised a selfHeal warning for a
+ * revert that no longer happens. What caught both was the generator-side gate
+ * ({@code hugmesh-generator tests/scripts/test-optional-service-slug-closure.sh}), which
+ * parses THIS file and compares it to the live manifests. Fixed 2026-09-24 together with a
+ * fixture refresh; {@code OptionalServiceManifestDriftTest} is what flags a stale fixture on a
+ * machine that has a generator checkout (it SKIPS in this repo's own CI).
+ *
  * <h3>Deliberately absent</h3>
  * {@code egress-vpn} / {@code tor} are NODE services (OpenRC + node reconcile agents), not
  * cluster Applications: they have no 13a element and no {@code installed-services} boolean, so
@@ -81,6 +95,13 @@ public class OptionalServiceRegistry {
          * from the CRD {@code spec.slug} enum, so the API server REJECTS an OptionalService CR
          * for it outright — there is no desired-state object to reconcile. It fails loud at the
          * API server; this entry makes the admin surface fail loud too, in advance.
+         *
+         * <p>No slug carries this reason today: {@code meshbridge} did until 2026-09-24, and by
+         * then the claim had been false for weeks (the generator's enum had gained it; see the
+         * class javadoc). The constant stays because it is the correct classification for the
+         * NEXT slug that gains a 13a element before its enum value, and both
+         * {@code OptionalServiceRegistryParityTest} and the generator's slug-closure gate check
+         * it against the CRD enum rather than trusting it.
          */
         NOT_IN_CRD_ENUM("no OptionalService CR can exist for this slug — it is absent from the "
                 + "CRD spec.slug enum, so the API server rejects the write"),
@@ -123,16 +144,29 @@ public class OptionalServiceRegistry {
                     "Character Studio (VN)", true),
             // character-forge — ADDED 2026-08-26. It already had a CRD enum value, a seed CR, a
             // 13a element and a ConfigMap key but was MISSING here, which made it a SILENTLY
-            // INERT toggle (see the class javadoc). apps/16 still carries no
-            // /data/character-forge ignoreDifferences pointer, so its greying mirror is
-            // selfHealed back to git — recorded as configMapSelfHealProtected=false and
-            // surfaced as a warning rather than hidden.
+            // INERT toggle (see the class javadoc). configMapSelfHealProtected flipped to true
+            // 2026-09-24 (#106): generator apps/16 carries /data/character-forge, so the
+            // selfHeal warning this entry used to raise described a revert that no longer
+            // happens.
             new Entry("character-forge",  "hugmesh-backend",   "/character-forge",
-                    "Character Forge (3D)", false),
+                    "Character Forge (3D)", true),
             new Entry("anubis",           "hugmesh-frontend",  null,
                     "Anubis (anti-scraper PoW gate)", true),
             new Entry("coturn",           "hugmesh-backend",   null,
                     "coturn (TURN/STUN server)", true),
+            // meshbridge — MANAGED since 2026-09-24 (#106). It was parked in NOT_TOGGLEABLE as
+            // NOT_IN_CRD_ENUM after the generator had already put it in the CRD enum and the
+            // seed CRs, which gave it the character-forge shape: the API server ACCEPTED the
+            // seeded CR and the reconciler ignored it. Every field is read off the generator's
+            // manifests: 13a element (namespace hugmesh-backend, placed after coturn), the
+            // installed-services services.json row (displayName, mountAt null — it is a
+            // backend bridge with no host-shell route) and the apps/16 /data/meshbridge
+            // pointer (so selfHeal-protected). NOT verified here: whether an actuated
+            // meshbridge Application comes up healthy — that needs a running cluster with the
+            // reconciler enabled. Its services.json row also says dependsOn tuwunel; this
+            // registry has no field for that and does not enforce it.
+            new Entry("meshbridge",       "hugmesh-backend",   null,
+                    "Mesh radio bridge (Meshtastic ↔ Matrix)", true),
             new Entry("edge-ai",          "hugmesh-inference", "/admin/edge-ai",
                     "Edge AI (inference)", true),
             new Entry("edge-ai-analysis", "hugmesh-inference", "/admin/edge-ai-analysis",
@@ -153,10 +187,8 @@ public class OptionalServiceRegistry {
         // ConfigMap boolean, no 13a element — its RBAC is the hardcoded
         // apps/14-workload-console-rbac.yaml, not ApplicationSet-owned.
         NOT_TOGGLEABLE.put("workloadConsole", NotToggleable.NO_APPLICATIONSET_ELEMENT);
-        // 13a element + ConfigMap key, but NOT in the CRD spec.slug enum or the seed CRs
-        // (an in-repo TODO on crd-optionalservice.yaml already flags it): the API server
-        // rejects `spec.slug: meshbridge`, so this one at least fails loud on its own.
-        NOT_TOGGLEABLE.put("meshbridge", NotToggleable.NOT_IN_CRD_ENUM);
+        // (meshbridge used to be listed here as NOT_IN_CRD_ENUM. It is a MANAGED entry above
+        // since #106 — the generator's CRD enum and seed CRs carry it.)
         // ConfigMap-only greying booleans (hugmesh-pki workloads, no 13a element).
         NOT_TOGGLEABLE.put("headwind", NotToggleable.NO_APPLICATIONSET_ELEMENT);
         NOT_TOGGLEABLE.put("attestation-server", NotToggleable.NO_APPLICATIONSET_ELEMENT);
