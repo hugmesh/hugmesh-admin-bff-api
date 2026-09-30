@@ -1,5 +1,6 @@
 package net.hugmesh.adminbff.domainregistry;
 
+import org.springframework.data.r2dbc.repository.Modifying;
 import org.springframework.data.r2dbc.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.data.repository.reactive.ReactiveCrudRepository;
@@ -43,10 +44,11 @@ public interface DomainRegistryRowRepository extends ReactiveCrudRepository<Doma
     String INSERT_RETURNING_ID = """
             INSERT INTO domain_registry \
             (cluster_domain, brand, org, ca_ref, ns_prefix, casdoor_org, mesh_tag, enabled, \
-             created_at, created_by_subject, updated_at, idp, selinux_level, selinux_level_pg) \
+             created_at, created_by_subject, updated_at, idp, selinux_level, selinux_level_pg, \
+             brand_title, headscale_url) \
             VALUES (:cluster_domain, :brand, :org, :ca_ref, :ns_prefix, :casdoor_org, \
              :mesh_tag, :enabled, :created_at, :created_by_subject, :updated_at, \
-             :idp, :selinux_level, :selinux_level_pg) \
+             :idp, :selinux_level, :selinux_level_pg, :brand_title, :headscale_url) \
             RETURNING id""";
 
     @Query(INSERT_RETURNING_ID)
@@ -63,7 +65,66 @@ public interface DomainRegistryRowRepository extends ReactiveCrudRepository<Doma
                                    @Param("updated_at") Instant updatedAt,
                                    @Param("idp") String idp,
                                    @Param("selinux_level") String selinuxLevel,
-                                   @Param("selinux_level_pg") String selinuxLevelPg);
+                                   @Param("selinux_level_pg") String selinuxLevelPg,
+                                   @Param("brand_title") String brandTitle,
+                                   @Param("headscale_url") String headscaleUrl);
+
+    /**
+     * The node agent's reconcile ACK (decision 89b, hugmesh-admin-bff-api#6 item 3) — the FIRST
+     * legitimate writer of the band-190 status columns. A compare-and-set on the generation:
+     * the row moves only when the reported generation is STRICTLY GREATER than the stored one,
+     * so a delayed, replayed or out-of-order ack can never walk {@code last_reconciled_generation}
+     * backwards, and an equal one is a no-op. Returns the rows updated (0 = unknown domain OR a
+     * stale generation; the caller tells them apart).
+     *
+     * <p>{@code ca_provisioned} is DELIBERATELY absent from the SET list: decision 87a = B moves
+     * CA creation to an admin-bff Vault step, so what a node reports about a CA is not the
+     * source of truth for it.
+     */
+    String RECORD_RECONCILE_ACK = """
+            UPDATE domain_registry \
+            SET appset_registered = :appset_registered, \
+                last_reconciled_generation = :generation, \
+                updated_at = :updated_at \
+            WHERE cluster_domain = :cluster_domain \
+              AND last_reconciled_generation < :generation""";
+
+    @Modifying
+    @Query(RECORD_RECONCILE_ACK)
+    Mono<Long> recordReconcileAck(@Param("cluster_domain") String clusterDomain,
+                                  @Param("appset_registered") boolean appsetRegistered,
+                                  @Param("generation") long generation,
+                                  @Param("updated_at") Instant updatedAt);
+
+    /**
+     * The SUPERADMIN "allocate now" write (decision 89c, #6 item 5) for a row registered before
+     * decision 29. ONE statement, so the slug and the MCS pair land together or not at all.
+     *
+     * <p>It is a compare-and-set on the row's CURRENT state: a {@code ns_prefix} that is still
+     * NULL (or already equals the target, when only the pair is being allocated), and a pair that
+     * is still NULL/NULL (or already equals the target, when only the slug is being set). A
+     * concurrent allocate that got there first makes this update 0 rows instead of overwriting
+     * it. The UNIQUE constraints on {@code ns_prefix} and both MCS columns still arbitrate a
+     * collision with ANOTHER row; the caller retries only the MCS one.
+     */
+    String ALLOCATE_NOW = """
+            UPDATE domain_registry \
+            SET ns_prefix = :ns_prefix, \
+                selinux_level = :selinux_level, \
+                selinux_level_pg = :selinux_level_pg, \
+                updated_at = :updated_at \
+            WHERE id = :id \
+              AND (ns_prefix IS NULL OR ns_prefix = :ns_prefix) \
+              AND ((selinux_level IS NULL AND selinux_level_pg IS NULL) \
+                   OR (selinux_level = :selinux_level AND selinux_level_pg = :selinux_level_pg))""";
+
+    @Modifying
+    @Query(ALLOCATE_NOW)
+    Mono<Long> allocateNow(@Param("id") String id,
+                           @Param("ns_prefix") String nsPrefix,
+                           @Param("selinux_level") String selinuxLevel,
+                           @Param("selinux_level_pg") String selinuxLevelPg,
+                           @Param("updated_at") Instant updatedAt);
 
     /** Every registered domain, natural-key ordered ({@code ORDER BY cluster_domain}). */
     Flux<DomainRegistryRow> findAllByOrderByClusterDomain();

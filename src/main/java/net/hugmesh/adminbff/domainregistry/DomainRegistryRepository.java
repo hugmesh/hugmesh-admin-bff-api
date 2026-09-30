@@ -80,7 +80,7 @@ public class DomainRegistryRepository {
         return repo.insertReturningId(d.clusterDomain(), d.brand(), d.org(), d.caRef(),
                         d.nsPrefix(), d.casdoorOrg(), d.meshTag(), d.enabled(), now,
                         createdBySubject, now, DomainIdp.normalize(d.idp()),
-                        pair.level(), pair.levelPg())
+                        pair.level(), pair.levelPg(), d.brandTitle(), d.headscaleUrl())
                 .flatMap(genId -> repo.findById(genId).map(DomainRegistryRow::toDomain));
     }
 
@@ -91,11 +91,71 @@ public class DomainRegistryRepository {
     private Mono<McsCategoryAllocator.McsPair> allocateFor(DomainRegistration d) {
         return McsCategoryAllocator.pairOf(d.selinuxLevel(), d.selinuxLevelPg())
                 .map(DomainRegistryRepository::checkedExplicitPair)
-                .orElseGet(() -> repo.findAll()
-                        .map(DomainRegistryRow::selinuxLevel)
-                        .filter(level -> level != null && !level.isBlank())
-                        .collectList()
-                        .map(McsCategoryAllocator::allocate));
+                .orElseGet(() -> takenLevels().map(McsCategoryAllocator::allocate));
+    }
+
+    /**
+     * Every non-blank {@code selinux_level} currently stored — the allocator's taken set.
+     *
+     * <p>FILTER BEFORE MAP. A row registered before decision 29 has a NULL {@code selinux_level},
+     * and Reactor's {@code map} refuses a null result with a NullPointerException. The original
+     * {@code map(selinuxLevel).filter(nonNull)} order therefore made EVERY insert fail with a 500
+     * as soon as one pre-decision row existed — exactly the rows allocate-now exists to repair.
+     */
+    private Mono<java.util.List<String>> takenLevels() {
+        return repo.findAll()
+                .filter(row -> row.selinuxLevel() != null && !row.selinuxLevel().isBlank())
+                .map(DomainRegistryRow::selinuxLevel)
+                .collectList();
+    }
+
+    /** Whether the registry holds no row at all (the first-start import's precondition). */
+    public Mono<Boolean> isEmpty() {
+        return repo.count().map(n -> n == 0L);
+    }
+
+    /**
+     * Record a node agent's reconcile ACK (decision 89b): {@code appset_registered} and a
+     * STRICTLY-INCREASING {@code last_reconciled_generation}, never {@code ca_provisioned}.
+     * Emits the rows updated: {@code 1} when the ack advanced the row, {@code 0} when the domain
+     * is unknown OR the generation is not newer than the stored one.
+     */
+    public Mono<Long> recordReconcileAck(String clusterDomain, boolean appsetRegistered,
+                                         long generation) {
+        return repo.recordReconcileAck(clusterDomain, appsetRegistered, generation, Instant.now());
+    }
+
+    /**
+     * The SUPERADMIN "allocate now" write (decision 89c) for a row registered before decision 29:
+     * store {@code slug} (the row's own slug when it already has one) and an MCS pair (the row's
+     * own pair when it already has one, else the lowest free pair) in ONE compare-and-set UPDATE.
+     *
+     * <p>Same collision discipline as {@link #insert}: a pair taken concurrently by another row
+     * trips {@code uq_domain_registry_selinux_level*}, and the allocation is retried against a
+     * re-read taken set up to {@link #MCS_ALLOCATION_ATTEMPTS} times. Every other error (the
+     * {@code ns_prefix} UNIQUE violation included) propagates. EMPTY when the compare-and-set
+     * matched no row — a concurrent allocate got there first.
+     */
+    public Mono<DomainRegistration> allocateNow(DomainRegistration current, String slug) {
+        return allocateNowAttempt(current, slug, 1);
+    }
+
+    private Mono<DomainRegistration> allocateNowAttempt(DomainRegistration current, String slug,
+                                                        int attempt) {
+        Mono<McsCategoryAllocator.McsPair> pair =
+                McsCategoryAllocator.pairOf(current.selinuxLevel(), current.selinuxLevelPg())
+                        .map(Mono::just)
+                        .orElseGet(() -> takenLevels().map(McsCategoryAllocator::allocate));
+        return pair
+                .flatMap(p -> repo.allocateNow(current.id(), slug, p.level(), p.levelPg(),
+                        Instant.now()))
+                .flatMap(updated -> updated == 1L
+                        ? repo.findById(current.id()).map(DomainRegistryRow::toDomain)
+                        : Mono.<DomainRegistration>empty())
+                .onErrorResume(e -> McsCategoryAllocator.isCategoryCollision(e)
+                                && attempt < MCS_ALLOCATION_ATTEMPTS
+                        ? allocateNowAttempt(current, slug, attempt + 1)
+                        : Mono.error(e));
     }
 
     /**
@@ -140,8 +200,8 @@ public class DomainRegistryRepository {
      * Update the MUTABLE fields of an existing domain (matched by {@code cluster_domain})
      * and re-read the row. The PK ({@code id}), {@code cluster_domain}, {@code created_at}
      * and {@code created_by_subject} are IMMUTABLE — only brand/org/ca_ref/ns_prefix/
-     * casdoor_org/mesh_tag/enabled change (and {@code updated_at} is bumped). Empty if no
-     * domain with that {@code cluster_domain} exists.
+     * casdoor_org/mesh_tag/enabled/idp/brand_title/headscale_url change (and {@code updated_at}
+     * is bumped). Empty if no domain with that {@code cluster_domain} exists.
      *
      * <p>DECISION 29: {@code ns_prefix} joins that immutable set — it is the domain's SLUG,
      * and it names the Vault path as well as the namespace and the Application, so a rename is
@@ -179,6 +239,7 @@ public class DomainRegistryRepository {
                 existing.createdAt(), existing.createdBySubject(), Instant.now(),
                 existing.caProvisioned(), existing.appsetRegistered(),
                 existing.lastReconciledGeneration(), DomainIdp.normalize(d.idp()),
-                existing.selinuxLevel(), existing.selinuxLevelPg(), false);
+                existing.selinuxLevel(), existing.selinuxLevelPg(),
+                d.brandTitle(), d.headscaleUrl(), false);
     }
 }

@@ -91,12 +91,20 @@ public class DomainRegistryService {
         if (idpRefusal.isPresent()) {
             return Mono.error(ApiException.badRequest(idpRefusal.get()));
         }
+        // DECISION 87e — brand_title / headscale_url are optional, but a value the brand-repo
+        // renderer would refuse is refused HERE, not discovered later on a node.
+        String brandTitle = emptyToNull(req.brandTitle());
+        String headscaleUrl = emptyToNull(req.headscaleUrl());
+        var brandRefusal = brandFieldRefusal(brandTitle, headscaleUrl);
+        if (brandRefusal.isPresent()) {
+            return Mono.error(ApiException.badRequest(brandRefusal.get()));
+        }
         DomainRegistration draft = new DomainRegistration(
                 null, clusterDomain, req.brand(), req.org(), req.caRef(), req.nsPrefix().trim(),
                 req.casdoorOrg(), req.meshTag(),
                 !Boolean.FALSE.equals(req.enabled()),
                 null, createdBySubject, null, false, false, 0L,
-                DomainIdp.normalize(req.idp()), null, null);
+                DomainIdp.normalize(req.idp()), null, null, brandTitle, headscaleUrl);
         String slug = req.nsPrefix().trim();
         return repo.findByClusterDomain(clusterDomain)
                 .flatMap(existing -> Mono.<DomainRegistration>error(ApiException.conflict(
@@ -127,6 +135,13 @@ public class DomainRegistryService {
                 : DomainIdp.refusalReason(req.idp());
         if (idpRefusal.isPresent()) {
             return Mono.error(ApiException.badRequest(idpRefusal.get()));
+        }
+        // DECISION 87e: null leaves the stored value; "" clears it; anything else must pass the
+        // renderer's rules.
+        var brandRefusal = brandFieldRefusal(emptyToNull(req.brandTitle()),
+                emptyToNull(req.headscaleUrl()));
+        if (brandRefusal.isPresent()) {
+            return Mono.error(ApiException.badRequest(brandRefusal.get()));
         }
         return repo.findByClusterDomain(clusterDomain)
                 .switchIfEmpty(Mono.error(ApiException.notFound(
@@ -200,11 +215,145 @@ public class DomainRegistryService {
                 current.caProvisioned(), current.appsetRegistered(),
                 current.lastReconciledGeneration(),
                 req.idp() == null ? current.idp() : DomainIdp.normalize(req.idp()),
-                current.selinuxLevel(), current.selinuxLevelPg());
+                current.selinuxLevel(), current.selinuxLevelPg(),
+                req.brandTitle() == null ? current.brandTitle() : emptyToNull(req.brandTitle()),
+                req.headscaleUrl() == null ? current.headscaleUrl() : emptyToNull(req.headscaleUrl()));
         return repo.update(merged)
                 .doOnNext(saved -> log.info(
                         "[domain-registry] updated cluster_domain={} enabled={} (id={})",
                         saved.clusterDomain(), saved.enabled(), saved.id()));
+    }
+
+    /** {@code null} for a null or empty string — "not set" for the two decision-87e fields. */
+    private static String emptyToNull(String value) {
+        return value == null || value.isEmpty() ? null : value;
+    }
+
+    /** The first refusal among the two decision-87e fields, skipping the ones not set. */
+    private static java.util.Optional<String> brandFieldRefusal(String brandTitle,
+                                                                String headscaleUrl) {
+        if (brandTitle != null) {
+            var refusal = DomainBrandFields.titleRefusal(brandTitle);
+            if (refusal.isPresent()) {
+                return refusal;
+            }
+        }
+        return headscaleUrl == null ? java.util.Optional.empty()
+                : DomainBrandFields.headscaleUrlRefusal(headscaleUrl);
+    }
+
+    /**
+     * SUPERADMIN "allocate now" (operator decision 89c = A, hugmesh-admin-bff-api#6 item 5) for a
+     * domain registered before decision 29, whose row has no MCS pair and possibly no slug, and so
+     * can never be provisioned: update refuses a slug that differs from the stored one (a NULL one
+     * included) and there is no delete.
+     *
+     * <ul>
+     *   <li>a NULL pair is allocated from {@link McsCategoryAllocator} under the same UNIQUE
+     *       constraints and retry as an insert;</li>
+     *   <li>a NULL slug is set ONCE from {@code requestedSlug}, validated by {@link DomainSlug}
+     *       and checked for uniqueness like a create;</li>
+     *   <li>a row that already has both is refused with 409 — there is nothing to allocate, and
+     *       re-allocating a live row's pair would move a running workload's category;</li>
+     *   <li>a slug that is already set cannot be changed here either (409): the immutability
+     *       rule of {@link #update} stands.</li>
+     * </ul>
+     * A row holding only ONE half of a pair was hand-edited; it is refused (409) rather than
+     * completed, because completing it would mean trusting a value nothing allocated.
+     *
+     * <p>Every successful call writes an AUDIT log line naming the actor, the domain, the slug and
+     * the pair.
+     */
+    public Mono<DomainRegistration> allocateNow(String clusterDomain, String requestedSlug,
+                                                String actor) {
+        String wanted = requestedSlug == null ? null : requestedSlug.trim();
+        return get(clusterDomain).flatMap(current -> allocateNowFor(current, wanted, actor));
+    }
+
+    /** The allocate-now decision for one loaded row — see {@link #allocateNow}. */
+    private Mono<DomainRegistration> allocateNowFor(DomainRegistration current, String wanted,
+                                                    String actor) {
+        String clusterDomain = current.clusterDomain();
+        boolean noLevel = isBlank(current.selinuxLevel());
+        boolean noLevelPg = isBlank(current.selinuxLevelPg());
+        if (noLevel != noLevelPg) {
+            return Mono.<DomainRegistration>error(ApiException.conflict(
+                    "domain '" + clusterDomain + "' holds half an MCS pair (selinux_level="
+                            + current.selinuxLevel() + ", selinux_level_pg="
+                            + current.selinuxLevelPg() + "). Nothing allocates half a pair, "
+                            + "so the row was edited by hand; fix it by hand."));
+        }
+        boolean needsPair = noLevel;
+        boolean needsSlug = isBlank(current.nsPrefix());
+        if (!needsPair && !needsSlug) {
+            return Mono.<DomainRegistration>error(ApiException.conflict(
+                    "domain '" + clusterDomain + "' already has its slug '"
+                            + current.nsPrefix() + "' and its MCS pair ("
+                            + current.selinuxLevel() + ", " + current.selinuxLevelPg()
+                            + "); there is nothing to allocate"));
+        }
+        if (!needsSlug) {
+            if (wanted != null && !wanted.isEmpty() && !wanted.equals(current.nsPrefix())) {
+                return Mono.<DomainRegistration>error(ApiException.conflict(
+                        "nsPrefix is immutable: domain '" + clusterDomain + "' is slug '"
+                                + current.nsPrefix() + "' and cannot be renamed to '"
+                                + wanted + "'. Allocate-now only sets a slug that is missing."));
+            }
+            return allocate(current, current.nsPrefix(), actor);
+        }
+        var slugRefusal = DomainSlug.refusalReason(wanted);
+        if (slugRefusal.isPresent()) {
+            return Mono.<DomainRegistration>error(ApiException.badRequest(
+                    "domain '" + clusterDomain + "' has no slug yet, so allocate-now needs "
+                            + "one: " + slugRefusal.get()));
+        }
+        return repo.findByNsPrefix(wanted)
+                .flatMap(clash -> Mono.<DomainRegistration>error(ApiException.conflict(
+                        "slug '" + wanted + "' is already used by domain '"
+                                + clash.clusterDomain() + "'; it names the Vault path "
+                                + DomainSlug.vaultPath(wanted) + " and cannot be shared")))
+                .switchIfEmpty(Mono.defer(() -> allocate(current, wanted, actor)));
+    }
+
+    /** The allocate-now write itself, with its refusals mapped to clean 409s and its audit line. */
+    private Mono<DomainRegistration> allocate(DomainRegistration current, String slug,
+                                              String actor) {
+        return repo.allocateNow(current, slug)
+                .switchIfEmpty(Mono.error(ApiException.conflict(
+                        "domain '" + current.clusterDomain() + "' was changed while its slug or "
+                                + "MCS pair was being allocated; re-read it and retry")))
+                .onErrorMap(McsCategoryAllocator.Exhausted.class,
+                        ex -> ApiException.conflict(ex.getMessage()))
+                .onErrorMap(DomainSlug::isSlugCollision, ex -> ApiException.conflict(
+                        "slug '" + slug + "' was registered by another domain concurrently; it "
+                                + "names the Vault path " + DomainSlug.vaultPath(slug)
+                                + " and cannot be shared"))
+                .doOnNext(saved -> log.warn("[domain-registry] AUDIT allocate-now actor={} "
+                                + "cluster_domain={} slug={} (was {}) selinux_level={} "
+                                + "selinux_level_pg={} (was {}/{})",
+                        actor, saved.clusterDomain(), saved.nsPrefix(), current.nsPrefix(),
+                        saved.selinuxLevel(), saved.selinuxLevelPg(),
+                        current.selinuxLevel(), current.selinuxLevelPg()));
+    }
+
+    private static boolean isBlank(String value) {
+        return value == null || value.isBlank();
+    }
+
+    /**
+     * A node agent's reconcile ACK (decision 89b; hugmesh-generator
+     * {@code specs/usr/sbin/hugmesh-domain-reconcile:ack_generation}). Advances
+     * {@code appset_registered} and {@code last_reconciled_generation} only when the reported
+     * generation is newer than the stored one; {@code ca_provisioned} is never written here
+     * (decision 87a = B). Emits {@code true} when the ack advanced the row, {@code false} when it
+     * was stale; a 404 for a domain that is not registered.
+     */
+    public Mono<Boolean> recordReconcileAck(String clusterDomain, boolean appsetRegistered,
+                                            long generation) {
+        return repo.recordReconcileAck(clusterDomain, appsetRegistered, generation)
+                .flatMap(updated -> updated == 1L ? Mono.just(Boolean.TRUE)
+                        // 0 rows: stale generation OR unknown domain — only a read can tell.
+                        : get(clusterDomain).map(existing -> Boolean.FALSE));
     }
 
     /**

@@ -181,7 +181,7 @@ class DomainRegistryControllerTest {
                         java.util.List.of(new DomainExportModels.DomainEntry("acme.test", "acme",
                                 "Acme Inc", "vault:pki/acme", "acme", "acme-org", "tag:acme",
                                 false, false, 0L,
-                                DomainIdp.OWN, "s0:c256", "s0:c257"))),
+                                DomainIdp.OWN, "s0:c256", "s0:c257", null, null))),
                 "hash", "sig", "pub", true);
         when(export.exportRegistry(eq("fp-1"))).thenReturn(Mono.just(signed));
         asSuperadmin().get().uri("/bff/admin/domains/export?node=fp-1")
@@ -397,5 +397,59 @@ class DomainRegistryControllerTest {
                 .expectBody()
                 .jsonPath("$[0].idp").isEqualTo("superdomain")
                 .jsonPath("$[0].selinuxLevel").doesNotExist();
+    }
+
+    // ── allocate-now (decision 89c) ───────────────────────────────────────────────────
+
+    @Test
+    void allocateNow_asSuperadmin_passesTheBodySlugAndTheActor() {
+        when(service.allocateNow("legacy.test", "legacy", SUBJECT)).thenReturn(Mono.just(ownSample()));
+        asSuperadmin().post().uri("/bff/admin/domains/legacy.test/allocate")
+                .contentType(MediaType.APPLICATION_JSON).bodyValue("{\"nsPrefix\":\"legacy\"}")
+                .exchange().expectStatus().isOk()
+                .expectBody().jsonPath("$.selinuxLevel").isEqualTo("s0:c256");
+        verify(service).allocateNow("legacy.test", "legacy", SUBJECT);
+    }
+
+    @Test
+    void allocateNow_withoutABody_passesNoSlug() {
+        when(service.allocateNow("legacy.test", null, SUBJECT)).thenReturn(Mono.just(ownSample()));
+        asSuperadmin().post().uri("/bff/admin/domains/legacy.test/allocate")
+                .exchange().expectStatus().isOk();
+        verify(service).allocateNow("legacy.test", null, SUBJECT);
+    }
+
+    @Test
+    void allocateNow_conflictFromTheService_is409() {
+        when(service.allocateNow(anyString(), any(), anyString()))
+                .thenReturn(Mono.error(ApiException.conflict("nothing to allocate")));
+        asSuperadmin().post().uri("/bff/admin/domains/legacy.test/allocate")
+                .exchange().expectStatus().isEqualTo(409);
+    }
+
+    @Test
+    void allocateNow_asAdmin_isForbidden_andNeverAllocates() {
+        asAdmin().post().uri("/bff/admin/domains/legacy.test/allocate")
+                .exchange().expectStatus().isForbidden();
+        verify(service, never()).allocateNow(anyString(), any(), anyString());
+    }
+
+    @Test
+    void allocateNow_asUser_isForbidden_andNeverAllocates() {
+        asUser().post().uri("/bff/admin/domains/legacy.test/allocate")
+                .exchange().expectStatus().isForbidden();
+        verify(service, never()).allocateNow(anyString(), any(), anyString());
+    }
+
+    @Test
+    void responses_carryTheDecision87eFields() {
+        when(service.list()).thenReturn(Flux.just(new DomainRegistration("dom-3", "b.test", "b",
+                "B", null, "b", null, null, true, Instant.now(), SUBJECT, Instant.now(), false, false,
+                0L, DomainIdp.OWN, "s0:c256", "s0:c257", "Brand B", "https://hs.b.test")));
+        asSuperadmin().get().uri("/bff/admin/domains")
+                .exchange().expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$[0].brandTitle").isEqualTo("Brand B")
+                .jsonPath("$[0].headscaleUrl").isEqualTo("https://hs.b.test");
     }
 }

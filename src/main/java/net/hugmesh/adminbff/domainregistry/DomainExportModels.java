@@ -37,8 +37,8 @@ public final class DomainExportModels {
      * needs to materialise the per-brand namespaces / CA / Casdoor org / mesh and to gate the
      * "registered but not yet provisioned" state.
      *
-     * <p><b>The three DECISION-29 fields ({@code idp} + the MCS pair) ride OUTSIDE the
-     * signature.</b> See {@link DomainRegistryExportService#canonicalBytes}: the consumer half
+     * <p><b>The three DECISION-29 fields ({@code idp} + the MCS pair) and the two DECISION-87e
+     * fields ({@code brandTitle}, {@code headscaleUrl}) ride OUTSIDE the signature.</b> See {@link DomainRegistryExportService#canonicalBytes}: the consumer half
      * (hugmesh-generator {@code specs/usr/lib/hugmesh/domain-verify.sh}) reconstructs the
      * canonical bytes from exactly the TEN v1 fields, byte for byte, and fails CLOSED on any
      * divergence — so adding a field to the SIGNED bytes is a lockstep two-repo change (the
@@ -77,6 +77,14 @@ public final class DomainExportModels {
      *                        must treat as NOT provisionable rather than substituting a default
      * @param selinuxLevelPg  the MCS category allocated to the domain's Postgres pod
      *                        ({@code s0:cNN}, DECISION 29c) — always the ODD half of the pair
+     * @param brandTitle      the brand's display title (DECISION 87e) — hugmesh-generator
+     *                        {@code generate-brand-repos.sh}'s {@code BRAND_TITLE}. {@code null}
+     *                        when the SUPERADMIN has not set one; the node agent then keeps its
+     *                        {@code BRAND_TITLE := brand} derivation. UNSIGNED, like the
+     *                        decision-29 fields
+     * @param headscaleUrl    the brand's headscale control URL (DECISION 87e) — the renderer's
+     *                        {@code HEADSCALE_URL}. {@code null} when not set; the agent then
+     *                        derives {@code https://headscale.<clusterDomain>}. UNSIGNED
      */
     public record DomainEntry(
             String clusterDomain,
@@ -91,7 +99,9 @@ public final class DomainExportModels {
             long generation,
             String idp,
             String selinuxLevel,
-            String selinuxLevelPg) {
+            String selinuxLevelPg,
+            String brandTitle,
+            String headscaleUrl) {
     }
 
     /**

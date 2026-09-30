@@ -46,7 +46,7 @@ class DomainRegistryServiceTest {
     private static CreateDomainRequest create(String clusterDomain, String slug) {
         return new CreateDomainRequest(clusterDomain, "acme", "Acme Inc", "vault:pki/acme",
                 slug, "acme-org", "tag:acme", null /* enabled omitted -> defaults true */,
-                null /* idp omitted -> defaults superdomain */);
+                null /* idp omitted -> defaults superdomain */, null, null);
     }
 
     @Test
@@ -81,7 +81,7 @@ class DomainRegistryServiceTest {
 
         // Only brand + enabled supplied; org/caRef/etc. are null -> keep current values.
         UpdateDomainRequest req = new UpdateDomainRequest(
-                "renamed", null, null, null, null, null, false, null);
+                "renamed", null, null, null, null, null, false, null, null, null);
         DomainRegistration updated = svc.update("up.test", req).block();
 
         assertThat(updated).isNotNull();
@@ -104,7 +104,7 @@ class DomainRegistryServiceTest {
 
     @Test
     void update_unknownDomain_is404() {
-        UpdateDomainRequest req = new UpdateDomainRequest(null, null, null, null, null, null, true, null);
+        UpdateDomainRequest req = new UpdateDomainRequest(null, null, null, null, null, null, true, null, null, null);
         assertThatThrownBy(() -> svc().update("ghost.test", req).block())
                 .isInstanceOf(ApiException.class)
                 .satisfies(e -> assertThat(((ApiException) e).status().value()).isEqualTo(404));
@@ -127,7 +127,7 @@ class DomainRegistryServiceTest {
         // Before this, a domain could be registered with no slug at all — unprovisionable,
         // and nothing said so until an ArgoCD sync failed.
         CreateDomainRequest noSlug = new CreateDomainRequest("noslug.test", "acme", "Acme Inc",
-                "vault:pki/acme", null, "acme-org", "tag:acme", null, null);
+                "vault:pki/acme", null, "acme-org", "tag:acme", null, null, null, null);
         assertThatThrownBy(() -> svc().create(noSlug, "superadmin@infra").block())
                 .isInstanceOf(ApiException.class)
                 .satisfies(e -> assertThat(((ApiException) e).status().value()).isEqualTo(400))
@@ -138,7 +138,7 @@ class DomainRegistryServiceTest {
     void create_withANonLabelNsPrefix_is400() {
         // "bad.slug" would expand to the namespace "bad.slug-pki", which Kubernetes rejects.
         CreateDomainRequest badSlug = new CreateDomainRequest("bad.test", "acme", "Acme Inc",
-                "vault:pki/acme", "bad.slug", "acme-org", "tag:acme", null, null);
+                "vault:pki/acme", "bad.slug", "acme-org", "tag:acme", null, null, null, null);
         assertThatThrownBy(() -> svc().create(badSlug, "superadmin@infra").block())
                 .isInstanceOf(ApiException.class)
                 .satisfies(e -> assertThat(((ApiException) e).status().value()).isEqualTo(400))
@@ -150,7 +150,7 @@ class DomainRegistryServiceTest {
         // DECISION 29b: idp is a real column with a CLOSED vocabulary. Anything else would
         // sit in the row until the CHECK constraint or the generator's selector met it.
         CreateDomainRequest junkIdp = new CreateDomainRequest("idp.test", "acme", "Acme Inc",
-                "vault:pki/acme", "idp", "acme-org", "tag:acme", null, "entra");
+                "vault:pki/acme", "idp", "acme-org", "tag:acme", null, "entra", null, null);
         assertThatThrownBy(() -> svc().create(junkIdp, "superadmin@infra").block())
                 .isInstanceOf(ApiException.class)
                 .satisfies(e -> assertThat(((ApiException) e).status().value()).isEqualTo(400))
@@ -175,7 +175,7 @@ class DomainRegistryServiceTest {
     @Test
     void create_ownIdp_isStoredAsOwn() {
         CreateDomainRequest own = new CreateDomainRequest("own.test", "acme", "Acme Inc",
-                "vault:pki/acme", "own", "acme-org", "tag:acme", null, DomainIdp.OWN);
+                "vault:pki/acme", "own", "acme-org", "tag:acme", null, DomainIdp.OWN, null, null);
         DomainRegistration saved = svc().create(own, "s@infra").block();
         assertThat(saved).isNotNull();
         assertThat(saved.idp()).isEqualTo(DomainIdp.OWN);
@@ -202,7 +202,7 @@ class DomainRegistryServiceTest {
         svc.create(create("slug.test", "before"), "s@infra").block();
 
         UpdateDomainRequest rename = new UpdateDomainRequest(
-                null, null, null, "after", null, null, null, null);
+                null, null, null, "after", null, null, null, null, null, null);
         assertThatThrownBy(() -> svc.update("slug.test", rename).block())
                 .isInstanceOf(ApiException.class)
                 .satisfies(e -> assertThat(((ApiException) e).status().value()).isEqualTo(409))
@@ -219,7 +219,7 @@ class DomainRegistryServiceTest {
         DomainRegistryService svc = svc();
         svc.create(create("echo.test", "echo"), "s@infra").block();
         UpdateDomainRequest echo = new UpdateDomainRequest(
-                "renamed", null, null, "echo", null, null, null, null);
+                "renamed", null, null, "echo", null, null, null, null, null, null);
         DomainRegistration updated = svc.update("echo.test", echo).block();
         assertThat(updated).isNotNull();
         assertThat(updated.brand()).isEqualTo("renamed");
@@ -231,7 +231,7 @@ class DomainRegistryServiceTest {
         DomainRegistryService svc = svc();
         svc.create(create("badidp.test", "badidp"), "s@infra").block();
         UpdateDomainRequest junk = new UpdateDomainRequest(
-                null, null, null, null, null, null, null, "aws");
+                null, null, null, null, null, null, null, "aws", null, null);
         assertThatThrownBy(() -> svc.update("badidp.test", junk).block())
                 .isInstanceOf(ApiException.class)
                 .satisfies(e -> assertThat(((ApiException) e).status().value()).isEqualTo(400));
@@ -242,7 +242,7 @@ class DomainRegistryServiceTest {
         DomainRegistryService svc = svc();
         svc.create(create("flip.test", "flip"), "s@infra").block();
         UpdateDomainRequest toOwn = new UpdateDomainRequest(
-                null, null, null, null, null, null, null, DomainIdp.OWN);
+                null, null, null, null, null, null, null, DomainIdp.OWN, null, null);
         DomainRegistration updated = svc.update("flip.test", toOwn).block();
         assertThat(updated).isNotNull();
         assertThat(updated.idp()).isEqualTo(DomainIdp.OWN);

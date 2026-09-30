@@ -39,7 +39,7 @@ class DomainRegistrySystemAccountHookTest {
 
     private static CreateDomainRequest create(String clusterDomain) {
         return new CreateDomainRequest(clusterDomain, "acme", "Acme Inc", "vault:pki/acme",
-                slugOf(clusterDomain), "acme-org", "tag:acme", null, null);
+                slugOf(clusterDomain), "acme-org", "tag:acme", null, null, null, null);
     }
 
     /** The domain's SLUG (decision 29a: nsPrefix). UNIQUE per domain, so it is derived from

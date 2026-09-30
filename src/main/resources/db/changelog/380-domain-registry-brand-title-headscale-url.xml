@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.20.xsd">
+
+  <!--
+    domain_registry.brand_title / headscale_url — operator decision 87e = A (2026-09-23,
+    hugmesh-admin-bff-api#100): "Add real columns to domain_registry", set by the SUPERADMIN on
+    create/update and carried on the signed export OUTSIDE the v1 canonical bytes.
+
+    WHY: hugmesh-generator generate-brand-repos.sh REQUIRES BRAND_TITLE and HEADSCALE_URL
+    (:75, :78), and the node agent specs/usr/sbin/hugmesh-domain-reconcile had to GUESS both
+    (BRAND_TITLE := brand, HEADSCALE_URL := https://headscale.<clusterDomain>; its own header
+    calls them "derived, NOT authoritative"). These columns are where the real values live.
+
+    Both NULLABLE: a NULL means "not set by the SUPERADMIN", and the agent keeps its derivation
+    until the generator side is taught to prefer the exported value. No CHECK constraint: the
+    character rules are the generator's (generate-brand-repos.sh:113-138) and are enforced at
+    the service layer with a 400, the same place the slug rule lives.
+
+    Sizes: brand_title varchar(128) — generate-brand-repos.sh caps BRAND_TITLE at 128;
+    headscale_url varchar(512) — a URL, bounded like ca_ref.
+
+    GRANT: none needed. 012/190 grant SELECT, INSERT, UPDATE on the TABLE to adminbff_app, and a
+    table-level privilege covers columns added later. Band 380: the next free band above 370.
+  -->
+  <changeSet id="380-1-domain-registry-brand-title" author="hugmesh">
+    <comment>domain_registry.brand_title (decision 87e) — the brand's display title
+             generate-brand-repos.sh renders as BRAND_TITLE. NULL = not set.</comment>
+    <addColumn tableName="domain_registry">
+      <column name="brand_title" type="varchar(128)"/>
+    </addColumn>
+    <rollback>
+      <dropColumn tableName="domain_registry" columnName="brand_title"/>
+    </rollback>
+  </changeSet>
+
+  <changeSet id="380-2-domain-registry-headscale-url" author="hugmesh">
+    <comment>domain_registry.headscale_url (decision 87e) — the brand's headscale control URL
+             generate-brand-repos.sh renders as HEADSCALE_URL. NULL = not set.</comment>
+    <addColumn tableName="domain_registry">
+      <column name="headscale_url" type="varchar(512)"/>
+    </addColumn>
+    <rollback>
+      <dropColumn tableName="domain_registry" columnName="headscale_url"/>
+    </rollback>
+  </changeSet>
+</databaseChangeLog>

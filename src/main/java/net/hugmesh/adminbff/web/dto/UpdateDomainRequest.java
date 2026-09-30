@@ -54,5 +54,15 @@ public record UpdateDomainRequest(
          *  yet, so the flip is inert today. */
         @Size(max = 16, message = "idp is too long")
         @Nullable
-        String idp) {
+        String idp,
+
+        // DECISION 87e (hugmesh-admin-bff-api#100). null = leave unchanged; "" (empty) = CLEAR
+        // back to not-set, so the node agent derives it again. Character rules: DomainBrandFields.
+        @Size(max = 128, message = "brandTitle is too long")
+        @Nullable
+        String brandTitle,
+
+        @Size(max = 512, message = "headscaleUrl is too long")
+        @Nullable
+        String headscaleUrl) {
 }

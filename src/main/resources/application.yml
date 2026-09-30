@@ -501,6 +501,13 @@ app:
     reconcile:
       interval-ms: "${DOMAIN_LOCK_RECONCILE_INTERVAL_MS:30000}"
       initial-delay-ms: "${DOMAIN_LOCK_RECONCILE_INITIAL_DELAY_MS:18000}"
+  # DOMAIN REGISTRY FIRST-START IMPORT (hugmesh-generator#527, decision 85c = D). A path to the
+  # build-time domain list (the KEYS stick's provision.json, or a file holding just its
+  # domains[] array). Read ONCE, only while domain_registry is EMPTY, and its MCS pairs become
+  # the first rows so the allocator treats them as taken. UNSET (the default) = no-op. A set
+  # path whose file is missing or invalid REFUSES TO BOOT (see DomainRegistryFirstStartImporter).
+  domain-registry:
+    import-path: "${DOMAIN_REGISTRY_IMPORT_PATH:}"
   # DEVICE-LICENSE REGISTRY (schema 011) — the source of truth governing which operator
   # may SSH into which mesh node. SECURITY-CRITICAL.
   registry:

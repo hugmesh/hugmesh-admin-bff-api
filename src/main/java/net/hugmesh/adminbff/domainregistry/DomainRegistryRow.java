@@ -39,6 +39,9 @@ public record DomainRegistryRow(
         @Column("idp") String idp,
         @Column("selinux_level") String selinuxLevel,
         @Column("selinux_level_pg") String selinuxLevelPg,
+        // Decision 87e (operator, 2026-09-23) — Liquibase 380. NULL = not set by the SUPERADMIN.
+        @Column("brand_title") String brandTitle,
+        @Column("headscale_url") String headscaleUrl,
         @Transient boolean isNew) implements Persistable<String> {
 
     @org.springframework.data.annotation.PersistenceCreator
@@ -47,10 +50,23 @@ public record DomainRegistryRow(
                              Instant createdAt, String createdBySubject, Instant updatedAt,
                              boolean caProvisioned, boolean appsetRegistered,
                              long lastReconciledGeneration, String idp, String selinuxLevel,
+                             String selinuxLevelPg, String brandTitle, String headscaleUrl) {
+        this(id, clusterDomain, brand, org, caRef, nsPrefix, casdoorOrg, meshTag, enabled,
+                createdAt, createdBySubject, updatedAt, caProvisioned, appsetRegistered,
+                lastReconciledGeneration, idp, selinuxLevel, selinuxLevelPg, brandTitle,
+                headscaleUrl, false);
+    }
+
+    /** Pre-decision-87e 18-arg shape: {@code brand_title} / {@code headscale_url} unset. */
+    public DomainRegistryRow(String id, String clusterDomain, String brand, String org, String caRef,
+                             String nsPrefix, String casdoorOrg, String meshTag, boolean enabled,
+                             Instant createdAt, String createdBySubject, Instant updatedAt,
+                             boolean caProvisioned, boolean appsetRegistered,
+                             long lastReconciledGeneration, String idp, String selinuxLevel,
                              String selinuxLevelPg) {
         this(id, clusterDomain, brand, org, caRef, nsPrefix, casdoorOrg, meshTag, enabled,
                 createdAt, createdBySubject, updatedAt, caProvisioned, appsetRegistered,
-                lastReconciledGeneration, idp, selinuxLevel, selinuxLevelPg, false);
+                lastReconciledGeneration, idp, selinuxLevel, selinuxLevelPg, null, null, false);
     }
 
     /**
@@ -66,7 +82,7 @@ public record DomainRegistryRow(
                              long lastReconciledGeneration) {
         this(id, clusterDomain, brand, org, caRef, nsPrefix, casdoorOrg, meshTag, enabled,
                 createdAt, createdBySubject, updatedAt, caProvisioned, appsetRegistered,
-                lastReconciledGeneration, DomainIdp.SUPERDOMAIN, null, null, false);
+                lastReconciledGeneration, DomainIdp.SUPERDOMAIN, null, null, null, null, false);
     }
 
     /**
@@ -80,7 +96,7 @@ public record DomainRegistryRow(
                              Instant createdAt, String createdBySubject, Instant updatedAt) {
         this(id, clusterDomain, brand, org, caRef, nsPrefix, casdoorOrg, meshTag, enabled,
                 createdAt, createdBySubject, updatedAt, false, false, 0L,
-                DomainIdp.SUPERDOMAIN, null, null, false);
+                DomainIdp.SUPERDOMAIN, null, null, null, null, false);
     }
 
     /** Full 13-arg shape WITH an explicit {@code isNew} (the create-path INSERT marker),
@@ -91,14 +107,14 @@ public record DomainRegistryRow(
                              boolean isNew) {
         this(id, clusterDomain, brand, org, caRef, nsPrefix, casdoorOrg, meshTag, enabled,
                 createdAt, createdBySubject, updatedAt, false, false, 0L,
-                DomainIdp.SUPERDOMAIN, null, null, isNew);
+                DomainIdp.SUPERDOMAIN, null, null, null, null, isNew);
     }
 
     DomainRegistration toDomain() {
         return new DomainRegistration(id, clusterDomain, brand, org, caRef, nsPrefix,
                 casdoorOrg, meshTag, enabled, createdAt, createdBySubject, updatedAt,
                 caProvisioned, appsetRegistered, lastReconciledGeneration,
-                idp, selinuxLevel, selinuxLevelPg);
+                idp, selinuxLevel, selinuxLevelPg, brandTitle, headscaleUrl);
     }
 
     @Override
