@@ -1501,7 +1501,7 @@
       }
     },
     "jetson": {
-      "edge_ai": {
+      "backend-gpu": {
         "available": [
           "gui-libs/display-manager-init",
           "lxde-base/lxappearance",
@@ -1574,80 +1574,7 @@
           "sys-process/htop"
         ]
       },
-      "full": {
-        "available": [
-          "gui-libs/display-manager-init",
-          "lxde-base/lxappearance",
-          "lxde-base/lxpanel",
-          "lxde-base/lxsession",
-          "media-fonts/dejavu",
-          "media-fonts/noto",
-          "media-gfx/feh",
-          "www-client/netsurf",
-          "x11-apps/setxkbmap",
-          "x11-apps/xrandr",
-          "x11-apps/xset",
-          "x11-base/xorg-drivers",
-          "x11-base/xorg-server",
-          "x11-misc/lightdm",
-          "x11-misc/lightdm-gtk-greeter",
-          "x11-misc/pcmanfm",
-          "x11-terms/xterm",
-          "x11-wm/openbox"
-        ],
-        "essential": [
-          "app-admin/sudo",
-          "app-containers/cni-plugins",
-          "app-containers/containerd",
-          "app-containers/cri-tools",
-          "app-containers/runc",
-          "app-editors/nano",
-          "app-misc/jq",
-          "app-misc/screen",
-          "net-firewall/conntrack-tools",
-          "net-firewall/iptables",
-          "net-firewall/nftables",
-          "net-fs/cifs-utils",
-          "net-fs/nfs-utils",
-          "net-misc/networkmanager",
-          "net-misc/openssh",
-          "net-misc/socat",
-          "net-vpn/openvpn",
-          "net-vpn/wireguard-tools",
-          "net-wireless/wpa_supplicant",
-          "sec-policy/selinux-base",
-          "sec-policy/selinux-base-policy",
-          "sys-apps/checkpolicy",
-          "sys-apps/dtc",
-          "sys-apps/haveged",
-          "sys-apps/i2c-tools",
-          "sys-apps/lm-sensors",
-          "sys-apps/nvme-cli",
-          "sys-apps/pciutils",
-          "sys-apps/policycoreutils",
-          "sys-apps/semodule-utils",
-          "sys-apps/usbutils",
-          "sys-apps/util-linux",
-          "sys-block/parted",
-          "sys-cluster/kubeadm",
-          "sys-cluster/kubectl",
-          "sys-cluster/kubelet",
-          "sys-fs/dosfstools",
-          "sys-fs/e2fsprogs",
-          "sys-kernel/gentoo-sources",
-          "sys-kernel/linux-firmware",
-          "sys-libs/libseccomp",
-          "sys-libs/libselinux",
-          "sys-process/audit",
-          "sys-process/cronie"
-        ],
-        "removable": [
-          "dev-lang/python",
-          "net-misc/curl",
-          "sys-process/htop"
-        ]
-      },
-      "gpu-host": {
+      "edge-ai": {
         "available": [
           "gui-libs/display-manager-init",
           "lxde-base/lxappearance",
@@ -1791,6 +1718,79 @@
           "x11-misc/lightdm-gtk-greeter",
           "x11-misc/pcmanfm",
           "x11-terms/xterm"
+        ]
+      },
+      "omnibus": {
+        "available": [
+          "gui-libs/display-manager-init",
+          "lxde-base/lxappearance",
+          "lxde-base/lxpanel",
+          "lxde-base/lxsession",
+          "media-fonts/dejavu",
+          "media-fonts/noto",
+          "media-gfx/feh",
+          "www-client/netsurf",
+          "x11-apps/setxkbmap",
+          "x11-apps/xrandr",
+          "x11-apps/xset",
+          "x11-base/xorg-drivers",
+          "x11-base/xorg-server",
+          "x11-misc/lightdm",
+          "x11-misc/lightdm-gtk-greeter",
+          "x11-misc/pcmanfm",
+          "x11-terms/xterm",
+          "x11-wm/openbox"
+        ],
+        "essential": [
+          "app-admin/sudo",
+          "app-containers/cni-plugins",
+          "app-containers/containerd",
+          "app-containers/cri-tools",
+          "app-containers/runc",
+          "app-editors/nano",
+          "app-misc/jq",
+          "app-misc/screen",
+          "net-firewall/conntrack-tools",
+          "net-firewall/iptables",
+          "net-firewall/nftables",
+          "net-fs/cifs-utils",
+          "net-fs/nfs-utils",
+          "net-misc/networkmanager",
+          "net-misc/openssh",
+          "net-misc/socat",
+          "net-vpn/openvpn",
+          "net-vpn/wireguard-tools",
+          "net-wireless/wpa_supplicant",
+          "sec-policy/selinux-base",
+          "sec-policy/selinux-base-policy",
+          "sys-apps/checkpolicy",
+          "sys-apps/dtc",
+          "sys-apps/haveged",
+          "sys-apps/i2c-tools",
+          "sys-apps/lm-sensors",
+          "sys-apps/nvme-cli",
+          "sys-apps/pciutils",
+          "sys-apps/policycoreutils",
+          "sys-apps/semodule-utils",
+          "sys-apps/usbutils",
+          "sys-apps/util-linux",
+          "sys-block/parted",
+          "sys-cluster/kubeadm",
+          "sys-cluster/kubectl",
+          "sys-cluster/kubelet",
+          "sys-fs/dosfstools",
+          "sys-fs/e2fsprogs",
+          "sys-kernel/gentoo-sources",
+          "sys-kernel/linux-firmware",
+          "sys-libs/libseccomp",
+          "sys-libs/libselinux",
+          "sys-process/audit",
+          "sys-process/cronie"
+        ],
+        "removable": [
+          "dev-lang/python",
+          "net-misc/curl",
+          "sys-process/htop"
         ]
       }
     },
@@ -2083,7 +2083,7 @@
       }
     },
     "rpi5": {
-      "be": {
+      "backend": {
         "available": [
           "gui-libs/display-manager-init",
           "lxde-base/lxappearance",
@@ -2162,7 +2162,7 @@
         ],
         "removable": []
       },
-      "fe": {
+      "frontend": {
         "available": [
           "gui-libs/display-manager-init",
           "lxde-base/lxappearance",
@@ -2481,7 +2481,7 @@
       }
     },
     "x86": {
-      "be": {
+      "backend": {
         "available": [
           "app-arch/7zip",
           "app-arch/file-roller",
@@ -2627,7 +2627,7 @@
         ],
         "removable": []
       },
-      "be+gpu": {
+      "backend-gpu": {
         "available": [
           "app-arch/7zip",
           "app-arch/file-roller",
@@ -3068,7 +3068,7 @@
           "x11-terms/xterm"
         ]
       },
-      "edge_ai": {
+      "edge-ai": {
         "available": [
           "app-arch/7zip",
           "app-arch/file-roller",
@@ -3215,7 +3215,7 @@
           "x11-libs/libdrm"
         ]
       },
-      "fe": {
+      "frontend": {
         "available": [
           "app-arch/7zip",
           "app-arch/file-roller",

@@ -51,18 +51,18 @@
           },
           {
             "label": "Backend node (x86 or Raspberry Pi 4/5)",
-            "role": "be"
+            "role": "backend"
           },
           {
             "label": "Frontend node (x86 or Raspberry Pi 4/5)",
-            "role": "fe"
+            "role": "frontend"
           },
           {
-            "label": "Backend + GPU node",
-            "role": "be+gpu"
+            "label": "Backend + GPU node \u2014 a backend worker with a GPU, no inference service (x86, or Jetson Orin \u2014 EXPERIMENTAL)",
+            "role": "backend-gpu"
           },
           {
-            "label": "Omnibus \u2014 every cluster role on one node",
+            "label": "Omnibus \u2014 every cluster role on one node (x86, or Jetson Orin \u2014 EXPERIMENTAL)",
             "role": "omnibus"
           },
           {
@@ -79,7 +79,7 @@
           },
           {
             "label": "Edge-AI node \u2014 GPU + OpenAI-compatible model API",
-            "role": "edge_ai"
+            "role": "edge-ai"
           }
         ],
         "standalone": [
@@ -137,18 +137,18 @@
           },
           {
             "label": "Backend node (x86 or Raspberry Pi 4/5)",
-            "role": "be"
+            "role": "backend"
           },
           {
             "label": "Frontend node (x86 or Raspberry Pi 4/5)",
-            "role": "fe"
+            "role": "frontend"
           },
           {
-            "label": "Backend + GPU node",
-            "role": "be+gpu"
+            "label": "Backend + GPU node \u2014 a backend worker with a GPU, no inference service (x86, or Jetson Orin \u2014 EXPERIMENTAL)",
+            "role": "backend-gpu"
           },
           {
-            "label": "Omnibus \u2014 every cluster role on one node",
+            "label": "Omnibus \u2014 every cluster role on one node (x86, or Jetson Orin \u2014 EXPERIMENTAL)",
             "role": "omnibus"
           },
           {
@@ -165,7 +165,7 @@
           },
           {
             "label": "Edge-AI node \u2014 GPU + OpenAI-compatible model API",
-            "role": "edge_ai"
+            "role": "edge-ai"
           }
         ],
         "standalone": [
@@ -249,11 +249,11 @@
           },
           {
             "label": "Backend node (x86 or Raspberry Pi 4/5)",
-            "role": "be"
+            "role": "backend"
           },
           {
             "label": "Frontend node (x86 or Raspberry Pi 4/5)",
-            "role": "fe"
+            "role": "frontend"
           },
           {
             "label": "Raspberry Pi 5 / 4 / 3 desktop \u2014 arm64 client (compose with --standalone for FDE, no mesh)",
@@ -295,11 +295,11 @@
           },
           {
             "label": "Backend node (x86 or Raspberry Pi 4/5)",
-            "role": "be"
+            "role": "backend"
           },
           {
             "label": "Frontend node (x86 or Raspberry Pi 4/5)",
-            "role": "fe"
+            "role": "frontend"
           },
           {
             "label": "Raspberry Pi 5 / 4 / 3 desktop \u2014 arm64 client (compose with --standalone for FDE, no mesh)",
@@ -447,16 +447,16 @@
         "cloud": [],
         "mesh": [
           {
+            "label": "Backend + GPU node \u2014 a backend worker with a GPU, no inference service (x86, or Jetson Orin \u2014 EXPERIMENTAL)",
+            "role": "backend-gpu"
+          },
+          {
+            "label": "Omnibus \u2014 every cluster role on one node (x86, or Jetson Orin \u2014 EXPERIMENTAL)",
+            "role": "omnibus"
+          },
+          {
             "label": "Edge-AI node \u2014 GPU + OpenAI-compatible model API",
-            "role": "edge_ai"
-          },
-          {
-            "label": "Jetson full-stack node \u2014 EXPERIMENTAL, hardware validation pending",
-            "role": "full"
-          },
-          {
-            "label": "Jetson GPU host \u2014 EXPERIMENTAL, hardware validation pending",
-            "role": "gpu-host"
+            "role": "edge-ai"
           },
           {
             "label": "Jetson desktop \u2014 EXPERIMENTAL, hardware validation pending",
@@ -483,16 +483,16 @@
         "cloud": [],
         "mesh": [
           {
+            "label": "Backend + GPU node \u2014 a backend worker with a GPU, no inference service (x86, or Jetson Orin \u2014 EXPERIMENTAL)",
+            "role": "backend-gpu"
+          },
+          {
+            "label": "Omnibus \u2014 every cluster role on one node (x86, or Jetson Orin \u2014 EXPERIMENTAL)",
+            "role": "omnibus"
+          },
+          {
             "label": "Edge-AI node \u2014 GPU + OpenAI-compatible model API",
-            "role": "edge_ai"
-          },
-          {
-            "label": "Jetson full-stack node \u2014 EXPERIMENTAL, hardware validation pending",
-            "role": "full"
-          },
-          {
-            "label": "Jetson GPU host \u2014 EXPERIMENTAL, hardware validation pending",
-            "role": "gpu-host"
+            "role": "edge-ai"
           },
           {
             "label": "Jetson desktop \u2014 EXPERIMENTAL, hardware validation pending",
@@ -519,16 +519,16 @@
         "cloud": [],
         "mesh": [
           {
+            "label": "Backend + GPU node \u2014 a backend worker with a GPU, no inference service (x86, or Jetson Orin \u2014 EXPERIMENTAL)",
+            "role": "backend-gpu"
+          },
+          {
+            "label": "Omnibus \u2014 every cluster role on one node (x86, or Jetson Orin \u2014 EXPERIMENTAL)",
+            "role": "omnibus"
+          },
+          {
             "label": "Edge-AI node \u2014 GPU + OpenAI-compatible model API",
-            "role": "edge_ai"
-          },
-          {
-            "label": "Jetson full-stack node \u2014 EXPERIMENTAL, hardware validation pending",
-            "role": "full"
-          },
-          {
-            "label": "Jetson GPU host \u2014 EXPERIMENTAL, hardware validation pending",
-            "role": "gpu-host"
+            "role": "edge-ai"
           },
           {
             "label": "Jetson desktop \u2014 EXPERIMENTAL, hardware validation pending",
@@ -555,16 +555,16 @@
         "cloud": [],
         "mesh": [
           {
+            "label": "Backend + GPU node \u2014 a backend worker with a GPU, no inference service (x86, or Jetson Orin \u2014 EXPERIMENTAL)",
+            "role": "backend-gpu"
+          },
+          {
+            "label": "Omnibus \u2014 every cluster role on one node (x86, or Jetson Orin \u2014 EXPERIMENTAL)",
+            "role": "omnibus"
+          },
+          {
             "label": "Edge-AI node \u2014 GPU + OpenAI-compatible model API",
-            "role": "edge_ai"
-          },
-          {
-            "label": "Jetson full-stack node \u2014 EXPERIMENTAL, hardware validation pending",
-            "role": "full"
-          },
-          {
-            "label": "Jetson GPU host \u2014 EXPERIMENTAL, hardware validation pending",
-            "role": "gpu-host"
+            "role": "edge-ai"
           },
           {
             "label": "Jetson desktop \u2014 EXPERIMENTAL, hardware validation pending",
@@ -804,11 +804,11 @@
           },
           {
             "label": "Backend node (x86 or Raspberry Pi 4/5)",
-            "role": "be"
+            "role": "backend"
           },
           {
             "label": "Frontend node (x86 or Raspberry Pi 4/5)",
-            "role": "fe"
+            "role": "frontend"
           },
           {
             "label": "Raspberry Pi 5 / 4 / 3 desktop \u2014 arm64 client (compose with --standalone for FDE, no mesh)",
@@ -850,11 +850,11 @@
           },
           {
             "label": "Backend node (x86 or Raspberry Pi 4/5)",
-            "role": "be"
+            "role": "backend"
           },
           {
             "label": "Frontend node (x86 or Raspberry Pi 4/5)",
-            "role": "fe"
+            "role": "frontend"
           },
           {
             "label": "Raspberry Pi 5 / 4 / 3 desktop \u2014 arm64 client (compose with --standalone for FDE, no mesh)",
@@ -896,11 +896,11 @@
           },
           {
             "label": "Backend node (x86 or Raspberry Pi 4/5)",
-            "role": "be"
+            "role": "backend"
           },
           {
             "label": "Frontend node (x86 or Raspberry Pi 4/5)",
-            "role": "fe"
+            "role": "frontend"
           },
           {
             "label": "Raspberry Pi 5 / 4 / 3 desktop \u2014 arm64 client (compose with --standalone for FDE, no mesh)",
@@ -942,11 +942,11 @@
           },
           {
             "label": "Backend node (x86 or Raspberry Pi 4/5)",
-            "role": "be"
+            "role": "backend"
           },
           {
             "label": "Frontend node (x86 or Raspberry Pi 4/5)",
-            "role": "fe"
+            "role": "frontend"
           },
           {
             "label": "Raspberry Pi 5 / 4 / 3 desktop \u2014 arm64 client (compose with --standalone for FDE, no mesh)",
@@ -1384,13 +1384,11 @@
     ],
     "node": [
       "pki",
-      "be",
-      "fe",
-      "be+gpu",
+      "backend",
+      "frontend",
+      "backend-gpu",
       "omnibus",
-      "edge_ai",
-      "full",
-      "gpu-host",
+      "edge-ai",
       "orangepizero2",
       "orangepizero2w",
       "orangepizero3",
@@ -1637,7 +1635,7 @@
             "platform": "rpi5"
           }
         ],
-        "role": "be"
+        "role": "backend"
       },
       {
         "image_class": "node",
@@ -1657,26 +1655,48 @@
             "platform": "rpi5"
           }
         ],
-        "role": "fe"
+        "role": "frontend"
       },
       {
         "image_class": "node",
-        "label": "Backend + GPU node",
+        "label": "Backend + GPU node \u2014 a backend worker with a GPU, no inference service (x86, or Jetson Orin \u2014 EXPERIMENTAL)",
         "platforms": [
           {
             "axes": {},
             "platform": "x86"
+          },
+          {
+            "axes": {
+              "board": [
+                "orin-nano",
+                "orin-nano-4gb",
+                "orin-nx-8gb",
+                "orin-nx-16gb"
+              ]
+            },
+            "platform": "jetson"
           }
         ],
-        "role": "be+gpu"
+        "role": "backend-gpu"
       },
       {
         "image_class": "node",
-        "label": "Omnibus \u2014 every cluster role on one node",
+        "label": "Omnibus \u2014 every cluster role on one node (x86, or Jetson Orin \u2014 EXPERIMENTAL)",
         "platforms": [
           {
             "axes": {},
             "platform": "x86"
+          },
+          {
+            "axes": {
+              "board": [
+                "orin-nano",
+                "orin-nano-4gb",
+                "orin-nx-8gb",
+                "orin-nx-16gb"
+              ]
+            },
+            "platform": "jetson"
           }
         ],
         "role": "omnibus"
@@ -1766,43 +1786,7 @@
             "platform": "jetson"
           }
         ],
-        "role": "edge_ai"
-      },
-      {
-        "image_class": "node",
-        "label": "Jetson full-stack node \u2014 EXPERIMENTAL, hardware validation pending",
-        "platforms": [
-          {
-            "axes": {
-              "board": [
-                "orin-nano",
-                "orin-nano-4gb",
-                "orin-nx-8gb",
-                "orin-nx-16gb"
-              ]
-            },
-            "platform": "jetson"
-          }
-        ],
-        "role": "full"
-      },
-      {
-        "image_class": "node",
-        "label": "Jetson GPU host \u2014 EXPERIMENTAL, hardware validation pending",
-        "platforms": [
-          {
-            "axes": {
-              "board": [
-                "orin-nano",
-                "orin-nano-4gb",
-                "orin-nx-8gb",
-                "orin-nx-16gb"
-              ]
-            },
-            "platform": "jetson"
-          }
-        ],
-        "role": "gpu-host"
+        "role": "edge-ai"
       },
       {
         "image_class": "desktop",
