@@ -108,8 +108,7 @@ public class SecurityConfig {
 
     /** Header carrying {@link #internalToken}. Tracks auth-core's
      *  {@code app.internal.token-header} so a deployment that renames it renames it once. */
-    @Value("${app.internal.token-header:X-Internal-Token}")
-    private String internalTokenHeader = INTERNAL_TOKEN_HEADER_DEFAULT;
+    private final String internalTokenHeader;
 
     /** D8 MFA marker derivation — {@code app.mfa.enabled} (default {@code false},
      *  ships dark). When off the converter emits the byte-identical legacy
@@ -126,7 +125,9 @@ public class SecurityConfig {
                           ObjectProvider<ReactiveAuthenticationManagerResolver<ServerWebExchange>>
                                   tenantAuthManagerResolver,
                           @Value("${app.mfa.enabled:false}") boolean mfaEnabled,
-                          @Value("${app.mfa.freshness-window:600000}") long mfaFreshnessWindowMillis) {
+                          @Value("${app.mfa.freshness-window:600000}") long mfaFreshnessWindowMillis,
+                          @Value("${app.internal.token-header:X-Internal-Token}") String internalTokenHeader) {
+        this.internalTokenHeader = internalTokenHeader;
         this.domainRegistry = domainRegistry;
         this.tenantAuthManagerResolver = tenantAuthManagerResolver;
         this.mfaEnabled = mfaEnabled;

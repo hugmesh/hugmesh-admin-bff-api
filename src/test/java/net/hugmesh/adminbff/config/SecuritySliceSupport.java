@@ -57,7 +57,7 @@ abstract class SecuritySliceSupport {
             Object... controllers) {
 
         // MFA derivation OFF (the dark default) — the slice exercises the legacy converter.
-        SecurityConfig config = new SecurityConfig(registry, tenantResolver, false, 600_000L);
+        SecurityConfig config = new SecurityConfig(registry, tenantResolver, false, 600_000L, "X-Internal-Token");
         SecurityWebFilterChain chain = config.filterChain(ServerHttpSecurity.http());
         WebFilterChainProxy securityFilter = new WebFilterChainProxy(chain);
 
