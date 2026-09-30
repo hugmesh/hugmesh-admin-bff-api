@@ -55,6 +55,24 @@ public class Fabric8InstanceConfigMapWriter implements InstanceConfigMapWriter {
         this.namespace = (namespace == null || namespace.isBlank()) ? "hugmesh-games" : namespace;
     }
 
+    private Boolean applyConfigMap(KubernetesClient client, String cmName, String domain,
+                                   Map<String, String> data) {
+        ConfigMap cm = new ConfigMapBuilder()
+                .withNewMetadata()
+                .withName(cmName)
+                .withNamespace(namespace)
+                .addToLabels("app.kubernetes.io/part-of", "hugmesh.net")
+                .addToLabels("hugmesh.net/games-instances-domain", sanitize(domain))
+                .endMetadata()
+                .withData(data)
+                .build();
+        // Server-side replace: the ConfigMap IS the desired set, single-writer.
+        client.configMaps().inNamespace(namespace).resource(cm).serverSideApply();
+        log.info("[games-reconciler] applied ConfigMap {}/{} ({} active instance(s))",
+                namespace, cmName, data.size());
+        return Boolean.TRUE;
+    }
+
     @Override
     public Mono<Boolean> writeDomainConfigMap(String domain, List<GameInstance> instances) {
         String cmName = "games-instances-" + sanitize(domain);
@@ -78,22 +96,7 @@ public class Fabric8InstanceConfigMapWriter implements InstanceConfigMapWriter {
         // failure to false for retry-next-tick), so callers are unchanged.
         return Mono.usingWhen(
                         Mono.fromCallable(clientFactory::get),
-                        client -> Mono.fromCallable(() -> {
-                            ConfigMap cm = new ConfigMapBuilder()
-                                    .withNewMetadata()
-                                    .withName(cmName)
-                                    .withNamespace(namespace)
-                                    .addToLabels("app.kubernetes.io/part-of", "hugmesh.net")
-                                    .addToLabels("hugmesh.net/games-instances-domain", sanitize(domain))
-                                    .endMetadata()
-                                    .withData(data)
-                                    .build();
-                            // Server-side replace: the ConfigMap IS the desired set, single-writer.
-                            client.configMaps().inNamespace(namespace).resource(cm).serverSideApply();
-                            log.info("[games-reconciler] applied ConfigMap {}/{} ({} active instance(s))",
-                                    namespace, cmName, data.size());
-                            return Boolean.TRUE;
-                        }),
+                        client -> Mono.fromCallable(() -> applyConfigMap(client, cmName, domain, data)),
                         client -> Mono.fromRunnable(client::close))
                 .subscribeOn(Schedulers.boundedElastic())
                 .onErrorResume(KubernetesClientException.class, e -> {

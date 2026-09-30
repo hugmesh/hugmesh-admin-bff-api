@@ -97,28 +97,33 @@ public class BackingServiceService {
      * Docs-only (tier-3) rows are flagged so the UI renders them read-only.
      */
     public Mono<List<Map<String, Object>>> catalogWithState() {
-        return modes.currentModes().map(current -> {
-            List<Map<String, Object>> out = new java.util.ArrayList<>();
-            for (BackingService s : BackingServiceCatalog.SERVICES) {
-                BackingServiceMode mode = current.get(s.id());
-                Map<String, Object> m = new LinkedHashMap<>();
-                m.put("id", s.id());
-                m.put("kind", s.kind());
-                m.put("tier", s.tier());
-                m.put("docsOnly", s.docsOnly());
-                m.put("displayName", s.displayName());
-                m.put("awsTarget", s.awsTarget());
-                m.put("azureTarget", s.azureTarget());
-                m.put("notes", s.notes());
-                // Current state: the recorded mode, or the self-hosted default when never recorded.
-                m.put("currentMode", mode == null ? BackingServiceMode.MODE_SELF_HOSTED : mode.mode());
-                m.put("endpoint", mode == null ? null : mode.endpoint());
-                m.put("credsRef", mode == null ? null : mode.credsRef());
-                m.put("generation", mode == null ? 0L : mode.generation());
-                out.add(m);
-            }
-            return out;
-        });
+        return modes.currentModes().map(BackingServiceService::joinCatalogWithModes);
+    }
+
+    private static List<Map<String, Object>> joinCatalogWithModes(Map<String, BackingServiceMode> current) {
+        List<Map<String, Object>> out = new java.util.ArrayList<>();
+        for (BackingService s : BackingServiceCatalog.SERVICES) {
+            out.add(catalogRow(s, current.get(s.id())));
+        }
+        return out;
+    }
+
+    private static Map<String, Object> catalogRow(BackingService s, BackingServiceMode mode) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("id", s.id());
+        m.put("kind", s.kind());
+        m.put("tier", s.tier());
+        m.put("docsOnly", s.docsOnly());
+        m.put("displayName", s.displayName());
+        m.put("awsTarget", s.awsTarget());
+        m.put("azureTarget", s.azureTarget());
+        m.put("notes", s.notes());
+        // Current state: the recorded mode, or the self-hosted default when never recorded.
+        m.put("currentMode", mode == null ? BackingServiceMode.MODE_SELF_HOSTED : mode.mode());
+        m.put("endpoint", mode == null ? null : mode.endpoint());
+        m.put("credsRef", mode == null ? null : mode.credsRef());
+        m.put("generation", mode == null ? 0L : mode.generation());
+        return m;
     }
 
     /** Full mode-change ledger, newest first (the console's audit/history view). */

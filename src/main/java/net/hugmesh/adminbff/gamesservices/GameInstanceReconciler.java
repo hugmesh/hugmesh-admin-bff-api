@@ -1,5 +1,6 @@
 package net.hugmesh.adminbff.gamesservices;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -39,6 +40,8 @@ import java.util.concurrent.atomic.AtomicReference;
  * without a live cluster).
  */
 @Service
+@SuppressFBWarnings(value = "EI_EXPOSE_REP2",
+        justification = "Spring constructor injection: the container owns this singleton collaborator and it is never mutated by this class after construction; a defensive copy of a bean is meaningless (not caller-owned mutable data).")
 public class GameInstanceReconciler {
 
     private static final Logger log = LoggerFactory.getLogger(GameInstanceReconciler.class);

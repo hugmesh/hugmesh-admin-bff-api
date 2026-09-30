@@ -49,8 +49,14 @@ public class ImageGenConfig {
      * {@code internal}); the field initializer keeps a plain {@code new ImageGenConfig()} (unit
      * tests) at the same default without a Spring PropertySource.
      */
+    private String superdomainSuffix = "internal";
+
+    /** Spring property binding (setter injection keeps the field private per Checkstyle
+     *  VisibilityModifier and non-final-by-assignment per PMD ImmutableField). */
     @Value("${imagegen.mesh.superdomain-suffix:internal}")
-    String superdomainSuffix = "internal";
+    void setSuperdomainSuffix(String superdomainSuffix) {
+        this.superdomainSuffix = superdomainSuffix;
+    }
 
     /** The effective superdomain suffix, never blank (falls back to {@code internal}). */
     public String superdomainSuffix() {

@@ -1,5 +1,7 @@
 package net.hugmesh.adminbff.testreports;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -118,5 +120,9 @@ public class TestReportsService {
 
     /** Run summary + its per-(suite,role) matrix (the {runId} detail payload). */
     public record TestRunDetail(TestRun run, List<TestRunResult> results) {
+
+        public TestRunDetail {
+            results = results == null ? null : Collections.unmodifiableList(new ArrayList<>(results));
+        }
     }
 }

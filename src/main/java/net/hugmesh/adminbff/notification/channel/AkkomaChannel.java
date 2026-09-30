@@ -1,5 +1,6 @@
 package net.hugmesh.adminbff.notification.channel;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import reactor.core.publisher.Mono;
@@ -21,6 +22,8 @@ import net.hugmesh.adminbff.announcement.AnnouncementMastodonClient;
  * notice is STUBBED until the confirmed akkoma per-user verb is wired, so a STUBBED/
  * degraded outcome is a transient FAILED→retry, never a false {@code sent}.
  */
+@SuppressFBWarnings(value = "EI_EXPOSE_REP2",
+        justification = "Spring constructor injection: the container owns this singleton collaborator and it is never mutated by this class after construction; a defensive copy of a bean is meaningless (not caller-owned mutable data).")
 public class AkkomaChannel implements NotificationChannel {
 
     private static final Logger log = LoggerFactory.getLogger(AkkomaChannel.class);

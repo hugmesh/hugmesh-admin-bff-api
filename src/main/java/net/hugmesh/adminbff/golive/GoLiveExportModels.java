@@ -1,5 +1,7 @@
 package net.hugmesh.adminbff.golive;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 /**
@@ -67,6 +69,10 @@ public final class GoLiveExportModels {
             String node,
             long generation,
             List<GoLiveIntentEntry> entries) {
+
+        public GoLiveExportBody {
+            entries = entries == null ? null : Collections.unmodifiableList(new ArrayList<>(entries));
+        }
     }
 
     /**

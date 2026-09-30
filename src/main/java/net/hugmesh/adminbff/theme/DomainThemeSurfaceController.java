@@ -73,19 +73,20 @@ public class DomainThemeSurfaceController {
             @RequestParam(required = false)
             @Size(max = 255, message = "domain is too long")
             String domain) {
-        return service.resolve(domain).map(t -> {
-            String css = t.renderedCss() == null ? "" : t.renderedCss();
-            return ResponseEntity.ok()
-                    .contentType(MediaType.valueOf("text/css;charset=UTF-8"))
-                    // Revalidate every time rather than cache. A theme change has to be
-                    // visible on the next load -- an operator who reports "I changed it
-                    // and nothing happened" is the failure this whole line keeps
-                    // producing. The ETag keeps that cheap: unchanged themes answer 304
-                    // with no body, so the cost of never caching is one conditional
-                    // request, not one stylesheet.
-                    .cacheControl(CacheControl.noCache())
-                    .eTag(Integer.toHexString(css.hashCode()))
-                    .body(css);
-        });
+        return service.resolve(domain).map(t -> cssResponse(t.renderedCss() == null ? "" : t.renderedCss()));
+    }
+
+    private static ResponseEntity<String> cssResponse(String css) {
+        return ResponseEntity.ok()
+                .contentType(MediaType.valueOf("text/css;charset=UTF-8"))
+                // Revalidate every time rather than cache. A theme change has to be
+                // visible on the next load -- an operator who reports "I changed it
+                // and nothing happened" is the failure this whole line keeps
+                // producing. The ETag keeps that cheap: unchanged themes answer 304
+                // with no body, so the cost of never caching is one conditional
+                // request, not one stylesheet.
+                .cacheControl(CacheControl.noCache())
+                .eTag(Integer.toHexString(css.hashCode()))
+                .body(css);
     }
 }

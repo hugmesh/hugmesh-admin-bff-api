@@ -1,6 +1,7 @@
 package net.hugmesh.adminbff.tor;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Map;
 import java.util.TreeMap;
@@ -30,7 +31,7 @@ public record TorNodeReport(
         long reportCount) {
 
     public TorNodeReport {
-        domainOnions = domainOnions == null ? Map.of() : Collections.unmodifiableMap(new TreeMap<>(domainOnions));
+        domainOnions = Collections.unmodifiableMap(new TreeMap<>(domainOnions == null ? Map.<String, String>of() : domainOnions));
     }
 
     /**

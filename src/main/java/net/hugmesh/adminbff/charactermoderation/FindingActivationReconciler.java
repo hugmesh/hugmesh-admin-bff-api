@@ -231,18 +231,7 @@ public class FindingActivationReconciler {
         String status = mapStatus(finding.status());
         return userBff.applyModeration(surface.sinkKind, finding.subjectRef(), status,
                         finding.id(), finding.reviewer())
-                .map(outcome -> {
-                    if (outcome == UserBffCharacterModerationClient.Outcome.APPLIED) {
-                        applied.increment();
-                        // Extend the contiguous-success prefix tip to this id (page is id ASC).
-                        advanceTo.set(finding.id());
-                        return Boolean.FALSE; // continue the page
-                    }
-                    // FAILED push: HALT — do not advance past this id; re-polled next tick.
-                    pushFailed.increment();
-                    halted.set(Boolean.TRUE);
-                    return Boolean.TRUE;
-                })
+                .map(outcome -> recordOutcome(outcome, finding, advanceTo, halted))
                 .onErrorResume(e -> {
                     // Defence-in-depth: an unexpected per-finding error must HALT (never skip).
                     pushFailed.increment();
@@ -251,6 +240,22 @@ public class FindingActivationReconciler {
                             + "(HALT cursor): {}", surface.federationSurface, finding.id(), e.toString());
                     return Mono.just(Boolean.TRUE);
                 });
+    }
+
+    /** Fold one push outcome into the prefix state; TRUE iff it HALTED the page. */
+    private Boolean recordOutcome(UserBffCharacterModerationClient.Outcome outcome,
+                                  ResolvedFindingDto finding, AtomicLong advanceTo,
+                                  AtomicReference<Boolean> halted) {
+        if (outcome == UserBffCharacterModerationClient.Outcome.APPLIED) {
+            applied.increment();
+            // Extend the contiguous-success prefix tip to this id (page is id ASC).
+            advanceTo.set(finding.id());
+            return Boolean.FALSE; // continue the page
+        }
+        // FAILED push: HALT — do not advance past this id; re-polled next tick.
+        pushFailed.increment();
+        halted.set(Boolean.TRUE);
+        return Boolean.TRUE;
     }
 
     /** federation finding status → user-bff moderation status:

@@ -102,20 +102,22 @@ public class CassandraRouteMirror implements RouteMirror {
 
     @Override
     public Flux<String> listIds() {
-        return runRead(() -> {
-            CqlSession s = session();
-            if (s == null) return List.<String>of();
-            List<String> ids = new ArrayList<>();
-            ResultSet rs = s.execute(SimpleStatement.builder(
-                    "SELECT id FROM gateway_route_access").build());
-            for (Row row : rs) {
-                Object id = row.getObject("id");
-                if (id != null) {
-                    ids.add(id.toString());
-                }
+        return runRead(this::queryAllIds, "listIds");
+    }
+
+    private List<String> queryAllIds() {
+        CqlSession s = session();
+        if (s == null) return List.<String>of();
+        List<String> ids = new ArrayList<>();
+        ResultSet rs = s.execute(SimpleStatement.builder(
+                "SELECT id FROM gateway_route_access").build());
+        for (Row row : rs) {
+            Object id = row.getObject("id");
+            if (id != null) {
+                ids.add(id.toString());
             }
-            return ids;
-        }, "listIds");
+        }
+        return ids;
     }
 
     /**

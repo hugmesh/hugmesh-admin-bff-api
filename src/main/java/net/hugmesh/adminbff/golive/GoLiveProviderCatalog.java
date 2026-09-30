@@ -1,5 +1,7 @@
 package net.hugmesh.adminbff.golive;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 
@@ -53,6 +55,11 @@ public final class GoLiveProviderCatalog {
             List<String> artifacts,
             boolean apiDriver,
             String notes) {
+
+        public GoLiveProvider {
+            artifacts = artifacts == null ? null : Collections.unmodifiableList(new ArrayList<>(artifacts));
+            requiredInputs = requiredInputs == null ? null : Collections.unmodifiableList(new ArrayList<>(requiredInputs));
+        }
     }
 
     /** The prioritized v1 catalog (the pinned design's provider list, in priority order). */

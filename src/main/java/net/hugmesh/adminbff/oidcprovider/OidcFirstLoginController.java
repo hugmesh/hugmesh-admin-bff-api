@@ -4,6 +4,8 @@ import io.swagger.v3.oas.annotations.Operation;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
+import java.util.ArrayList;
+import java.util.Collections;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -91,6 +93,10 @@ public class OidcFirstLoginController {
      * DTO contract, so the JSON is {@code {"assignedRoles":[...]}}.
      */
     public record FirstLoginResponse(List<String> assignedRoles) {
+
+        public FirstLoginResponse {
+            assignedRoles = assignedRoles == null ? null : Collections.unmodifiableList(new ArrayList<>(assignedRoles));
+        }
     }
 
     /**
