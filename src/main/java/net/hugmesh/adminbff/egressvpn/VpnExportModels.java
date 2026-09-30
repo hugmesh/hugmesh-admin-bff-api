@@ -1,5 +1,7 @@
 package net.hugmesh.adminbff.egressvpn;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 /**
@@ -39,6 +41,10 @@ public final class VpnExportModels {
             String secretRef,
             String endpoint,
             List<String> serviceSlugs) {
+
+        public VpnEgressEntry {
+            serviceSlugs = serviceSlugs == null ? null : Collections.unmodifiableList(new ArrayList<>(serviceSlugs));
+        }
     }
 
     /**
@@ -51,6 +57,10 @@ public final class VpnExportModels {
             String node,
             long generation,
             List<VpnEgressEntry> entries) {
+
+        public VpnExportBody {
+            entries = entries == null ? null : Collections.unmodifiableList(new ArrayList<>(entries));
+        }
     }
 
     /**

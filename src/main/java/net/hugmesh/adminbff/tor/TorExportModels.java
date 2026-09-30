@@ -1,5 +1,7 @@
 package net.hugmesh.adminbff.tor;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 /**
@@ -47,6 +49,10 @@ public final class TorExportModels {
             String upstream,
             boolean domainsManaged,
             List<String> domains) {
+
+        public TorExportBody {
+            domains = domains == null ? null : Collections.unmodifiableList(new ArrayList<>(domains));
+        }
     }
 
     /**

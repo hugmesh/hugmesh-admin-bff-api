@@ -3,6 +3,8 @@ package net.hugmesh.adminbff.internalapi;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
+import java.util.ArrayList;
+import java.util.Collections;
 import org.jspecify.annotations.Nullable;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
@@ -237,7 +239,11 @@ public class InternalAccountController {
             boolean mfaSatisfied,
             @Nullable String casdoorSub,
             @Nullable String issuer
-    ) {}
+    ) {
+
+        public IntrospectResponse {
+            roles = roles == null ? null : Collections.unmodifiableList(new ArrayList<>(roles));
+        }}
 
     public record EnsureAccountRequest(@NotBlank String provider, @NotBlank String handle) {
     }
@@ -262,6 +268,10 @@ public class InternalAccountController {
      */
     public record AccountOut(String id, String provider, String handle, boolean registrationComplete,
                              List<String> roles, String localpart, String mastodonLocalpart) {
+
+        public AccountOut {
+            roles = roles == null ? null : Collections.unmodifiableList(new ArrayList<>(roles));
+        }
         static AccountOut of(Account a, String localpart, String mastodonLocalpart) {
             return new AccountOut(a.id(), a.provider(), a.handle(), a.registrationComplete(),
                     a.roles(), localpart == null ? "" : localpart,
@@ -318,6 +328,10 @@ public class InternalAccountController {
     public record RecordUsageRequest(@NotBlank @Size(max = USAGE_HANDLE_MAX) String handle,
                                      @Nullable List<String> roles,
                                      @NotBlank @Size(max = USAGE_ACTION_MAX) String action) {
+
+        public RecordUsageRequest {
+            roles = roles == null ? null : Collections.unmodifiableList(new ArrayList<>(roles));
+        }
     }
 
     /** {@code @Size} cap on {@link RecordUsageRequest#handle()} (hugmesh-admin-bff-api#105). */

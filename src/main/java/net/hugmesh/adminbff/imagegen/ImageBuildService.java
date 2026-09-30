@@ -1,5 +1,6 @@
 package net.hugmesh.adminbff.imagegen;
 
+import java.util.Collections;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.io.buffer.DataBuffer;
@@ -183,7 +184,11 @@ public class ImageBuildService {
     }
 
     /** The result of a worklist batch trigger: a correlation id + the N persisted QUEUED rows. */
-    public record BatchResult(String batchId, List<ImageBuild> builds) { }
+    public record BatchResult(String batchId, List<ImageBuild> builds) {
+
+        public BatchResult {
+            builds = builds == null ? null : Collections.unmodifiableList(new ArrayList<>(builds));
+        } }
 
     /**
      * Trigger a WORKLIST BATCH (worklist redesign item 1). The wire input is the frozen worklist

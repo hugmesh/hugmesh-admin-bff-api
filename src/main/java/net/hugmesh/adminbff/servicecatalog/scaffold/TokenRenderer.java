@@ -1,5 +1,7 @@
 package net.hugmesh.adminbff.servicecatalog.scaffold;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeSet;
@@ -83,7 +85,7 @@ public final class TokenRenderer {
 
         public UnrenderedTokenException(List<String> tokens) {
             super("scaffold skeleton has unrendered tokens: " + tokens);
-            this.tokens = tokens;
+            this.tokens = Collections.unmodifiableList(new ArrayList<>(tokens));
         }
 
         /** The unresolved tokens (e.g. {@code [{{NEW_TOKEN}}]}). */

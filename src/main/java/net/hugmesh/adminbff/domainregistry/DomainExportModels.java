@@ -1,5 +1,7 @@
 package net.hugmesh.adminbff.domainregistry;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 /**
@@ -107,6 +109,10 @@ public final class DomainExportModels {
             String node,
             long generation,
             List<DomainEntry> entries) {
+
+        public DomainExportBody {
+            entries = entries == null ? null : Collections.unmodifiableList(new ArrayList<>(entries));
+        }
     }
 
     /**

@@ -284,6 +284,14 @@
       <classifier>tests</classifier>
       <scope>test</scope>
     </dependency>
+    <!-- @SuppressFBWarnings for justified EI_EXPOSE_REP2 on Spring-injected collaborators;
+         compile-time only, not shipped. -->
+    <dependency>
+      <groupId>com.github.spotbugs</groupId>
+      <artifactId>spotbugs-annotations</artifactId>
+      <version>4.9.8</version>
+      <scope>provided</scope>
+    </dependency>
   </dependencies>
 
   <build><plugins>

@@ -1,5 +1,7 @@
 package net.hugmesh.adminbff.backingservices;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -145,6 +147,10 @@ public final class BackingServiceEndpointPlan {
      */
     public record Entry(String serviceId, String namespace, String selfHostedAuthority,
                         String dbName, List<String> consumerDeployments) {
+
+        public Entry {
+            consumerDeployments = consumerDeployments == null ? null : Collections.unmodifiableList(new ArrayList<>(consumerDeployments));
+        }
     }
 
     /**
@@ -197,6 +203,11 @@ public final class BackingServiceEndpointPlan {
      */
     public record Plan(String serviceId, String namespace, Map<String, String> data,
                        List<String> consumerDeployments, long generation) {
+
+        public Plan {
+            consumerDeployments = consumerDeployments == null ? null : Collections.unmodifiableList(new ArrayList<>(consumerDeployments));
+            data = data == null ? null : Collections.unmodifiableMap(new LinkedHashMap<>(data));
+        }
 
         /** The ConfigMap name — the same in every namespace (decision 34a). */
         public String configMapName() {

@@ -1,5 +1,6 @@
 package net.hugmesh.adminbff.workload;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 import java.util.ArrayList;
@@ -62,27 +63,27 @@ public class WorkloadConsoleProperties {
     }
 
     public List<String> getNamespaceAllowlist() {
-        return namespaceAllowlist;
+        return List.copyOf(namespaceAllowlist);
     }
 
     public void setNamespaceAllowlist(List<String> namespaceAllowlist) {
-        this.namespaceAllowlist = namespaceAllowlist == null ? new ArrayList<>() : namespaceAllowlist;
+        this.namespaceAllowlist = namespaceAllowlist == null ? new ArrayList<>() : new ArrayList<>(namespaceAllowlist);
     }
 
     public List<PortForwardTarget> getPortForwardAllowlist() {
-        return portForwardAllowlist;
+        return List.copyOf(portForwardAllowlist);
     }
 
     public void setPortForwardAllowlist(List<PortForwardTarget> portForwardAllowlist) {
-        this.portForwardAllowlist = portForwardAllowlist == null ? new ArrayList<>() : portForwardAllowlist;
+        this.portForwardAllowlist = portForwardAllowlist == null ? new ArrayList<>() : new ArrayList<>(portForwardAllowlist);
     }
 
     public List<String> getExecReadOnlyCommands() {
-        return execReadOnlyCommands;
+        return List.copyOf(execReadOnlyCommands);
     }
 
     public void setExecReadOnlyCommands(List<String> execReadOnlyCommands) {
-        this.execReadOnlyCommands = execReadOnlyCommands == null ? new ArrayList<>() : execReadOnlyCommands;
+        this.execReadOnlyCommands = execReadOnlyCommands == null ? new ArrayList<>() : new ArrayList<>(execReadOnlyCommands);
     }
 
     public long getGrantTtlHours() {
@@ -93,10 +94,14 @@ public class WorkloadConsoleProperties {
         this.grantTtlHours = grantTtlHours;
     }
 
+    @SuppressFBWarnings(value = "EI_EXPOSE_REP",
+            justification = "Spring Boot @ConfigurationProperties nested-bean binding: the binder must reach the live nested K8s bean through this getter to populate app.workload-console.k8s.* ; a copy would silently drop the bound values.")
     public K8s getK8s() {
         return k8s;
     }
 
+    @SuppressFBWarnings(value = "EI_EXPOSE_REP2",
+            justification = "Spring Boot @ConfigurationProperties setter: the bound nested K8s bean is stored as-is (configuration holder, not caller-owned mutable data).")
     public void setK8s(K8s k8s) {
         this.k8s = k8s == null ? new K8s() : k8s;
     }
