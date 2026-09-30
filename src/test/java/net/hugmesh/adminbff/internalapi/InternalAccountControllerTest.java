@@ -477,16 +477,29 @@ class InternalAccountControllerTest {
      * {@code domain} reaches the store verbatim, so brand X's invite is never consulted for a
      * brand Y lookup. Before the fix this endpoint asked "invited in ANY domain" and the
      * {@code domain} argument did not exist.
+     *
+     * <p>The controller here is wired to a TWO-BRAND deployment ({@code brand-a} +
+     * {@code brand-b}), not the class-level untenanted resolver. Since issue #47
+     * {@link RegistrationDomainResolver#forInternalCaller} only honours a brand this
+     * deployment serves and fails closed to {@code PrincipalDomain.NO_DOMAIN} on any other, so
+     * on the untenanted wiring {@code "brand-a"} would never reach the store (issue #103). The
+     * fail-closed half of that contract is pinned in {@code RegistrationDomainResolverTest}.
      */
     @Test
     void allowlist_honoursCallerSuppliedDomain() {
+        RegistrationDomainResolver twoBrands = new RegistrationDomainResolver(
+                new net.hugmesh.commons.security.DomainRegistry("",
+                        "https://id.brand-a.test=brand-a,https://id.brand-b.test=brand-b"), "");
+        InternalAccountController tenanted = new InternalAccountController(
+                accounts, suspensions, mfaStepUp, CIPHER, oidc, 60L, localparts, casdoorSubs,
+                accountIssuers, twoBrands, usage);
         when(accounts.isEmailInvited("a@x.com", "brand-a")).thenReturn(Mono.just(true));
         when(accounts.isEmailInvited("a@x.com", "brand-b")).thenReturn(Mono.just(false));
 
-        StepVerifier.create(controller.allowlist("google", "a@x.com", "brand-a"))
+        StepVerifier.create(tenanted.allowlist("google", "a@x.com", "brand-a"))
                 .assertNext(m -> assertThat(m.get("invited")).isTrue())
                 .verifyComplete();
-        StepVerifier.create(controller.allowlist("google", "a@x.com", "brand-b"))
+        StepVerifier.create(tenanted.allowlist("google", "a@x.com", "brand-b"))
                 .assertNext(m -> assertThat(m.get("invited")).isFalse())
                 .verifyComplete();
 
