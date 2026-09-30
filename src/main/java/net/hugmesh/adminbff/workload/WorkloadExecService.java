@@ -18,10 +18,11 @@ import java.util.concurrent.atomic.AtomicLong;
  * The DANGEROUS-tier exec broker (DECISION 1). Two variants:
  *
  * <ul>
- *   <li>{@link #execReadOnly} — a one-shot exec whose WHOLE argv MUST equal one entry of the
- *       read-only allowlist ({@code app.workload-console.exec-read-only-commands}), token for
- *       token (see {@link WorkloadConsoleProperties#execReadOnlyAllowed}); any other argv —
- *       including an allowlisted command with extra arguments — is refused;</li>
+ *   <li>{@link #execReadOnly} — a one-shot exec whose argv MUST be licensed by the read-only
+ *       allowlist ({@code app.workload-console.exec-read-only-commands}): a bare-name entry
+ *       licenses that command with any arguments, a pinned-argv entry licenses exactly that
+ *       whole argv (see {@link WorkloadConsoleProperties#execReadOnlyAllowed}); anything else,
+ *       including a pinned command with extra arguments, is refused;</li>
  *   <li>{@link #appendTranscript} — the tamper-evident, append-only SIGNED transcript a full
  *       interactive TTY session writes (the WS handler calls it per stdin/stdout chunk). Each
  *       entry is signed with {@link RegistrySigner} over the canonical
@@ -63,7 +64,7 @@ public class WorkloadExecService {
                 tty ? "workload.exec.tty" : "workload.exec.readonly");
     }
 
-    /** One-shot read-only exec — the whole argv must exactly equal an allowlisted entry. */
+    /** One-shot read-only exec — the argv must be licensed by an allowlist entry (bare name or pinned argv). */
     public Mono<ExecResult> execReadOnly(String actor, String namespace, String pod,
                                          String container, List<String> command) {
         if (!props.execReadOnlyAllowed(command)) {
