@@ -1,6 +1,9 @@
 package net.hugmesh.adminbff.workload;
 
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -25,6 +28,10 @@ public final class WorkloadDtos {
             String node,
             Instant startedAt,
             List<ContainerSummary> containers) {
+
+        public PodSummary {
+            containers = containers == null ? null : Collections.unmodifiableList(new ArrayList<>(containers));
+        }
     }
 
     /** A projected container summary. */
@@ -49,6 +56,11 @@ public final class WorkloadDtos {
             Map<String, String> labels,
             String ownerKind,
             String ownerName) {
+
+        public PodInspect {
+            containers = containers == null ? null : Collections.unmodifiableList(new ArrayList<>(containers));
+            labels = labels == null ? null : Collections.unmodifiableMap(new LinkedHashMap<>(labels));
+        }
     }
 
     /** A single log line for the SSE live-tail (secret-redacted server-side). */
@@ -85,6 +97,10 @@ public final class WorkloadDtos {
             String capacity,
             String storageClass,
             List<String> accessModes) {
+
+        public VolumeSummary {
+            accessModes = accessModes == null ? null : Collections.unmodifiableList(new ArrayList<>(accessModes));
+        }
     }
 
     /** A projected NetworkPolicy / Service / HTTPRoute view row. */

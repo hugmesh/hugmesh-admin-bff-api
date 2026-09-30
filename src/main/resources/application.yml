@@ -145,6 +145,28 @@ homeserver:
   domainlock:
     enabled: "${HOMESERVER_DOMAINLOCK_ENABLED:false}"
 
+# ADMIN-only, ONE-WAY Matrix account deactivate (hugmesh-mod-bff-api#23; decisions 83a = C,
+# 83b = B). Posts tuwunel's `!admin users deactivate <mxid>` into the admin room after a
+# propose/confirm pair (MatrixDeactivateService). DELIBERATELY SEPARATE from homeserver.admin
+# above: that block is the REVERSIBLE access-suspension seam, and arming it must never arm this
+# verb (tuwunel has no re-activate). Env names are distinct from mod-bff-api's
+# MATRIX_ADMIN_ENABLED so one variable can never arm both services. SHIPS DARK.
+matrix-admin:
+  enabled: "${MATRIX_ADMIN_DEACTIVATE_ENABLED:false}"
+  base-url: "${MATRIX_ADMIN_DEACTIVATE_BASE_URL:http://tuwunel.hugmesh-backend.svc.cluster.local:8008}"
+  # Access token of an ADMIN-ROOM MEMBER — Vault hugmesh/tuwunel-admin (property "token") via
+  # the ESO ExternalSecret 'tuwunel-admin'. Placeholder only; NEVER inline. Blank => every
+  # confirm degrades (no-admin-token), never a false success.
+  admin-token: "${MATRIX_ADMIN_DEACTIVATE_TOKEN:}"
+  # The homeserver's server_name; a bare localpart target is qualified to @localpart:<this>.
+  server-name: "${MATRIX_ADMIN_DEACTIVATE_SERVER_NAME:hugmesh.net}"
+  # tuwunel's admin room alias (admin_room_default), resolved once per process.
+  admin-room: "${MATRIX_ADMIN_DEACTIVATE_ROOM:#admins:hugmesh.net}"
+  timeout: "${MATRIX_ADMIN_DEACTIVATE_TIMEOUT:PT10S}"
+  deactivate:
+    # The propose -> confirm window. Must be > 0 and <= PT15M or the service refuses to boot.
+    confirm-ttl: "${MATRIX_ADMIN_DEACTIVATE_CONFIRM_TTL:PT2M}"
+
 # Resilience4j circuit breakers for the access_suspension reconcile + expiry loop.
 # akkoma/tuwunel guard the per-homeserver suspend seam; casdoor (reused) guards the
 # expiry role re-add. Tuning mirrors the hugmesh-actions routeAccess/casdoor
@@ -534,10 +556,32 @@ app:
       # single-stick) boots clean: the loop compiles + diffs every tick through the Noop client
       # and mutates NOTHING. Flip true ONLY after (1) the canonical machine_key_fp field is
       # live-confirmed (docs/CANONICAL-FP.md — same blocker the READ side carries; the compiled
-      # policy keys nodes by that fp) and (2) an API key is provisioned.
+      # policy keys nodes by that fp), (2) an API key is provisioned, and (3) the control node
+      # runs headscale with policy.mode=database and the node-side hugmesh-policy-sync agent is
+      # removed (the generator cut-over for decision 101 = B, hugmesh-generator#634, not landed
+      # yet — see policy-mode). The startup gate only checks policy-mode below, which already
+      # declares `database`, so it CANNOT catch a flip made before that cut-over.
       enabled: "${APP_REGISTRY_HEADSCALE_ACL_ENABLED:false}"
       # The headscale control-plane gRPC-gateway REST base URL (only used when enabled).
-      base-url: "${APP_REGISTRY_HEADSCALE_ACL_BASE_URL:http://headscale.headscale.svc.cluster.local:8080}"
+      # headscale is a HOST OpenRC service on the pki node fronted by a selector-less Service
+      # `headscale` in ns `hugmesh-pki` (generator specs/cluster/manifests/headscale/service.yaml
+      # + apps/07-headscale-svc.yaml). The old default named headscale.headscale.svc, a namespace
+      # this platform does not have; it survived here after the 2026-07-30 fix reached only
+      # HeadscaleAclProperties, and this file's value is the one that wins at boot.
+      base-url: "${APP_REGISTRY_HEADSCALE_ACL_BASE_URL:http://headscale.hugmesh-pki.svc.cluster.local:8080}"
+      # The policy mode the TARGET headscale runs in — an operator DECLARATION, not a knob, spelled
+      # exactly as headscale's own policy.mode value. Decision 101 = B (2026-09-23): this BFF's
+      # PUT /api/v1/policy is the ONLY writer of the tailnet policy, so headscale keeps it in its
+      # DATABASE, which headscale v0.23.0 spells `database` (NOT `db` — headscale log.Fatal's on
+      # an unknown mode). The node-side writer (generator specs/usr/sbin/gen-headscale-policy.sh,
+      # the 60 s hugmesh-policy-sync cron, file mode) is RETIRED; its removal and the
+      # config.yaml switch to mode: database are generator work still to land. enabled=true with
+      # anything but `database` here FAILS THE CONTEXT at wiring time, naming the mismatch.
+      policy-mode: "${APP_REGISTRY_HEADSCALE_ACL_POLICY_MODE:database}"
+      # The node-local privileged unix account each compiled ssh rule opens the session AS —
+      # the node side's TS_SSH_USER (provision.sh resolve_ssh_user; its own fallback is
+      # "admin"). A value that does not match the node's resolved account yields unusable edges.
+      ssh-user: "${APP_REGISTRY_HEADSCALE_ACL_SSH_USER:admin}"
       # The headscale admin API key — Vault hugmesh/headscale-admin property `api-key`
       # via ESO, injected as APP_REGISTRY_HEADSCALE_ACL_API_KEY. PLACEHOLDER-ONLY, NEVER inline
       # a real key. Blank by default → no Authorization header (a real enabled push REQUIRES it).
@@ -719,9 +763,11 @@ app:
       # device, named by that device's device_ssh_dial.k8s_secret_name. A PATH only, never bytes.
       key-mount-path: "${DEVICE_TERMINAL_DIAL_KEY_MOUNT:/var/run/secrets/device-ssh-dial}"
       # File within EACH per-device Secret mount that holds the PEM/OpenSSH private dial key.
+      # Default dial_private_key (decision 73d, hugmesh-admin-bff-api#53): the key every producer
+      # writes (the generator's device-ssh-<deviceId> ExternalSecret and the build Job's mount).
       # ONE plain file name (no separator, no `.`/`..`): a value that climbs out of the device
       # directory is refused at startup (ERROR) and on every dial, so it cannot reach a flat key.
-      key-file: "${DEVICE_TERMINAL_DIAL_KEY_FILE:id_dial}"
+      key-file: "${DEVICE_TERMINAL_DIAL_KEY_FILE:dial_private_key}"
       # The node sshd port the BFF dials.
       port: "${DEVICE_TERMINAL_DIAL_PORT:22}"
       # Socket connect timeout for the dial.

@@ -332,19 +332,21 @@ public class Fabric8WorkloadClient implements WorkloadClient {
                         ? List.of() : pvc.getSpec().getAccessModes());
     }
 
+    private List<NetworkSummary> listNetwork(String namespace) {
+        KubernetesClient client = read();
+        List<NetworkSummary> out = new ArrayList<>();
+        client.services().inNamespace(namespace).list().getItems().forEach(s ->
+                out.add(new NetworkSummary(namespace, "Service", s.getMetadata().getName(),
+                        s.getSpec() == null ? "" : String.valueOf(s.getSpec().getType()))));
+        client.network().networkPolicies().inNamespace(namespace).list().getItems().forEach(np ->
+                out.add(new NetworkSummary(namespace, "NetworkPolicy",
+                        np.getMetadata().getName(), "")));
+        return out;
+    }
+
     @Override
     public Flux<NetworkSummary> network(String namespace) {
-        return Mono.fromCallable(() -> {
-                    KubernetesClient client = read();
-                    List<NetworkSummary> out = new ArrayList<>();
-                    client.services().inNamespace(namespace).list().getItems().forEach(s ->
-                            out.add(new NetworkSummary(namespace, "Service", s.getMetadata().getName(),
-                                    s.getSpec() == null ? "" : String.valueOf(s.getSpec().getType()))));
-                    client.network().networkPolicies().inNamespace(namespace).list().getItems().forEach(np ->
-                            out.add(new NetworkSummary(namespace, "NetworkPolicy",
-                                    np.getMetadata().getName(), "")));
-                    return out;
-                })
+        return Mono.fromCallable(() -> listNetwork(namespace))
                 .subscribeOn(Schedulers.boundedElastic())
                 .flatMapMany(Flux::fromIterable)
                 .onErrorMap(t -> !(t instanceof WorkloadClientException), t -> fail("network " + namespace, t));

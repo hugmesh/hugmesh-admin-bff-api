@@ -33,6 +33,7 @@ import org.springframework.security.web.server.firewall.StrictServerWebExchangeF
 import org.springframework.security.web.server.util.matcher.ServerWebExchangeMatcher;
 import org.springframework.security.web.server.util.matcher.ServerWebExchangeMatchers;
 import org.springframework.web.server.ServerWebExchange;
+import org.springframework.web.server.WebFilterChain;
 import org.springframework.web.server.WebFilter;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -108,8 +109,7 @@ public class SecurityConfig {
 
     /** Header carrying {@link #internalToken}. Tracks auth-core's
      *  {@code app.internal.token-header} so a deployment that renames it renames it once. */
-    @Value("${app.internal.token-header:X-Internal-Token}")
-    private String internalTokenHeader = INTERNAL_TOKEN_HEADER_DEFAULT;
+    private final String internalTokenHeader;
 
     /** D8 MFA marker derivation — {@code app.mfa.enabled} (default {@code false},
      *  ships dark). When off the converter emits the byte-identical legacy
@@ -126,7 +126,9 @@ public class SecurityConfig {
                           ObjectProvider<ReactiveAuthenticationManagerResolver<ServerWebExchange>>
                                   tenantAuthManagerResolver,
                           @Value("${app.mfa.enabled:false}") boolean mfaEnabled,
-                          @Value("${app.mfa.freshness-window:600000}") long mfaFreshnessWindowMillis) {
+                          @Value("${app.mfa.freshness-window:600000}") long mfaFreshnessWindowMillis,
+                          @Value("${app.internal.token-header:X-Internal-Token}") String internalTokenHeader) {
+        this.internalTokenHeader = internalTokenHeader;
         this.domainRegistry = domainRegistry;
         this.tenantAuthManagerResolver = tenantAuthManagerResolver;
         this.mfaEnabled = mfaEnabled;
@@ -415,25 +417,27 @@ public class SecurityConfig {
      * auth-core's {@code InternalSurfaceBootGuard} refuses to boot without mTLS.
      */
     private WebFilter internalServiceTokenAuthFilter() {
-        return (exchange, chain) -> {
-            if (!exchange.getRequest().getPath().value().startsWith(INTERNAL_PREFIX)) {
-                return chain.filter(exchange);
-            }
-            if (internalToken == null || internalToken.isBlank()) {
-                // UNARMED — dev/test parity with the historic permitAll (see javadoc).
-                return chain.filter(exchange).contextWrite(
-                        ReactiveSecurityContextHolder.withAuthentication(serviceAuthentication("internal-unarmed")));
-            }
-            String header = (internalTokenHeader == null || internalTokenHeader.isBlank())
-                    ? INTERNAL_TOKEN_HEADER_DEFAULT : internalTokenHeader;
-            String presented = exchange.getRequest().getHeaders().getFirst(header);
-            if (presented != null && constantTimeEquals(presented, internalToken)) {
-                return chain.filter(exchange).contextWrite(
-                        ReactiveSecurityContextHolder.withAuthentication(serviceAuthentication("internal-token")));
-            }
-            // No valid credential: stay unauthenticated and let hasRole("SERVICE") deny.
+        return this::filterInternalRequest;
+    }
+
+    private Mono<Void> filterInternalRequest(ServerWebExchange exchange, WebFilterChain chain) {
+        if (!exchange.getRequest().getPath().value().startsWith(INTERNAL_PREFIX)) {
             return chain.filter(exchange);
-        };
+        }
+        if (internalToken == null || internalToken.isBlank()) {
+            // UNARMED — dev/test parity with the historic permitAll (see javadoc).
+            return chain.filter(exchange).contextWrite(
+                    ReactiveSecurityContextHolder.withAuthentication(serviceAuthentication("internal-unarmed")));
+        }
+        String header = (internalTokenHeader == null || internalTokenHeader.isBlank())
+                ? INTERNAL_TOKEN_HEADER_DEFAULT : internalTokenHeader;
+        String presented = exchange.getRequest().getHeaders().getFirst(header);
+        if (presented != null && constantTimeEquals(presented, internalToken)) {
+            return chain.filter(exchange).contextWrite(
+                    ReactiveSecurityContextHolder.withAuthentication(serviceAuthentication("internal-token")));
+        }
+        // No valid credential: stay unauthenticated and let hasRole("SERVICE") deny.
+        return chain.filter(exchange);
     }
 
     /** The synthetic SERVICE principal — the three-arg AUTHENTICATED

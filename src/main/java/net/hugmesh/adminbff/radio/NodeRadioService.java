@@ -235,12 +235,16 @@ public class NodeRadioService {
                     shape.channelName(), shape.gatewayNodeId(), radioId, meshChannel,
                     RadioDevice.STATE_ACTIVE, device.domain(), RadioDevice.PROP_PENDING,
                     maxGen + 1, createdBy, null, null, null);
-            return radios.insertActive(draft, maxGen + 1)
-                    .doOnNext(r -> log.info(
-                            "[node-radios] attached radio {} ({}) device {} domain={} channel={} gen={} (id={})",
-                            radioId, shape.transport(), deviceId, device.domain(), meshChannel,
-                            r.generation(), r.id()));
+            return insertAndLogRadio(draft, maxGen + 1);
         });
+    }
+
+    private Mono<RadioDevice> insertAndLogRadio(RadioDevice draft, long generation) {
+        return radios.insertActive(draft, generation)
+                .doOnNext(r -> log.info(
+                        "[node-radios] attached radio {} ({}) device {} domain={} channel={} gen={} (id={})",
+                        draft.radioId(), draft.transport(), draft.deviceId(), draft.domain(),
+                        draft.meshChannel(), r.generation(), r.id()));
     }
 
     /**

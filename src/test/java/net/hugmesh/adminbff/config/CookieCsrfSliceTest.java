@@ -86,7 +86,7 @@ class CookieCsrfSliceTest {
                 exchange -> Mono.just(authentication -> Mono.error(
                         new org.springframework.security.authentication.BadCredentialsException(
                                 "not exercised in CSRF slice")));
-        SecurityConfig config = new SecurityConfig(registry, provider(resolver), false, 600_000L);
+        SecurityConfig config = new SecurityConfig(registry, provider(resolver), false, 600_000L, "X-Internal-Token");
         config.setCookieSessionEnabled(cookieEnabled);
         SecurityWebFilterChain chain = config.filterChain(ServerHttpSecurity.http());
         var builder = WebTestClient.bindToController(new Probe());

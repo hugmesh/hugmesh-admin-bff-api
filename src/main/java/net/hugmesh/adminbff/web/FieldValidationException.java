@@ -1,5 +1,6 @@
 package net.hugmesh.adminbff.web;
 
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -25,7 +26,7 @@ public class FieldValidationException extends RuntimeException {
 
     public FieldValidationException(Map<String, String> fields) {
         super("validation failed: " + fields);
-        this.fields = new LinkedHashMap<>(fields);
+        this.fields = Collections.unmodifiableMap(new LinkedHashMap<>(fields));
     }
 
     /** Field path → message, in the order the violations were found. */

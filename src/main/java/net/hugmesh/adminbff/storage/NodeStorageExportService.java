@@ -105,12 +105,13 @@ public class NodeStorageExportService {
         List<PoolEntry> entries = new ArrayList<>(resolved.size());
         for (ResolvedPool r : resolved) {
             maxGen = Math.max(maxGen, r.maxGeneration());
-            entries.add(r.entry());
+            PoolEntry e = r.entry();
+            List<AssignmentEntry> sorted = new ArrayList<>(e.assignments());
+            sorted.sort(Comparator.comparing(AssignmentEntry::serviceName));
+            entries.add(new PoolEntry(e.poolId(), e.diskSerial(), e.poolPath(), e.reservedBytes(),
+                    e.isExclusive(), e.filesystem(), sorted));
         }
         entries.sort(Comparator.comparing(PoolEntry::poolId));
-        for (PoolEntry p : entries) {
-            p.assignments().sort(Comparator.comparing(AssignmentEntry::serviceName));
-        }
         return new StorageExportBody(node.machineKeyFp(), maxGen, List.copyOf(entries));
     }
 

@@ -1,5 +1,6 @@
 package net.hugmesh.adminbff.suspension;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
 
@@ -16,6 +17,8 @@ import reactor.core.publisher.Mono;
  * single-writer invariant.
  */
 @Service
+@SuppressFBWarnings(value = "EI_EXPOSE_REP2",
+        justification = "Spring constructor injection: the container owns this singleton collaborator and it is never mutated by this class after construction; a defensive copy of a bean is meaningless (not caller-owned mutable data).")
 public class AccessSyncActions {
 
     private final MatrixAccessSyncAction matrix;

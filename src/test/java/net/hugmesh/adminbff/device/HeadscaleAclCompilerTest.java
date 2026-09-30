@@ -17,8 +17,10 @@ import static org.assertj.core.api.Assertions.assertThat;
  * The pure compile leg: a signed device-license export {@link ExportBody} -> a headscale ACL
  * policy. Proves — WITHOUT a live headscale — that the compiled policy describes the SAME mesh
  * the node-side renderer (hugmesh-generator {@code specs/usr/sbin/gen-headscale-policy.sh} +
- * {@code specs/etc/headscale/policy.hujson.tmpl}) already writes on every control node, because
- * that renderer is the LIVE writer and this compiler is the dark would-be replacement.
+ * {@code specs/etc/headscale/policy.hujson.tmpl}) writes on every control node today. Decision
+ * 101 = B (2026-09-23) retired that renderer as a writer and made this compiler (via the dark
+ * {@code PUT /api/v1/policy} push) the SOLE writer, so until the generator cut-over removes the
+ * renderer, reproducing its output is what makes the swap safe.
  *
  * <h3>The RECONCILIATION assertions (2026-07-30)</h3>
  * Each pins a divergence that would have broken the live mesh on the first push:

@@ -3,6 +3,7 @@ package net.hugmesh.adminbff.optionalservices;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -204,7 +205,7 @@ public class OptionalServiceRegistry {
             m.put(e.slug(), e);
         }
         this.bySlug = Map.copyOf(m);
-        this.slugs = ENTRIES.stream().map(Entry::slug).toList();
+        this.slugs = Collections.unmodifiableList(new ArrayList<>(ENTRIES.stream().map(Entry::slug).toList()));
         this.notToggleable = Map.copyOf(NOT_TOGGLEABLE);
         List<String> all = new ArrayList<>(this.slugs);
         all.addAll(NOT_TOGGLEABLE.keySet());

@@ -105,16 +105,18 @@ public class EgressVpnService {
     public Mono<Long> revokeConfig(String configId, String revokedBy, PrincipalDomain scope) {
         return configs.maxGeneration().flatMap(maxGen ->
                 configs.revoke(configId, revokedBy, maxGen + 1, scope)
-                        .flatMap(n -> {
-                            if (n == 0L) return Mono.just(0L);
-                            return assignments.maxGeneration()
-                                    .flatMap(amax -> assignments.revokeByConfig(configId, revokedBy, amax + 1))
-                                    .doOnNext(an -> log.info(
-                                            "[egress-vpn] revoke config id={} by={} -> cascade-revoked {} assignment(s)",
-                                            configId, revokedBy, an))
-                                    // The cascade deactivated assignments — un-label promptly.
-                                    .flatMap(an -> labeler.reconcile().thenReturn(n));
-                        }));
+                        .flatMap(n -> cascadeRevoke(configId, revokedBy, n)));
+    }
+
+    private Mono<Long> cascadeRevoke(String configId, String revokedBy, long n) {
+        if (n == 0L) return Mono.just(0L);
+        return assignments.maxGeneration()
+                .flatMap(amax -> assignments.revokeByConfig(configId, revokedBy, amax + 1))
+                .doOnNext(an -> log.info(
+                        "[egress-vpn] revoke config id={} by={} -> cascade-revoked {} assignment(s)",
+                        configId, revokedBy, an))
+                // The cascade deactivated assignments — un-label promptly.
+                .flatMap(an -> labeler.reconcile().thenReturn(n));
     }
 
     public Flux<VpnConfig> listConfigs(PrincipalDomain scope) {
@@ -247,22 +249,25 @@ public class EgressVpnService {
                 .doOnNext(existing -> log.info(
                         "[egress-vpn] config {} already active in {} (id={}) — no-op",
                         cleanName, finalDom, existing.id()))
-                .switchIfEmpty(Mono.defer(() -> configs.maxGeneration().flatMap(maxGen -> {
-                    VpnConfig draft = new VpnConfig(null, finalDom, cleanName, parsed.kind(),
-                            provider, parsed.endpoint(), secretRef, VpnConfig.STATE_ACTIVE,
-                            createdBy, null, null, null, VpnConfig.PROP_PENDING, maxGen + 1);
-                    return configs.insertActive(draft, maxGen + 1)
-                            .doOnNext(c -> log.info(
-                                    "[egress-vpn] imported config {} kind={} domain={} gen={} (id={})",
-                                    c.name(), c.kind(), c.domain(), c.generation(), c.id()))
-                            // Runtime delivery leg (fresh import ONLY — never the re-import
-                            // no-op): hand the validated bytes to the Secret writer seam.
-                            // Best-effort by contract (the writer swallows failures to false);
-                            // the row is the committed control record either way.
-                            .flatMap(c -> secretWriter
-                                    .write(c.secretRef(), c.domain(), c.name(), c.kind(), configBody)
-                                    .thenReturn(c));
-                })));
+                .switchIfEmpty(Mono.defer(() -> configs.maxGeneration().flatMap(maxGen ->
+                        insertConfig(new VpnConfig(null, finalDom, cleanName, parsed.kind(),
+                                provider, parsed.endpoint(), secretRef, VpnConfig.STATE_ACTIVE,
+                                createdBy, null, null, null, VpnConfig.PROP_PENDING, maxGen + 1),
+                                maxGen + 1, configBody))));
+    }
+
+    private Mono<VpnConfig> insertConfig(VpnConfig draft, long generation, String configBody) {
+        return configs.insertActive(draft, generation)
+                .doOnNext(c -> log.info(
+                        "[egress-vpn] imported config {} kind={} domain={} gen={} (id={})",
+                        c.name(), c.kind(), c.domain(), c.generation(), c.id()))
+                // Runtime delivery leg (fresh import ONLY — never the re-import
+                // no-op): hand the validated bytes to the Secret writer seam.
+                // Best-effort by contract (the writer swallows failures to false);
+                // the row is the committed control record either way.
+                .flatMap(c -> secretWriter
+                        .write(c.secretRef(), c.domain(), c.name(), c.kind(), configBody)
+                        .thenReturn(c));
     }
 
     /** Check config is active, resolve the target node, then idempotently insert a node assignment. */
@@ -298,19 +303,23 @@ public class EgressVpnService {
                 .doOnNext(existing -> log.info(
                         "[egress-vpn] node assignment already active node={} svc={} (id={}) — no-op",
                         targetNodeFp, svc, existing.id()))
-                .switchIfEmpty(Mono.defer(() -> assignments.maxGeneration().flatMap(maxGen -> {
-                    VpnNodeAssignment draft = new VpnNodeAssignment(null, configId,
-                            VpnNodeAssignment.SCOPE_DEVICE, targetNodeFp, null, svc,
-                            VpnNodeAssignment.STATE_ACTIVE, assignedBy, null, null,
-                            null, cfg.domain(), VpnNodeAssignment.PROP_PENDING, maxGen + 1);
-                    return assignments.insertActive(draft, maxGen + 1)
-                            .doOnNext(a -> log.info(
-                                    "[egress-vpn] assigned config {} to node {} svc={} domain={} gen={} (id={})",
-                                    configId, targetNodeFp, svc, cfg.domain(), a.generation(), a.id()))
-                            // Fast path on the fresh activate only (the idempotent no-op
-                            // changed nothing to converge).
-                            .flatMap(a -> labeler.reconcile().thenReturn(a));
-                })));
+                .switchIfEmpty(Mono.defer(() -> assignments.maxGeneration().flatMap(maxGen ->
+                        insertNodeAssignment(new VpnNodeAssignment(null, configId,
+                                VpnNodeAssignment.SCOPE_DEVICE, targetNodeFp, null, svc,
+                                VpnNodeAssignment.STATE_ACTIVE, assignedBy, null, null,
+                                null, cfg.domain(), VpnNodeAssignment.PROP_PENDING, maxGen + 1),
+                                maxGen + 1))));
+    }
+
+    private Mono<VpnNodeAssignment> insertNodeAssignment(VpnNodeAssignment draft, long generation) {
+        return assignments.insertActive(draft, generation)
+                .doOnNext(a -> log.info(
+                        "[egress-vpn] assigned config {} to node {} svc={} domain={} gen={} (id={})",
+                        draft.configId(), draft.targetNodeId(), draft.serviceSlug(), draft.domain(),
+                        a.generation(), a.id()))
+                // Fast path on the fresh activate only (the idempotent no-op
+                // changed nothing to converge).
+                .flatMap(a -> labeler.reconcile().thenReturn(a));
     }
 
     /** Check config is active and domain matches, then idempotently insert a domain-scoped assignment. */
@@ -336,19 +345,23 @@ public class EgressVpnService {
                 .doOnNext(existing -> log.info(
                         "[egress-vpn] domain assignment already active domain={} svc={} (id={}) — no-op",
                         td, svc, existing.id()))
-                .switchIfEmpty(Mono.defer(() -> assignments.maxGeneration().flatMap(maxGen -> {
-                    VpnNodeAssignment draft = new VpnNodeAssignment(null, configId,
-                            VpnNodeAssignment.SCOPE_DOMAIN, null, td, svc,
-                            VpnNodeAssignment.STATE_ACTIVE, assignedBy, null, null,
-                            null, cfg.domain(), VpnNodeAssignment.PROP_PENDING, maxGen + 1);
-                    return assignments.insertActive(draft, maxGen + 1)
-                            .doOnNext(a -> log.info(
-                                    "[egress-vpn] assigned config {} to domain {} svc={} gen={} (id={})",
-                                    configId, td, svc, a.generation(), a.id()))
-                            // Fast path on the fresh activate only (the idempotent no-op
-                            // changed nothing to converge).
-                            .flatMap(a -> labeler.reconcile().thenReturn(a));
-                })));
+                .switchIfEmpty(Mono.defer(() -> assignments.maxGeneration().flatMap(maxGen ->
+                        insertDomainAssignment(new VpnNodeAssignment(null, configId,
+                                VpnNodeAssignment.SCOPE_DOMAIN, null, td, svc,
+                                VpnNodeAssignment.STATE_ACTIVE, assignedBy, null, null,
+                                null, cfg.domain(), VpnNodeAssignment.PROP_PENDING, maxGen + 1),
+                                maxGen + 1))));
+    }
+
+    private Mono<VpnNodeAssignment> insertDomainAssignment(VpnNodeAssignment draft, long generation) {
+        return assignments.insertActive(draft, generation)
+                .doOnNext(a -> log.info(
+                        "[egress-vpn] assigned config {} to domain {} svc={} gen={} (id={})",
+                        draft.configId(), draft.targetDomain(), draft.serviceSlug(),
+                        a.generation(), a.id()))
+                // Fast path on the fresh activate only (the idempotent no-op
+                // changed nothing to converge).
+                .flatMap(a -> labeler.reconcile().thenReturn(a));
     }
 
     private static String blankToNull(String s) {

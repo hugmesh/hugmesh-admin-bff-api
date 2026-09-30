@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import net.hugmesh.adminbff.device.ExportModels.AuthorizedOperator;
 import net.hugmesh.adminbff.device.ExportModels.ExportBody;
 
@@ -87,6 +88,8 @@ import java.util.TreeSet;
  * The {@code machine_key_fp} canonical-field caveat is inherited from the export (see
  * {@code docs/CANONICAL-FP.md}) — which is WHY the whole leg ships dark.
  */
+@SuppressFBWarnings(value = "EI_EXPOSE_REP2",
+        justification = "Spring constructor injection: the container owns this singleton collaborator and it is never mutated by this class after construction; a defensive copy of a bean is meaningless (not caller-owned mutable data).")
 public final class HeadscaleAclCompiler {
 
     /** headscale's tag namespace prefix — every tag name headscale parses is {@code tag:<name>}. */

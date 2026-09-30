@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -31,6 +32,8 @@ import java.util.Map;
  * enforces the two-stage gate before delegating here).
  */
 @Service
+@SuppressFBWarnings(value = "EI_EXPOSE_REP2",
+        justification = "Spring constructor injection: the container owns this singleton collaborator and it is never mutated by this class after construction; a defensive copy of a bean is meaningless (not caller-owned mutable data).")
 public class ServiceTokenBroker {
 
     private static final Logger log = LoggerFactory.getLogger(ServiceTokenBroker.class);
@@ -199,28 +202,31 @@ public class ServiceTokenBroker {
         // folds `.`/`-`/`=`/`/`->`_` and 30-caps, so a dotted/hyphenated/>30-char handle's
         // folded form never equals its stored suspension row's localpart -> the guard would
         // silently miss and a MASTODON-suspended user could re-mint.
-        return guardSuspended(username, AccessSuspension.ROLE_MASTODON).then(Mono.defer(() -> {
-            if (mastodonEmailDomain == null || mastodonEmailDomain.isBlank()) {
-                log.warn("[broker] mastodon mint refused: broker.mastodon-email-domain is unset (fail-closed)");
-                return Mono.error(ApiException.badGateway(
-                        "mastodon token brokering unavailable: email domain not configured"));
-            }
-            // Use the PERSISTED, collision-checked Mastodon localpart (changeset 291;
-            // AuthController#provision reads AccountLocalpartService.mastodonLocalpartOf) — NEVER
-            // a re-fold of `username` here, which would skip the account-takeover-by-collision
-            // uniqueness the persisted value carries (two 290-unique accounts can share the
-            // coarser Mastodon fold). The mastodonLocalpart() re-application is idempotent (the
-            // stored value is already a fold fixed point), a belt-and-braces guard only.
-            String user = mastodonLocalpart(persistedMastodonLocalpart);
-            String email = user + "@" + mastodonEmailDomain;
-            return ensureMastodonApp()
-                    .flatMap(app -> mastodonPasswordGrant(app, email)
-                            .switchIfEmpty(Mono.defer(() -> mastodonRegister(app, user, email))))
-                    .flatMap(node -> node.hasNonNull("access_token")
-                            ? Mono.just(tokenOut(node))
-                            : Mono.error(new RuntimeException("mastodon mint: no access_token")))
-                    .flatMap(out -> recordBrokered(out, user, "mastodon"));
-        }));
+        return guardSuspended(username, AccessSuspension.ROLE_MASTODON)
+                .then(Mono.defer(() -> mintMastodon(persistedMastodonLocalpart)));
+    }
+
+    private Mono<Map<String, Object>> mintMastodon(String persistedMastodonLocalpart) {
+        if (mastodonEmailDomain == null || mastodonEmailDomain.isBlank()) {
+            log.warn("[broker] mastodon mint refused: broker.mastodon-email-domain is unset (fail-closed)");
+            return Mono.error(ApiException.badGateway(
+                    "mastodon token brokering unavailable: email domain not configured"));
+        }
+        // Use the PERSISTED, collision-checked Mastodon localpart (changeset 291;
+        // AuthController#provision reads AccountLocalpartService.mastodonLocalpartOf) — NEVER
+        // a re-fold of `username` here, which would skip the account-takeover-by-collision
+        // uniqueness the persisted value carries (two 290-unique accounts can share the
+        // coarser Mastodon fold). The mastodonLocalpart() re-application is idempotent (the
+        // stored value is already a fold fixed point), a belt-and-braces guard only.
+        String user = mastodonLocalpart(persistedMastodonLocalpart);
+        String email = user + "@" + mastodonEmailDomain;
+        return ensureMastodonApp()
+                .flatMap(app -> mastodonPasswordGrant(app, email)
+                        .switchIfEmpty(Mono.defer(() -> mastodonRegister(app, user, email))))
+                .flatMap(node -> node.hasNonNull("access_token")
+                        ? Mono.just(tokenOut(node))
+                        : Mono.error(new RuntimeException("mastodon mint: no access_token")))
+                .flatMap(out -> recordBrokered(out, user, "mastodon"));
     }
 
     /**
@@ -271,20 +277,22 @@ public class ServiceTokenBroker {
         tokenBody.put("client_secret", app.path("client_secret").asText());
         tokenBody.put("scope", MASTODON_SCOPES);
         return postJsonTolerant(mastodon, "/oauth/token", tokenBody, null)
-                .flatMap(tok -> {
-                    if (!tok.hasNonNull("access_token")) {
-                        return Mono.error(new RuntimeException(
-                                "mastodon mint: client_credentials grant returned no app token"));
-                    }
-                    Map<String, Object> reg = new LinkedHashMap<>();
-                    reg.put("username", user);
-                    reg.put("email", email);
-                    reg.put("password", svcPassword);
-                    reg.put("agreement", true);
-                    reg.put("locale", "en");
-                    return postJsonTolerant(mastodon, "/api/v1/accounts", reg,
-                            "Bearer " + tok.path("access_token").asText());
-                });
+                .flatMap(tok -> registerWithAppToken(tok, user, email));
+    }
+
+    private Mono<JsonNode> registerWithAppToken(JsonNode tok, String user, String email) {
+        if (!tok.hasNonNull("access_token")) {
+            return Mono.error(new RuntimeException(
+                    "mastodon mint: client_credentials grant returned no app token"));
+        }
+        Map<String, Object> reg = new LinkedHashMap<>();
+        reg.put("username", user);
+        reg.put("email", email);
+        reg.put("password", svcPassword);
+        reg.put("agreement", true);
+        reg.put("locale", "en");
+        return postJsonTolerant(mastodon, "/api/v1/accounts", reg,
+                "Bearer " + tok.path("access_token").asText());
     }
 
     /**

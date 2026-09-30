@@ -1,5 +1,6 @@
 package net.hugmesh.adminbff.routeaccess;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -77,6 +78,8 @@ import java.util.concurrent.atomic.AtomicReference;
  * enabled (see {@link RouteMirrorReconcilerConfig}), so with the mirror off the
  * {@code @Scheduled} tick does not even exist.
  */
+@SuppressFBWarnings(value = "EI_EXPOSE_REP2",
+        justification = "Spring constructor injection: the container owns this singleton collaborator and it is never mutated by this class after construction; a defensive copy of a bean is meaningless (not caller-owned mutable data).")
 public class RouteMirrorReconciler {
 
     private static final Logger log = LoggerFactory.getLogger(RouteMirrorReconciler.class);

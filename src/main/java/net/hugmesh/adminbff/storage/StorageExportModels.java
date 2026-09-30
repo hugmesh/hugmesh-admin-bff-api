@@ -1,5 +1,7 @@
 package net.hugmesh.adminbff.storage;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 /**
@@ -41,6 +43,10 @@ public final class StorageExportModels {
             boolean isExclusive,
             String filesystem,
             List<AssignmentEntry> assignments) {
+
+        public PoolEntry {
+            assignments = assignments == null ? null : Collections.unmodifiableList(new ArrayList<>(assignments));
+        }
     }
 
     /**
@@ -54,6 +60,10 @@ public final class StorageExportModels {
             String nodeFp,
             long generation,
             List<PoolEntry> pools) {
+
+        public StorageExportBody {
+            pools = pools == null ? null : Collections.unmodifiableList(new ArrayList<>(pools));
+        }
     }
 
     /**

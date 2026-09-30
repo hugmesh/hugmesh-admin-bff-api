@@ -95,24 +95,27 @@ public class PhoneManagementService {
     public Mono<PhoneDevice> lock(String deviceId, String reason, String actor) {
         return repo.findByDeviceId(deviceId)
                 .switchIfEmpty(notFound(deviceId))
-                .flatMap(device -> {
-                    if (!device.isManaged()) {
-                        return Mono.error(ApiException.conflict(
-                                "phone '" + deviceId + "' is not a managed device"));
-                    }
-                    // CAS-guarded on mesh_owned: an empty emission means a race cleared the
-                    // mode between the read and the write — still a 409, never a false lock.
-                    return repo.lockManaged(deviceId, reason, actor)
-                            .switchIfEmpty(Mono.error(ApiException.conflict(
-                                    "phone '" + deviceId + "' is not a managed device")))
-                            .flatMap(generation -> {
-                                log.info("[phone-mgmt] LOCK device by {} gen={}", actor, generation);
-                                return recordEnforcement(
-                                        enforcer.enforceLock(device.withLock(PhoneDevice.LOCK_LOCKED, generation)),
-                                        deviceId, generation);
-                            })
-                            .then(reload(deviceId));
-                });
+                .flatMap(device -> lockManagedDevice(device, deviceId, reason, actor));
+    }
+
+    private Mono<PhoneDevice> lockManagedDevice(PhoneDevice device, String deviceId, String reason,
+                                                String actor) {
+        if (!device.isManaged()) {
+            return Mono.error(ApiException.conflict(
+                    "phone '" + deviceId + "' is not a managed device"));
+        }
+        // CAS-guarded on mesh_owned: an empty emission means a race cleared the
+        // mode between the read and the write — still a 409, never a false lock.
+        return repo.lockManaged(deviceId, reason, actor)
+                .switchIfEmpty(Mono.error(ApiException.conflict(
+                        "phone '" + deviceId + "' is not a managed device")))
+                .flatMap(generation -> {
+                    log.info("[phone-mgmt] LOCK device by {} gen={}", actor, generation);
+                    return recordEnforcement(
+                            enforcer.enforceLock(device.withLock(PhoneDevice.LOCK_LOCKED, generation)),
+                            deviceId, generation);
+                })
+                .then(reload(deviceId));
     }
 
     /**
@@ -159,22 +162,25 @@ public class PhoneManagementService {
                                        String owner, String domain) {
         return repo.findByDeviceIdOwned(deviceId, owner, domain)
                 .switchIfEmpty(notFound(deviceId))
-                .flatMap(device -> {
-                    if (!device.isManaged()) {
-                        return Mono.error(ApiException.conflict(
-                                "phone '" + deviceId + "' is not a managed device"));
-                    }
-                    return repo.lockManagedOwned(deviceId, reason, actor, owner, domain)
-                            .switchIfEmpty(Mono.error(ApiException.conflict(
-                                    "phone '" + deviceId + "' is not a managed device")))
-                            .flatMap(generation -> {
-                                log.info("[phone-fleet] LOCK owned device by {} gen={}", actor, generation);
-                                return recordEnforcement(
-                                        enforcer.enforceLock(device.withLock(PhoneDevice.LOCK_LOCKED, generation)),
-                                        deviceId, generation);
-                            })
-                            .then(reloadOwned(deviceId, owner, domain));
-                });
+                .flatMap(device -> lockManagedOwnedDevice(device, deviceId, reason, actor, owner, domain));
+    }
+
+    private Mono<PhoneDevice> lockManagedOwnedDevice(PhoneDevice device, String deviceId, String reason,
+                                                     String actor, String owner, String domain) {
+        if (!device.isManaged()) {
+            return Mono.error(ApiException.conflict(
+                    "phone '" + deviceId + "' is not a managed device"));
+        }
+        return repo.lockManagedOwned(deviceId, reason, actor, owner, domain)
+                .switchIfEmpty(Mono.error(ApiException.conflict(
+                        "phone '" + deviceId + "' is not a managed device")))
+                .flatMap(generation -> {
+                    log.info("[phone-fleet] LOCK owned device by {} gen={}", actor, generation);
+                    return recordEnforcement(
+                            enforcer.enforceLock(device.withLock(PhoneDevice.LOCK_LOCKED, generation)),
+                            deviceId, generation);
+                })
+                .then(reloadOwned(deviceId, owner, domain));
     }
 
     /**
