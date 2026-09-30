@@ -62,6 +62,23 @@ public class Fabric8NodeStorageConfigMapWriter implements NodeStorageConfigMapWr
         this.namespace = (namespace == null || namespace.isBlank()) ? "devops" : namespace;
     }
 
+    private Boolean applyConfigMap(KubernetesClient client, Map<String, String> data, int count) {
+        ConfigMap cm = new ConfigMapBuilder()
+                .withNewMetadata()
+                .withName(CONFIGMAP_NAME)
+                .withNamespace(namespace)
+                .addToLabels("app.kubernetes.io/part-of", "hugmesh.net")
+                .addToLabels("hugmesh.net/node-storage-assignments", "true")
+                .endMetadata()
+                .withData(data)
+                .build();
+        // Server-side replace: the ConfigMap IS the desired set, single-writer.
+        client.configMaps().inNamespace(namespace).resource(cm).serverSideApply();
+        log.info("[node-storage-reconciler] applied ConfigMap {}/{} ({} active element(s))",
+                namespace, CONFIGMAP_NAME, count);
+        return Boolean.TRUE;
+    }
+
     @Override
     public Mono<Boolean> writeAssignments(List<StorageAssignmentElement> elements) {
         String json = renderElementsJson(elements);
@@ -77,22 +94,7 @@ public class Fabric8NodeStorageConfigMapWriter implements NodeStorageConfigMapWr
         // fabric8 round-trip on whichever thread delivered the upstream signal.
         return Mono.usingWhen(
                         Mono.fromCallable(() -> requireClient(clientFactory.get())),
-                        client -> Mono.fromCallable(() -> {
-                            ConfigMap cm = new ConfigMapBuilder()
-                                    .withNewMetadata()
-                                    .withName(CONFIGMAP_NAME)
-                                    .withNamespace(namespace)
-                                    .addToLabels("app.kubernetes.io/part-of", "hugmesh.net")
-                                    .addToLabels("hugmesh.net/node-storage-assignments", "true")
-                                    .endMetadata()
-                                    .withData(data)
-                                    .build();
-                            // Server-side replace: the ConfigMap IS the desired set, single-writer.
-                            client.configMaps().inNamespace(namespace).resource(cm).serverSideApply();
-                            log.info("[node-storage-reconciler] applied ConfigMap {}/{} ({} active element(s))",
-                                    namespace, CONFIGMAP_NAME, count);
-                            return Boolean.TRUE;
-                        }),
+                        client -> Mono.fromCallable(() -> applyConfigMap(client, data, count)),
                         client -> Mono.fromRunnable(client::close))
                 .subscribeOn(Schedulers.boundedElastic())
                 .onErrorResume(KubernetesClientException.class, e -> {

@@ -92,18 +92,7 @@ public class FederationResolvedFindingsClient {
         long since = sinceId == null ? 0L : sinceId;
         int cappedLimit = Math.min(Math.max(1, limit), MAX_LIMIT);
         return serviceToken.get()
-                .flatMap(token -> http.get()
-                        .uri(uri -> uri.path(PATH)
-                                .queryParam("surface", surface)
-                                .queryParam("sinceId", since)
-                                .queryParam("limit", cappedLimit)
-                                .build())
-                        // Reused VERBATIM from the platform ROLE_SERVICE pattern:
-                        // Authorization: Bearer <Casdoor client_credentials JWT>.
-                        .headers(h -> h.setBearerAuth(token))
-                        .retrieve()
-                        .bodyToFlux(ResolvedFindingDto.class)
-                        .collectList())
+                .flatMap(token -> fetchPage(token, surface, since, cappedLimit))
                 .timeout(CALL_TIMEOUT)
                 .doOnNext(page -> log.debug("[char-mod-reconcile] fetched {} resolved finding(s) "
                         + "surface={} sinceId={}", page.size(), surface, since));
@@ -111,5 +100,20 @@ public class FederationResolvedFindingsClient {
                 // skips the surface this tick and retries (it must not advance on a failure).
                 // collectList() always emits (an empty list for an empty 200 array), so there
                 // is no empty-completion case to guard.
+    }
+
+    private Mono<List<ResolvedFindingDto>> fetchPage(String token, String surface, long since, int cappedLimit) {
+        return http.get()
+                .uri(uri -> uri.path(PATH)
+                        .queryParam("surface", surface)
+                        .queryParam("sinceId", since)
+                        .queryParam("limit", cappedLimit)
+                        .build())
+                // Reused VERBATIM from the platform ROLE_SERVICE pattern:
+                // Authorization: Bearer <Casdoor client_credentials JWT>.
+                .headers(h -> h.setBearerAuth(token))
+                .retrieve()
+                .bodyToFlux(ResolvedFindingDto.class)
+                .collectList();
     }
 }

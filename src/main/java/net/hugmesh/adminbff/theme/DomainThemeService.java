@@ -118,17 +118,20 @@ public class DomainThemeService {
         // visibly un-themed rather than confidently wrong.
         return repo.findByDomain(target).map(java.util.Optional::of)
                 .defaultIfEmpty(java.util.Optional.empty())
-                .flatMap(existing -> {
-                    String css = theme.renderedCss();
-                    String by = theme.renderedBy();
-                    if (css == null && existing.isPresent() && theme.sameSelection(existing.get())) {
-                        css = existing.get().renderedCss();
-                        by = existing.get().renderedBy();
-                    }
-                    return repo.upsert(new DomainTheme(
-                            target, theme.preset(), theme.ramp(), theme.style(), theme.decor(),
-                            theme.primaryHex(), theme.secondaryHex(), actor, css, by));
-                });
+                .flatMap(existing -> upsertKeepingRender(target, theme, actor, existing));
+    }
+
+    private Mono<DomainTheme> upsertKeepingRender(String target, DomainTheme theme, String actor,
+                                                  java.util.Optional<DomainTheme> existing) {
+        String css = theme.renderedCss();
+        String by = theme.renderedBy();
+        if (css == null && existing.isPresent() && theme.sameSelection(existing.get())) {
+            css = existing.get().renderedCss();
+            by = existing.get().renderedBy();
+        }
+        return repo.upsert(new DomainTheme(
+                target, theme.preset(), theme.ramp(), theme.style(), theme.decor(),
+                theme.primaryHex(), theme.secondaryHex(), actor, css, by));
     }
 
     /** Clear a domain's override so it inherits the mesh default again. */

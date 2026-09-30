@@ -596,30 +596,32 @@ public class AuthController {
         // rather than re-deriving it from me.handle() here — a fresh re-derivation would
         // skip the collision check entirely and is exactly how the bug was reachable.
         return localpartOf(me)
-                .flatMap(username -> {
-                    // Never broker a real Matrix/Mastodon account whose username is a
-                    // reserved app path/prefix (defence-in-depth: a reserved handle should
-                    // already have been blocked at registration, but the broker mints a
-                    // real homeserver localpart here, so re-check at the provision point).
-                    if (ReservedNames.isReserved(username)) {
-                        return Mono.error(ApiException.badRequest(
-                                "username '" + username + "' is reserved and cannot be provisioned"));
-                    }
-                    if (matrix) {
-                        return broker.matrixToken(username)
-                                .onErrorResume(e -> Mono.error(ApiException.badGateway(String.valueOf(e))));
-                    }
-                    // Mastodon needs BOTH: the Matrix-style username (the suspension row key the
-                    // broker guards on) AND the PERSISTED, collision-checked Mastodon localpart
-                    // (changeset 291) the homeserver account is keyed on. Resolve the latter FIRST
-                    // and OUTSIDE the badGateway wrap — a self-heal here can raise CollisionException
-                    // that must reach the outer 409 mapper, not be masked as a 502.
-                    return mastodonLocalpartOf(me).flatMap(mastodonLocalpart ->
-                            broker.mastodonToken(username, mastodonLocalpart)
-                                    .onErrorResume(e -> Mono.error(ApiException.badGateway(String.valueOf(e)))));
-                })
+                .flatMap(username -> provisionFor(me, matrix, username))
                 .onErrorMap(AccountLocalpartService.CollisionException.class,
                         e -> ApiException.conflict(e.getMessage()));
+    }
+
+    private Mono<Map<String, Object>> provisionFor(Account me, boolean matrix, String username) {
+        // Never broker a real Matrix/Mastodon account whose username is a
+        // reserved app path/prefix (defence-in-depth: a reserved handle should
+        // already have been blocked at registration, but the broker mints a
+        // real homeserver localpart here, so re-check at the provision point).
+        if (ReservedNames.isReserved(username)) {
+            return Mono.error(ApiException.badRequest(
+                    "username '" + username + "' is reserved and cannot be provisioned"));
+        }
+        if (matrix) {
+            return broker.matrixToken(username)
+                    .onErrorResume(e -> Mono.error(ApiException.badGateway(String.valueOf(e))));
+        }
+        // Mastodon needs BOTH: the Matrix-style username (the suspension row key the
+        // broker guards on) AND the PERSISTED, collision-checked Mastodon localpart
+        // (changeset 291) the homeserver account is keyed on. Resolve the latter FIRST
+        // and OUTSIDE the badGateway wrap — a self-heal here can raise CollisionException
+        // that must reach the outer 409 mapper, not be masked as a 502.
+        return mastodonLocalpartOf(me).flatMap(mastodonLocalpart ->
+                broker.mastodonToken(username, mastodonLocalpart)
+                        .onErrorResume(e -> Mono.error(ApiException.badGateway(String.valueOf(e)))));
     }
 
     /**
