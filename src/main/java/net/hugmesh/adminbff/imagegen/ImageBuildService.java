@@ -280,18 +280,25 @@ public class ImageBuildService {
         // 6) ONE step-up authorizes the WHOLE batch; consume the MFA freshness EXACTLY ONCE
         //    (contrast the per-build consume of the single trigger). Then persist N QUEUED rows and
         //    launch with bounded concurrency (Noop/dark unless imagegen.launch.enabled=true).
-        return mfaStepUp.isFresh(sessionToken).flatMap(mfaFresh -> {
-            if (!stepUp.isSatisfied(subject, stepUpToken, mfaFresh)) {
-                return Mono.error(StepUpRequiredException.forRetryHeader(
-                        ImageGenStepUpGate.STEP_UP_HEADER, "image build"));
-            }
-            Mono<Void> consume = mfaFresh ? mfaStepUp.consume(sessionToken) : Mono.empty();
-            return consume
-                    .thenMany(Flux.fromIterable(queuedRows).concatMap(builds::insert))
-                    .collectList()
-                    .flatMap(inserted -> launchAll(inserted, maxConcurrent)
-                            .thenReturn(new BatchResult(batchId, inserted)));
-        });
+        return mfaStepUp.isFresh(sessionToken).flatMap(mfaFresh ->
+                launchBatchIfStepUpSatisfied(mfaFresh, subject, stepUpToken, sessionToken,
+                        batchId, maxConcurrent, queuedRows));
+    }
+
+    private Mono<BatchResult> launchBatchIfStepUpSatisfied(boolean mfaFresh, String subject,
+                                                            String stepUpToken, String sessionToken,
+                                                            String batchId, int maxConcurrent,
+                                                            List<ImageBuild> queuedRows) {
+        if (!stepUp.isSatisfied(subject, stepUpToken, mfaFresh)) {
+            return Mono.error(StepUpRequiredException.forRetryHeader(
+                    ImageGenStepUpGate.STEP_UP_HEADER, "image build"));
+        }
+        Mono<Void> consume = mfaFresh ? mfaStepUp.consume(sessionToken) : Mono.empty();
+        return consume
+                .thenMany(Flux.fromIterable(queuedRows).concatMap(builds::insert))
+                .collectList()
+                .flatMap(inserted -> launchAll(inserted, maxConcurrent)
+                        .thenReturn(new BatchResult(batchId, inserted)));
     }
 
     /**
@@ -367,24 +374,26 @@ public class ImageBuildService {
     public Mono<ImageBuild> ingest(String buildId, ImageBuildIngestRequest in) {
         return builds.findById(buildId)
                 .switchIfEmpty(Mono.error(ApiException.notFound("image build '" + buildId + "' not found")))
-                .flatMap(b -> {
-                    // TERMINAL-INGEST IDEMPOTENCY (worklist redesign item 8): once a build reached a
-                    // terminal state (its sink already closed by the first terminal ingest), a SECOND
-                    // terminal POST is a 200 no-op — it must NOT re-stamp finished_at, re-seed the
-                    // dial registry, or re-fan a terminal SSE event onto a completed sink. Mirrors
-                    // GoLiveInternalController's idempotent applied-ack CAS. 0..N non-terminal
-                    // /progress posts still precede the single terminal /ingest that closes.
-                    if (isTerminal(b.status())) {
-                        log.info("[imagegen] terminal ingest for build {} ignored — already {} (idempotent no-op)",
-                                buildId, b.status());
-                        return Mono.just(b);
-                    }
-                    return seedNonSecretRegistry(buildId, b, in)
-                            // record the non-secret artifact pointers on the build row first
-                            .then(builds.recordArtifacts(buildId, in.imageRef(), in.keysRef(), in.error()))
-                            .then(orchestrator.ingest(buildId, in.status(), in.imageRef(), in.keysRef(),
-                                    in.message(), in.error()));
-                });
+                .flatMap(b -> ingestUnlessTerminal(buildId, b, in));
+    }
+
+    private Mono<ImageBuild> ingestUnlessTerminal(String buildId, ImageBuild b, ImageBuildIngestRequest in) {
+        // TERMINAL-INGEST IDEMPOTENCY (worklist redesign item 8): once a build reached a
+        // terminal state (its sink already closed by the first terminal ingest), a SECOND
+        // terminal POST is a 200 no-op — it must NOT re-stamp finished_at, re-seed the
+        // dial registry, or re-fan a terminal SSE event onto a completed sink. Mirrors
+        // GoLiveInternalController's idempotent applied-ack CAS. 0..N non-terminal
+        // /progress posts still precede the single terminal /ingest that closes.
+        if (isTerminal(b.status())) {
+            log.info("[imagegen] terminal ingest for build {} ignored — already {} (idempotent no-op)",
+                    buildId, b.status());
+            return Mono.just(b);
+        }
+        return seedNonSecretRegistry(buildId, b, in)
+                // record the non-secret artifact pointers on the build row first
+                .then(builds.recordArtifacts(buildId, in.imageRef(), in.keysRef(), in.error()))
+                .then(orchestrator.ingest(buildId, in.status(), in.imageRef(), in.keysRef(),
+                        in.message(), in.error()));
     }
 
     /** Validate step-up then consume MFA single-use and insert + launch the queued build. */

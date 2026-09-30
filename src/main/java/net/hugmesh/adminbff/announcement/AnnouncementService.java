@@ -160,22 +160,23 @@ public class AnnouncementService {
         Instant now = Instant.now();
         return repo.expiredWithAkkomaRef(now)
                 .flatMap(stale -> akkoma.removeAnnouncement(stale.akkomaRef())
-                        .flatMap(outcome -> {
-                            if (!outcome.isOk()) {
-                                // Unconfirmed removal (stubbed/degraded) — keep the ref;
-                                // the next sweep retries.
-                                log.warn("[akkoma] reconcile remove for {} not confirmed ({}); "
-                                        + "keeping akkoma_ref", stale.id(), outcome.result());
-                                return Mono.empty();
-                            }
-                            return repo.setAkkomaRef(stale.id(), null);
-                        })
+                        .flatMap(outcome -> clearAkkomaRefIfRemoved(stale, outcome))
                         .onErrorResume(e -> {
                             log.warn("[akkoma] reconcile remove for {} failed (will retry): {}",
                                     stale.id(), e.toString());
                             return Mono.empty();
                         }))
                 .then();
+    }
+
+    private Mono<Void> clearAkkomaRefIfRemoved(Announcement stale, AkkomaOutcome outcome) {
+        if (!outcome.isOk()) {
+            // Unconfirmed removal (stubbed/degraded) — keep the ref; the next sweep retries.
+            log.warn("[akkoma] reconcile remove for {} not confirmed ({}); "
+                    + "keeping akkoma_ref", stale.id(), outcome.result());
+            return Mono.empty();
+        }
+        return repo.setAkkomaRef(stale.id(), null);
     }
 
     // ── akkoma propagation helpers ──────────────────────────────────────

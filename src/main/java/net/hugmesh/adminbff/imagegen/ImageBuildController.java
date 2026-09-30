@@ -128,22 +128,24 @@ public class ImageBuildController {
         // synthesised-from-bearer), NEVER a body/path field. ONE step-up authorizes the whole batch.
         String sessionToken = SessionCookieWebFilter.bffTokenFrom(sessionCookie, authHeader);
         return service.triggerBatch(auth, body, stepUpToken, sessionToken)
-                .map(result -> {
-                    List<Map<String, Object>> builds = new ArrayList<>();
-                    for (ImageBuild b : result.builds()) {
-                        Map<String, Object> one = new LinkedHashMap<>();
-                        one.put("id", b.id());
-                        one.put("status", b.status());
-                        one.put("imageType", b.imageType());
-                        one.put("domain", b.domain());
-                        one.put("sshKeysAllowed", b.sshKeysAllowed());
-                        builds.add(one);
-                    }
-                    Map<String, Object> out = new LinkedHashMap<>();
-                    out.put("batchId", result.batchId());
-                    out.put("builds", builds);
-                    return out;
-                });
+                .map(ImageBuildController::batchResponse);
+    }
+
+    private static Map<String, Object> batchResponse(ImageBuildService.BatchResult result) {
+        List<Map<String, Object>> builds = new ArrayList<>();
+        for (ImageBuild b : result.builds()) {
+            Map<String, Object> one = new LinkedHashMap<>();
+            one.put("id", b.id());
+            one.put("status", b.status());
+            one.put("imageType", b.imageType());
+            one.put("domain", b.domain());
+            one.put("sshKeysAllowed", b.sshKeysAllowed());
+            builds.add(one);
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("batchId", result.batchId());
+        out.put("builds", builds);
+        return out;
     }
 
     // ── SSE live progress ──────────────────────────────────────────────────
