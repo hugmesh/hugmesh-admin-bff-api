@@ -29,6 +29,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -456,31 +457,72 @@ public class ImageBuildService {
                 || in.dialUser() == null || in.dialPubFp() == null) {
             return Mono.empty();
         }
+        // Optional-wrap so "not enrolled" is told apart from a seed that completed empty (seedDial is
+        // a Mono<Void>: a switchIfEmpty AFTER it would fire on every successful seed too).
         return devices.findById(in.deviceId())
-                .flatMap(device -> {
-                    if (build.domain() == null || !build.domain().equals(device.domain())) {
-                        // Cross-tenant attach attempt — fail closed. Do NOT leak the device's brand.
-                        log.warn("[imagegen] DENY cross-tenant dial seed for build {} (build domain {}, "
-                                + "target device residency differs)", buildId, build.domain());
-                        return Mono.<Void>error(ApiException.forbidden(
-                                "ingest device does not belong to this build's tenant"));
-                    }
-                    return seedDial(buildId, in);
-                });
-        // NB: when the device is not yet enrolled (no registry row) findById is empty and the
-        // switchIfEmpty-less chain completes empty — the dial seed is simply skipped, exactly as
-        // before. We can only attach a dial to a device whose residency we can verify.
+                .map(Optional::of)
+                .defaultIfEmpty(Optional.empty())
+                .flatMap(found -> seedIfResidentInBuildDomain(buildId, build, in, found));
     }
 
-    /** The (idempotent, best-effort) NON-SECRET dial insert — only reached after the tenant
-     *  cross-check has confirmed the target device is resident in the build's domain. */
+    /** The per-device half of {@link #seedNonSecretRegistry}: not enrolled -> WARN skip; resident in
+     *  another tenant -> 403 (fail closed); otherwise the dial seed. */
+    private Mono<Void> seedIfResidentInBuildDomain(String buildId, ImageBuild build,
+                                                   ImageBuildIngestRequest in,
+                                                   Optional<net.hugmesh.adminbff.device.Device> found) {
+        if (found.isEmpty()) {
+            // Not yet enrolled (no registry row): the dial seed is skipped, exactly as before — we
+            // can only attach a dial to a device whose residency we can verify — but now with a
+            // WARN naming the reason, because with the BFF-minted dev-<id> this is the FIRST thing
+            // a real build hits (enrollment issues its own id).
+            log.warn("[imagegen] non-secret dial seed for build {} skipped: reported device"
+                    + " '{}' is not enrolled (no device_registry row with that id)",
+                    buildId, printable(in.deviceId()));
+            return Mono.empty();
+        }
+        if (build.domain() == null || !build.domain().equals(found.get().domain())) {
+            // Cross-tenant attach attempt — fail closed. Do NOT leak the device's brand.
+            log.warn("[imagegen] DENY cross-tenant dial seed for build {} (build domain {}, "
+                    + "target device residency differs)", buildId, build.domain());
+            return Mono.error(ApiException.forbidden(
+                    "ingest device does not belong to this build's tenant"));
+        }
+        return seedDial(buildId, in);
+    }
+
+    /**
+     * The (idempotent, best-effort) NON-SECRET dial insert — only reached after the tenant
+     * cross-check has confirmed the target device is resident in the build's domain.
+     *
+     * <p><b>The identity is SERVER-derived</b> (decisions 73a/73b/73c, hugmesh-admin-bff-api#53).
+     * The BFF minted this build's device id and Vault path when it rendered the Job
+     * ({@link DeviceDialIdentity}); the Job reports them back and the row is seeded ONLY when the
+     * report matches what the BFF passed. The Secret name is never read from the body at all — it
+     * is {@code device-ssh-<deviceId>}, checked with the SAME DNS-1123 rule the dial applies
+     * ({@link net.hugmesh.adminbff.desktop.terminal.SshjDeviceSshChannelFactory#dialKeyIdentityRefusal}).
+     *
+     * <p>Every refusal is a WARN that names the exact reason and seeds NOTHING (the terminal status
+     * still lands), checked BEFORE the insert so the log never degrades to a generic R2DBC
+     * NOT-NULL error:
+     * <ol>
+     *   <li>the body's {@code deviceId} is not the id minted for this build;</li>
+     *   <li>a {@code NOT NULL} column has no value — {@code host_key_pub}, {@code host_key_fp}
+     *       (hugmesh-generator build-image.sh does not generate device host keys yet: an admitted
+     *       follow-up with NO operator decision behind it, so they are neither invented nor relaxed
+     *       here) or {@code vault_ref};</li>
+     *   <li>the body's {@code vaultRef} is present but is not the path minted for this device;</li>
+     *   <li>the derived Secret name fails the DNS-1123 rule.</li>
+     * </ol>
+     */
     private Mono<Void> seedDial(String buildId, ImageBuildIngestRequest in) {
-        DeviceSshDial dial = new DeviceSshDial(
-                null, in.deviceId(), in.dialUser(),
-                blankToNull(in.hostKeyPub()), blankToNull(in.hostKeyFp()),
-                in.dialPubFp(), blankToNull(in.vaultRef()), blankToNull(in.k8sSecretName()),
-                buildId, DeviceSshDial.STATUS_PENDING, 1L, null, null);
-        return dials.findByDeviceId(in.deviceId())
+        String refusal = dialSeedRefusal(buildId, in);
+        if (refusal != null) {
+            log.warn("[imagegen] non-secret dial seed for build {} skipped: {}", buildId, refusal);
+            return Mono.empty();
+        }
+        String deviceId = in.deviceId();
+        DeviceSshDial dial = candidateDial(buildId, in);
+        return dials.findByDeviceId(deviceId)
                 .flatMap(existing -> Mono.<DeviceSshDial>empty())   // already present -> skip
                 .switchIfEmpty(dials.insert(dial))
                 .then()
@@ -489,6 +531,87 @@ public class ImageBuildService {
                             buildId, e.toString());
                     return Mono.empty();
                 });
+    }
+
+    /** The dial row a report would seed: the Secret name and Vault path are the SERVER-derived
+     *  values for this build's minted device id, never the body's. */
+    private static DeviceSshDial candidateDial(String buildId, ImageBuildIngestRequest in) {
+        String deviceId = in.deviceId();
+        return new DeviceSshDial(
+                null, deviceId, in.dialUser(),
+                blankToNull(in.hostKeyPub()), blankToNull(in.hostKeyFp()),
+                in.dialPubFp(), DeviceDialIdentity.vaultRefFor(deviceId),
+                DeviceDialIdentity.secretNameFor(deviceId),
+                buildId, DeviceSshDial.STATUS_PENDING, 1L, null, null);
+    }
+
+    /**
+     * Why a terminal report cannot seed a dial row, or {@code null} when it can. Package-private so
+     * the rule is unit-testable on its own. Untrusted body values are echoed only as bounded
+     * printable ASCII.
+     */
+    static String dialSeedRefusal(String buildId, ImageBuildIngestRequest in) {
+        String minted = DeviceDialIdentity.mintDeviceId(buildId);
+        if (!minted.equals(in.deviceId())) {
+            return "reported deviceId '" + printable(in.deviceId()) + "' is not the device id minted"
+                    + " for this build ('" + minted + "'); the Job must report the DEVICE_ID the BFF"
+                    + " passed it";
+        }
+        String mintedVaultRef = DeviceDialIdentity.vaultRefFor(minted);
+        List<String> missing = new ArrayList<>();
+        if (blankToNull(in.hostKeyPub()) == null) {
+            missing.add("host_key_pub");
+        }
+        if (blankToNull(in.hostKeyFp()) == null) {
+            missing.add("host_key_fp");
+        }
+        if (blankToNull(in.vaultRef()) == null) {
+            missing.add("vault_ref");
+        }
+        if (!missing.isEmpty()) {
+            StringBuilder why = new StringBuilder("missing NOT NULL field(s) ")
+                    .append(String.join(", ", missing)).append(" for device ").append(minted)
+                    .append(" (device_ssh_dial requires them");
+            if (missing.contains("host_key_pub") || missing.contains("host_key_fp")) {
+                why.append("; the build Job does not report device host keys yet and no decision"
+                        + " covers them, hugmesh-admin-bff-api#53");
+            }
+            if (missing.contains("vault_ref")) {
+                why.append("; the Job must report the VAULT_REF the BFF passed it");
+            }
+            return why.append(')').toString();
+        }
+        if (!mintedVaultRef.equals(in.vaultRef())) {
+            return "reported vaultRef '" + printable(in.vaultRef()) + "' is not the Vault path minted"
+                    + " for device " + minted + " ('" + mintedVaultRef + "'); the Job must report the"
+                    + " VAULT_REF the BFF passed it";
+        }
+        String secretRefusal = net.hugmesh.adminbff.desktop.terminal.SshjDeviceSshChannelFactory
+                .dialKeyIdentityRefusal(candidateDial(buildId, in));
+        if (secretRefusal != null) {
+            return "derived dial Secret for device " + minted + " " + secretRefusal;
+        }
+        return null;
+    }
+
+    /** Max characters of an untrusted body value echoed into a WARN line. */
+    private static final int MAX_ECHO = 64;
+
+    /** Render an untrusted value for a log line: non-printable-ASCII becomes {@code ?}, bounded. */
+    private static String printable(String value) {
+        if (value == null) {
+            return "null";
+        }
+        StringBuilder out = new StringBuilder();
+        int shown = Math.min(value.length(), MAX_ECHO);
+        for (int i = 0; i < shown; i++) {
+            char c = value.charAt(i);
+            out.append(c >= 0x20 && c <= 0x7E ? c : '?');
+        }
+        if (value.length() > MAX_ECHO) {
+            out.append("...(").append(value.length()).append(" chars)");
+        }
+        return out.toString();
     }
 
     /** Resolve a build, scoping a non-superadmin to their own validated-issuer domain (404 on a

@@ -17,16 +17,18 @@ import static org.assertj.core.api.Assertions.assertThat;
  * FULL-DOCUMENT CROSS-WRITER PARITY — the strongest assertion in the Layer-A contract.
  *
  * <h3>Why this test exists</h3>
- * Layer-A has TWO would-be writers of ONE headscale policy:
+ * Layer-A has had TWO writers of ONE headscale policy:
  * <ul>
  *   <li>the NODE-side renderer, {@code hugmesh-generator}
- *       {@code specs/usr/sbin/gen-headscale-policy.sh} — LIVE on every control node today, the
- *       actual writer of {@code /etc/headscale/policy.hujson}; and</li>
- *   <li>this BFF's {@link HeadscaleAclCompiler} + reconcile loop — DARK behind
- *       {@code app.registry.headscale-acl.enabled=false}, the would-be replacement writer.</li>
+ *       {@code specs/usr/sbin/gen-headscale-policy.sh} — RETIRED as a writer by decision
+ *       101 = B (2026-09-23), but still what the fleet as built runs on every control node (file
+ *       mode, the {@code hugmesh-policy-sync} cron) until the generator cut-over lands; and</li>
+ *   <li>this BFF's {@link HeadscaleAclCompiler} + reconcile loop — the decided SOLE writer,
+ *       still DARK behind {@code app.registry.headscale-acl.enabled=false}.</li>
  * </ul>
- * Whoever eventually enables the push is swapping writer #2 in for writer #1. That is only safe
- * if, for the same signed export, they describe the SAME mesh. Until 2026-07-30 they did not:
+ * The cut-over swaps writer #2 in for writer #1. That is only safe if, for the same signed
+ * export, they describe the SAME mesh — so this parity is the cut-over contract, and it stays
+ * pinned until the node renderer is actually gone. Until 2026-07-30 they did not:
  * the compiler addressed nodes by {@code tag:node-<raw fp>} (a tag no node carries), emitted an
  * empty {@code acls[]} (which would have blanked the k8s data-plane rule fleet-wide), dropped the
  * always-on SUPERADMIN mesh rule, omitted {@code tagOwners}, and named {@code group:op-*}
@@ -150,8 +152,10 @@ class HeadscaleAclParityTest {
         // This compiler MIRRORS the live node-side writer; it is not the place to unilaterally
         // change what the live mesh declares (that is a node-side change to the LIVE writer, and
         // a policy headscale currently accepts). So the gap is asserted AS IT IS, and named, so
-        // that closing it is a deliberate decision rather than a silent diff. Whoever settles the
-        // file-vs-DB single-writer question should close it in BOTH writers at once.
+        // that closing it is a deliberate decision rather than a silent diff. Decision 101 = B
+        // settled the single-writer question (this compiler becomes the only writer), so once
+        // the node renderer is retired, closing this gap is this compiler's job alone — and it
+        // must be done together with dropping this pin and the shared golden.
         String meshDst = golden.get("ssh").get(0).get("dst").get(0).asText();
         assertThat(golden.get("tagOwners").has(meshDst))
                 .as("KNOWN GAP (node-side, pre-existing): %s is an ssh dst and is force-assigned, "

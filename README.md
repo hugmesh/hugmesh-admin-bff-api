@@ -109,7 +109,14 @@ for the narrower ones):
   Kaniko in-cluster image builder, by contrast, is live).
 - Device-license Layer-A headscale enforcement needs a live control node to confirm
   which reported key is canonical — tracked in [`docs/CANONICAL-FP.md`](docs/CANONICAL-FP.md),
-  unresolved.
+  unresolved. The tailnet ACL policy's single writer is decided (decision 101 = B,
+  2026-09-23): this BFF's direct `PUT /api/v1/policy`, with headscale keeping the policy in
+  its database (`policy.mode: database`, headscale's own spelling; the BFF declares it in
+  `app.registry.headscale-acl.policy-mode`, default `database`). The node-side agent
+  (hugmesh-generator `gen-headscale-policy.sh`, run every 60 s by the `hugmesh-policy-sync`
+  cron in file mode) is retired as a writer, but its removal and the control node's switch
+  to database mode are generator work that has not landed, so the push still ships dark
+  (`app.registry.headscale-acl.enabled=false`).
 - The SSH-terminal dial's real, host-key-pinned `SshjDeviceSshChannelFactory` (sshj,
   no TOFU — refuses without an ACTIVE `device_ssh_dial` row and a matching pinned
   `host_key_fp`) **already exists and is tested** (merged 2026-06-18, #81). It ships
@@ -685,6 +692,23 @@ event path. See `src/main/resources/jobs/README.md` for the Job + RBAC + storage
   tailnet direct), per-domain and role-gated. `GET` (`hasAnyRole('ADMIN','SUPERADMIN')`)
   reads; mutations are `hasRole('SUPERADMIN')`. Secrets stay off-git (changelog
   `080-egress-vpn-configs`).
+- **`TorAdminController`** / **`TorInternalController`** — the admin-bff half of the node
+  Tor contract (#108; the node half is hugmesh-generator #583/#599). A tor-selected node
+  reports the onions it exports (`/var/lib/hugmesh/tor/hostname` and one
+  `/var/lib/hugmesh/tor/<slug>.hostname` per Tor domain) to
+  `POST /bff/internal/tor/onions` — the same `/bff/internal/**` SERVICE + mTLS channel
+  as the device-enrollment self-report, telemetry only. `GET /bff/admin/tor/nodes` lists
+  each node as `{primary, domains: {slug: onion}}`: a SUPERADMIN sees everything, a
+  domain ADMIN only their own domain's onion (the primary only for `default`) with node
+  identity and routing redacted. `PUT /bff/admin/tor/nodes/{fp}/upstream` (SUPERADMIN)
+  manages a node's `/etc/hugmesh/tor/upstream` (`null` = the agent's default
+  `127.0.0.1:443`), validated against the agent's own `host:port` rule. The per-domain
+  list `/etc/hugmesh/tor/domains` is the `tor-onion` key of `/bff/admin/domain-capabilities`
+  (unmanaged until a SUPERADMIN writes its `' global'` row). Both files reach the node
+  only through the signed per-node `GET /bff/admin/tor/export?node=` (canonical
+  `v1-tor` bytes + detached Ed25519, unknown fingerprint = empty body); the node-side
+  consumer that fetches it and writes the files is not built yet (changelog
+  `360-tor-node`).
 - **`StoragePoolController`** — `/bff/admin/device-storage-pools`
   (`hasAnyRole('ADMIN','SUPERADMIN')`): attach + register extra storage to a specific
   node (node-pinned local PV / local-path pool, FDE) so capacity-aware scheduling can
@@ -1275,7 +1299,10 @@ them as shipped.
   per-brand ArgoCD `ApplicationSet` (namespaces / CA / Casdoor org / gateway / BFF / UI).
 - 🔭 **Device-license enforcement Layer-A** — the registry + signed export are shipped
   and the `device_enrollment` self-report channel exists; the live **headscale ACL push**
-  + `machine_key` auto-capture admission (needs a live control node) is deferred.
+  + `machine_key` auto-capture admission (needs a live control node) is deferred. The push
+  is the tailnet policy's only writer by decision 101 = B (headscale in `policy.mode:
+  database`; the node-side `gen-headscale-policy.sh` / `hugmesh-policy-sync` agent retired,
+  its removal still to land in hugmesh-generator).
 - 🔭 **MDM phone-lock real device push** — the control plane (ingest, fleet registry,
   management/lockout mutations, the fleet-entitlement gate) is shipped and tested; the
   three enforcement legs the aggregate (`DefaultPhoneLockEnforcer`) fans out to —

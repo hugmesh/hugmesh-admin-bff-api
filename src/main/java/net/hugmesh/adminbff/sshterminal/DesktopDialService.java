@@ -156,13 +156,15 @@ public class DesktopDialService {
      *       <p>MEASURED, so the two halves of this rule are not credited equally. The ABSENT case
      *       is unreachable through the ingest: {@code k8s_secret_name} is {@code NOT NULL}
      *       (changelog {@code 170-device-ssh-keys.xml:89}) and {@code ImageBuildService.seedDial}
-     *       passes it through {@code blankToNull}, so an ingest that omits OR blanks the name
-     *       inserts a NULL, the INSERT fails, and the seed is skipped — a blank name can only
-     *       arrive from outside that path, which is why it is checked rather than assumed. The
-     *       MALFORMED case is a different matter and IS reachable from that internal-token
-     *       surface: {@code ImageBuildIngestRequest.k8sSecretName} bounds only its LENGTH
-     *       ({@code @Size(max = 253)}, no pattern), so {@code ../../etc/ssl} is stored verbatim
-     *       today. Now that the column is a PATH SEGMENT, that is the half with teeth.</li>
+     *       always derives a non-blank name itself, so a blank name can only arrive from outside
+     *       that path, which is why it is checked rather than assumed. The
+     *       MALFORMED case was reachable from that internal-token surface until decision 73a
+     *       (hugmesh-admin-bff-api#53): the ingest body used to carry a free-form
+     *       {@code k8sSecretName} bounded only by LENGTH, so {@code ../../etc/ssl} was stored
+     *       verbatim. The body no longer names a Secret ({@code seedDial} derives
+     *       {@code device-ssh-<deviceId>} via {@code DeviceDialIdentity}), but rows seeded before
+     *       that change, or written by any other path, still reach this check, and the column is a
+     *       PATH SEGMENT, so it stays the half with teeth.</li>
      * </ul>
      */
     private static String policyRefusal(DeviceSshDial row, String deviceId) {
