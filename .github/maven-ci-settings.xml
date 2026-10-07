@@ -24,14 +24,14 @@
   WHY PACKAGES_READ_TOKEN AND NOT THE WORKFLOW'S GITHUB_TOKEN
   ===========================================================
   maven.pkg.github.com requires authentication even to READ, and every repo in the chain is
-  private. The automatic GITHUB_TOKEN is scoped to the repository whose workflow runs, and a
-  package inherits its repository's permissions, so this repository can read a sibling's
-  package only if that package names it under "Manage Actions access", or if the build
-  presents a token carrying read:packages (decision 90a=B, hugmesh-auth-core/RELEASING.md
-  6.1/6.2: a classic PAT stored as the PACKAGES_READ_TOKEN secret, optional
-  PACKAGES_READ_ACTOR). The workflow passes it in as the BuildKit secret
-  `packages_read_token`; the Dockerfile exports it as UPSTREAM_PACKAGES_TOKEN for one RUN
-  and never persists it.
+  private. The automatic GITHUB_TOKEN is scoped to the repository whose workflow runs, so it
+  cannot read a sibling repository's package. The supported route (decision 90a=B,
+  hugmesh-auth-core/RELEASING.md 6.1/6.2) is a classic PAT with read:packages stored as the
+  PACKAGES_READ_TOKEN secret (optional PACKAGES_READ_ACTOR). While the repos are private on
+  the Free plan that has to be a REPOSITORY secret on each consumer repo; an org secret only
+  works once the org is upgraded or the repos are public. The workflow passes it in as the
+  BuildKit secret `packages_read_token`; the Dockerfile exports it as UPSTREAM_PACKAGES_TOKEN
+  for one RUN and never persists it.
 
   BOTH <repositories> AND <pluginRepositories>
   ============================================

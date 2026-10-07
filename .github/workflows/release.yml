@@ -47,11 +47,12 @@ jobs:
       #
       # The image build resolves net.hugmesh:hugmesh-parent and hugmesh-commons, which are
       # published from OTHER private repositories to GitHub Packages. The automatic
-      # GITHUB_TOKEN is scoped to THIS repository and does not read those packages unless
-      # each one names this repository under "Manage Actions access"; the supported route
-      # (hugmesh-auth-core/RELEASING.md 6.1/6.2, decision 90a=B) is the PACKAGES_READ_TOKEN
-      # secret: a classic PAT carrying read:packages. The GITHUB_TOKEN fallback below is
-      # correct ONLY once those grants exist. A 200 proves this runner can read that
+      # GITHUB_TOKEN is scoped to THIS repository and does not read those packages; the
+      # supported route (hugmesh-auth-core/RELEASING.md 6.1/6.2, decision 90a=B) is the
+      # PACKAGES_READ_TOKEN secret: a classic PAT carrying read:packages, stored as a
+      # REPOSITORY secret on this repo (an org secret cannot be shared with private repos on
+      # the Free plan). The GITHUB_TOKEN fallback below only keeps the step runnable; the
+      # preflight reports when it cannot read the upstream. A 200 proves this runner can read that
       # upstream's registry; it does not prove the pinned version exists - Maven says that.
       - name: Preflight - cross-repo package read
         env:
@@ -64,9 +65,10 @@ jobs:
           if [ "${HAS_PACKAGES_READ_TOKEN}" = "true" ]; then
             echo "read credential: secrets.PACKAGES_READ_TOKEN (operator-held PAT)"
           else
-            echo "read credential: the automatic secrets.GITHUB_TOKEN. This can only read an"
-            echo "upstream package that has granted THIS repository under 'Manage Actions"
-            echo "access'. If it has not, the probe below says so explicitly."
+            echo "read credential: the automatic secrets.GITHUB_TOKEN (PACKAGES_READ_TOKEN is not set)."
+            echo "That token is scoped to THIS repository and may not read the upstream packages."
+            echo "Set the PACKAGES_READ_TOKEN repository secret (classic PAT, read:packages). If the"
+            echo "probe below fails, it says so explicitly."
           fi
           rc=0
           for upstream in hugmesh-parent hugmesh-commons; do
@@ -77,7 +79,7 @@ jobs:
                 echo "  readable    hugmesh/${upstream}"
                 ;;
               401|403)
-                echo "::error::CANNOT AUTHENTICATE to hugmesh/${upstream} (HTTP ${code}). This is NOT 'the upstream is unpublished'. This runner's credential cannot read that repository's Maven registry. Fix: set the PACKAGES_READ_TOKEN secret (repo or org, visible to this repo) to a classic PAT with read:packages, or grant this repository under that package's 'Manage Actions access'."
+                echo "::error::CANNOT AUTHENTICATE to hugmesh/${upstream} (HTTP ${code}). This is NOT 'the upstream is unpublished'. This runner's credential cannot read that repository's Maven registry. Fix: set the PACKAGES_READ_TOKEN repository secret on this repo (classic PAT with read:packages; hugmesh-auth-core/RELEASING.md 6.2)."
                 rc=1
                 ;;
               404)
