@@ -151,8 +151,18 @@
            stamped with brand X's domain also satisfied brand Y's registration gate here.
            Bumped in lockstep with RegistrationDomainResolver + the AuthController /
            InternalAccountController call sites below, which now pass a SERVER-DERIVED
-           requesting domain. -->
-      <version>2.5.0</version>
+           requesting domain.
+           2.5.1 is what this pin now names, and it is the ONLY auth-core coordinate the
+           org's release chain (hugmesh-auth-core release-chain.yml) publishes to GitHub
+           Packages: a pin on 2.5.0 resolves from a developer's hand-installed ~/.m2 and
+           nowhere else, so the release image build died on "Could not find artifact
+           net.hugmesh:hugmesh-auth-core:jar:2.5.0". 2.5.0 -> 2.5.1 is source- and
+           binary-compatible (the deprecated overloads are kept; hugmesh-auth-core
+           RELEASING.md section 4). 2.5.1 also carries the Casdoor-platform username
+           gate, which stays OFF here until FEDERATION_USERNAME_GATE_ENABLED is set
+           together with APP_CASDOOR_PLATFORM_BASE_URL/_CLIENT_ID/_CLIENT_SECRET and
+           HUGMESH_MTLS_CLIENT_ENABLED (hugmesh-generator#376). -->
+      <version>2.5.1</version>
     </dependency>
 
     <!-- ============================================================================
