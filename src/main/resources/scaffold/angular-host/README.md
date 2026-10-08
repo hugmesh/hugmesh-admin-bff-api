@@ -46,4 +46,5 @@ exemplar's karma + REMOTE_ROUTES contract specs as the first tests.
 Session/guards (`roleHomeGuard`, per-remote guards), the HTTP-backed
 capabilities service (public `GET /api/federation/capabilities`), a prod
 manifest + `fileReplacements` split, and every further remote are walked in
-docs/FEDERATION-EXAMPLES.md in hugmesh-generator (the 8-place registration surface).
+docs/FEDERATION-EXAMPLES.md in hugmesh-generator (the 8-place registration
+surface).

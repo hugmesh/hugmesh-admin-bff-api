@@ -67,5 +67,5 @@ The archetype's real path is overlay-on-base: when `hugmesh-{{REPO_NAME}}`
 is resolvable, `render-repo-tree.sh` pulls it and anchor-edits only the
 brand-coupled seams (see `templates/archetypes/spring-bff/recipe.yaml`). This
 skeleton is the standing example codebase + the base-absent fallback — see
-docs/FEDERATION-EXAMPLES.md in hugmesh-generator for the full walkthrough of wiring a new BFF into
-the federation surface.
+docs/FEDERATION-EXAMPLES.md in hugmesh-generator for the full walkthrough of wiring
+a new BFF into the federation surface.
