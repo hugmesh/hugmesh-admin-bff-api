@@ -105,15 +105,11 @@ for the narrower ones):
   Kaniko in-cluster image builder is real code, but also off by default:
   `app.appstore.builder.enabled=false`).
 - Device-license Layer-A headscale enforcement needs a live control node to confirm
-  which reported key is canonical — tracked in [`docs/CANONICAL-FP.md`](docs/CANONICAL-FP.md),
-  unresolved. The tailnet ACL policy's single writer is decided (decision 101 = B,
-  2026-09-23): this BFF's direct `PUT /api/v1/policy`, with headscale keeping the policy in
-  its database (`policy.mode: database`, headscale's own spelling; the BFF declares it in
-  `app.registry.headscale-acl.policy-mode`, default `database`). The node-side agent
-  (hugmesh-generator `gen-headscale-policy.sh`, run every 60 s by the `hugmesh-policy-sync`
-  cron in file mode) is retired as a writer, but its removal and the control node's switch
-  to database mode are generator work that has not landed, so the push still ships dark
-  (`app.registry.headscale-acl.enabled=false`).
+  which reported key is canonical. That question is tracked, unresolved, in
+  [`docs/CANONICAL-FP.md`](docs/CANONICAL-FP.md). The tailnet ACL policy has one writer
+  (decision 101 = B, 2026-09-23): this BFF's `PUT /api/v1/policy`. The push still ships
+  dark (`app.registry.headscale-acl.enabled=false`): the canonical key is unconfirmed and
+  the generator-side switch has not landed. See the Layer-A item in the [Roadmap](#roadmap).
 - The SSH-terminal dial's real, host-key-pinned `SshjDeviceSshChannelFactory` (sshj,
   no TOFU — refuses without an ACTIVE `device_ssh_dial` row and a matching pinned
   `host_key_fp`) **already exists and is tested** (merged 2026-06-18, #81). It ships
