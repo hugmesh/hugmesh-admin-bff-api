@@ -1225,7 +1225,7 @@ use GitHub's built-in wiki) lives under [`docs/`](docs/README.md), starting from
 ## Build & run
 
 ```bash
-./mvnw test          # slice + converter tests (H2-backed, no external deps)
+./mvnw test          # full suite; needs a reachable Docker daemon (Testcontainers postgres:16-alpine)
 ./mvnw package       # build the executable jar
 docker build -t hugmesh-admin-bff-api .
 ```
@@ -1384,8 +1384,8 @@ platform repositories.
 
 Issues and pull requests are welcome. A few things that make a change easier to review:
 
-- **Tests first.** `./mvnw test` runs the H2-backed slice/converter suite with no
-  external dependencies — please keep it green and add coverage for new behavior.
+- **Tests first.** `./mvnw test` runs the full suite against a real Postgres started by Testcontainers
+  (`postgres:16-alpine`), so it needs a reachable Docker daemon — please keep it green and add coverage for new behavior.
 - **New surfaces ship dark.** Follow the pattern used throughout this codebase: gate a
   new integration or mutation behind a default-off config flag until it's been
   reviewed, rather than defaulting it on.
