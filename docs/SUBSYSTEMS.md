@@ -49,8 +49,9 @@ target) without this BFF ever touching DNS itself:
 - `GET /bff/admin/go-live/export` — the **signed** export a host-side go-live agent
   polls and verifies before ever touching `/etc/hugmesh/go-live` on the host (this
   BFF runs in-cluster and can never write that file itself).
-- `POST /bff/internal/go-live/{intentId}/applied-ack` (`GoLiveInternalController`, mTLS
-  boundary, no JWT) — the host agent's write-back once it has verified + applied an
+- `POST /bff/internal/go-live/{intentId}/applied-ack` (`GoLiveInternalController`,
+  `/bff/internal/**` service principal: `X-Internal-Token` or a SERVICE JWT, no human
+  JWT) — the host agent's write-back once it has verified + applied an
   intent, so `status='recorded'` can advance to `'applied'` and the wizard UI stops
   lying about `applied:true`. CAS-guarded by id + status + generation; idempotent (a
   host agent polling on a loop calling this repeatedly for an already-applied /
@@ -168,10 +169,16 @@ behind the same flag. Tests: `OptionalServiceReconcilerTest`,
 `Fabric8OptionalServiceApplicationSetPatcherTest`.
 
 > **Known gaps, recorded not papered over.** (1) `app.optional-services.reconcile.enabled`
-> has no supported switch: it appears only as the `:false` default in `application.yml`, and
-> `specs/cluster/apps/31-admin-bff-api.yaml` carries `automated:{prune,selfHeal}` with no
-> `ignoreDifferences`, so a manual `kubectl set env` is reverted on the next selfHeal pass.
-> Until that changes the toggle surface is honest but inert, and answers 503.
+> has one supported switch, and it is off. The generator's
+> `specs/cluster/manifests/admin-bff-api/deployment.yaml` sets
+> `APP_OPTIONAL_SERVICES_RECONCILE_ENABLED` to `"false"`; a reviewed commit that flips
+> it to `"true"` is the lever. `specs/cluster/apps/31-admin-bff-api.yaml` carries
+> `automated:{prune,selfHeal}` with no `ignoreDifferences`, so a manual `kubectl set env`
+> is reverted on the next selfHeal pass. The flag stays `false` until the hardcoded
+> akkoma/tuwunel/phpbb Applications are cut over (generator `docs/OPTIONAL-SERVICES.md`
+> §10); lit earlier, the first tick would create ApplicationSet elements that
+> double-manage manifests those Applications already own. Until then the toggle surface
+> is honest but inert, and answers 503.
 > (2) CLOSED (#106) — this used to say `apps/16` lacked `/data/character-forge` and
 > `/data/meshbridge` and that `meshbridge` had no CRD enum value or seed CR. The generator had
 > fixed all of that while the registry and this repo's vendored fixtures still described the
@@ -207,7 +214,9 @@ principal, not a service identity:
 - `SessionExchangeService` — exchanges the caller's `bff_` custody for a real Casdoor
   JWT via a **loopback call to this BFF's own** `/bff/internal/session/exchange` (the
   same custody-exchange endpoint documented in the top-level README's Internal section),
-  cached (`SessionExchangeCache`) with a short TTL. **Soft-degrades on every failure**
+  optionally cached (`SessionExchangeCache`; `app.bff-exchange.cache-ttl-ms`
+  defaults to `0`, which turns the cache off, and a positive value is clamped to 60 s).
+  **Soft-degrades on every failure**
   (deliberately different from the gateway's own `BffJwtExchangeWebFilter`, which
   hard-fails 401): federation-api and the other downstreams each already have their own
   independent, fail-closed JWT/role gate, so forwarding without a bearer here doesn't
@@ -234,8 +243,8 @@ for the detached Ed25519 signature + monotonic generation).
 - Tests: `RadioDeviceControllerTest`, `NodeRadioServiceTest` (ownership matrix,
   idempotency/CAS, per-transport shape validation, tenant isolation),
   `NodeRadioExportServiceTest` (confidentiality + signing), `NodeRadioChangelogTest` —
-  **55 tests, re-run 2026-07-17 offline (`./mvnw -o test`): 55/55 green**, despite the
-  merging PR's own description flagging the run as unconfirmed at merge time.
+  55 test methods across the four classes (counted in source on 2026-10-07). The
+  2026-07-17 run that reported 55/55 green was not repeated for this review.
 
 > **Known gap — the export has no live consumer yet.** The companion meshbridge daemon
 > (`hugmesh-generator` PR #374, merged the same day as this feature) reads a
@@ -263,7 +272,8 @@ Idempotent: the per-admin outbox natural key is derived from the caller-supplied
 **The caller** is `AioTriageIngestController` — `POST /bff/internal/aio-triage/ingest`,
 the in-cluster collector's entry point (`{domain, adminSubjects[], eventKey, signals}` →
 `{accepted, alerted}`). It sits on the same `/bff/internal/**` trust boundary as the other
-node/Job ingests (`ROLE_SERVICE`, satisfied by mTLS + `X-Internal-Token`, **no JWT**) and
+node/Job ingests (`ROLE_SERVICE`, satisfied by `X-Internal-Token` or a SERVICE JWT, no
+human JWT) and
 performs no cross-tenant check of its own — tenancy is the caller's concern at this hop,
 exactly as `DomainCapabilityInternalController` states; it only *bounds* the batch so a
 malformed or runaway post is a clean 400 instead of an `IllegalArgumentException` or an

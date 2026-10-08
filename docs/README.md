@@ -21,6 +21,6 @@ file, or that are still open design questions.
   shipped** (merged to `main`), **🚧 in-flight** (open branch/PR), **🔭 planned**
   (design only, no code).
 - Cross-repo docs referenced from here (e.g. the platform reactive-BFF contract in
-  `catalyst-scripts/tests/stack/mock-bff.mjs`, or the generator's device-provisioning
+  `hugmesh-generator/tests/stack/mock-bff.mjs`, or the generator's device-provisioning
   scripts) live in their own repos — this index only covers pages physically in this
   repo's `docs/`.
