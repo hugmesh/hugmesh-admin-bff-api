@@ -50,10 +50,9 @@ channel (✅ shipped).
 ## Status
 
 _Reflects `src/main/java` on `main` through PR #241 (the HugMesh rebrand in PR #236,
-the fleet-owner/Azure-Intune MDM waves, and the managed-backing-services plane). A full
-offline test run (`./mvnw -o test`) currently reports **2414 tests, 8 failures, 0
-errors, 10 skipped.** The 8 failures share a single, already-diagnosed root cause, not
-8 unrelated bugs — see the callout right below the shipped/gaps lists._
+the fleet-owner/Azure-Intune MDM waves, and the managed-backing-services plane). The
+last full test run recorded here (**2414 tests, 8 failures, 0 errors, 10 skipped**) is
+out of date; see the test-suite callout right below the shipped/gaps lists._
 
 **✅ Shipped & real** (code + tests on `main`, independent of whether the feature's
 own runtime flag defaults on): the full `/bff/admin/**` + `/bff/superadmin/**` control
@@ -78,18 +77,15 @@ attachments, and federation bearer-forwarding/custody-exchange. A large share of
 above **ships dark** behind a default-off config flag even though the code is real and
 tested — see each section for its specific gate.
 
-**Test-suite callout:** the 8 failures are ALL the same pre-existing Boot 4
-`HttpStatus` rename regression (`UNPROCESSABLE_ENTITY` was renamed to
-`UNPROCESSABLE_CONTENT`) that PR #219 (2026-07-11) fixed everywhere it then knew about;
-these 8 assertions live in newer/untouched test files that still hardcode the old
-constant — `DesktopSudoAdminControllerTest` (×2), `DeviceLicenseControllerTest` (×2),
-`EgressVpnControllerTest`, `RadioDeviceControllerTest`, `DesktopDialAdminControllerTest`,
-`StoragePoolControllerTest`. Each asserts `.isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY)`
-against a controller that actually (correctly) returns 422 as `UNPROCESSABLE_CONTENT`,
-so the behavior under test is fine — only the assertion's enum constant is stale.
-**Not yet fixed** — flagged here so it isn't mistaken for a live behavioral
-regression; each fix is a one-line constant swap in the test file (a good first pull
-request if you're looking for one).
+**Test-suite callout:** the 8 failures came from one Boot 4 `HttpStatus` rename
+(`UNPROCESSABLE_ENTITY` became `UNPROCESSABLE_CONTENT`): eight assertions compared
+the old enum constant against a controller that correctly returns 422. **Fixed.** The
+tests now assert the numeric code, and `HttpStatusAssertionStyleTest` fails the build if
+a test compares `HttpStatus` enum identity again (commit `ffa370a`). `UNPROCESSABLE_ENTITY`
+now appears in `src/test` only in that guard's own text. The 2414-test count was not
+re-measured: `src/test` holds 3225 `@Test`/`@ParameterizedTest` methods in 386 test
+classes (static count, 2026-10-07), and 27 of those classes start Testcontainers and
+need Docker, so a full run takes a Docker daemon.
 
 **2026-07 security hardening:** a cross-cutting native-login identity-fold review found
 and fixed several real HIGH/MEDIUM authz bugs (Mastodon-localpart takeover-by-collision,
@@ -106,7 +102,8 @@ for the narrower ones):
   shipped, enforcement/cutover still roadmap** (see [Roadmap](#roadmap)).
 - Notification external channels (Matrix DM / Akkoma / phpBB / email) are wired but
   gated off; the superadmin app-store's ArgoCD provisioning effector is dark (the
-  Kaniko in-cluster image builder, by contrast, is live).
+  Kaniko in-cluster image builder is real code, but also off by default:
+  `app.appstore.builder.enabled=false`).
 - Device-license Layer-A headscale enforcement needs a live control node to confirm
   which reported key is canonical — tracked in [`docs/CANONICAL-FP.md`](docs/CANONICAL-FP.md),
   unresolved. The tailnet ACL policy's single writer is decided (decision 101 = B,
@@ -140,10 +137,9 @@ for the narrower ones):
 ## Current State
 
 _This section describes the platform's SSO authentication model as of the 2026-06-25
-auth reshape; see [Status](#status) above for everything that has shipped since. It
-remains accurate except for the version numbers and the fixed known-gap in the
-[Internal](#internal-service-to-service-mtls-bounded) section, both of which have
-moved on._
+auth reshape; see [Status](#status) above for everything that has shipped since. The
+versions below were refreshed on 2026-10-07, and the known gap it once named in the
+[Internal](#internal-service-to-service-mtls-bounded) section is fixed._
 
 **Ecosystem baseline.** Spring **Boot 4.0.7** / Spring Cloud **2025.1.2** on
 **Java 25 LTS**. Shared Maven artifacts:
@@ -152,7 +148,7 @@ moved on._
   `spring-boot-starter-parent:4.0.7`; manages testcontainers 2.0.5);
 - `net.hugmesh:hugmesh-commons:2.1.0` (managed by the parent BOM) — shared
   security/tenancy/web (`net.hugmesh.commons.*`);
-- `net.hugmesh:hugmesh-auth-core:2.4.0` (currently-pinned version — see
+- `net.hugmesh:hugmesh-auth-core:2.5.0` (currently-pinned version — see
   `pom.xml`) — the shared account / session / MFA / Casdoor-admin infrastructure
   (the account/session/MFA/Casdoor-admin classes that used to live in this repo were
   extracted into it). It depends on `hugmesh-commons` and is
@@ -165,7 +161,10 @@ moved on._
   in favour of the DB-generated `(gen_random_uuid())::text` PKs (band-210 here, #134);
   **2.3.1**–**2.3.4** are identity-fold correctness fixes from the 2026-07-11/15 native-login
   authz review; **2.4.0** is a coordinate-only rename (legacy groupId → `net.hugmesh`
-  groupId + package move, no behavior change, part of the HugMesh rebrand, #236) — see
+  groupId + package move, no behavior change, part of the HugMesh rebrand, #236);
+  **2.4.2** syncs the shared `ReservedNames` to reserved-prefixes revision 9 (82
+  labels; 2.4.1, which pom.xml names as the first carrier, was never published);
+  **2.5.0** adds the domain-scoped registration gate — see
   the version-by-version changelog under
   [Shared libraries](#shared-libraries-hugmesh-parent--hugmesh-commons--hugmesh-auth-core)
   below for the full detail.
@@ -227,7 +226,7 @@ the SUPERADMIN signed domain-registry `/export` + provisioning-status `/status` 
 #118), the in-app notifications outbox MVP (now emitting `@system` backup/restore-started
 rows — #117), OIDC default-roles + first-login hook, the service-store /
 workload-console / games / egress-VPN / node-storage / Anubis superadmin surfaces, the
-`/bff/internal` account/session API + the dark BFF-JWT-custody surface (#113/#114), and
+`/bff/internal` account/session API + the BFF-JWT-custody surface (#113/#114; dark at defaults), and
 the dark MFA substrate (factor/challenge tables + `gateway_route_access.mfa_required` +
 the image-gen / SSH-issue / terminal-dial step-up satisfiers — #115/#116).
 
@@ -246,7 +245,7 @@ flowchart TD
         BFF --> SA["SUPERADMIN control plane<br/>device-licenses / domains (signed export) /<br/>app-store / workload / games catalog / anubis"]
         BFF --> ANN["Announcements (4 surfaces, jsoup-sanitised)"]
         BFF --> NOTIF["Notifications outbox + reconciler<br/>(+ @system backup/restore-started)"]
-        BFF --> INT["/bff/internal account/session API<br/>+ dark BFF-JWT-custody (auth-core 2.1.0)"]
+        BFF --> INT["/bff/internal account/session API<br/>+ BFF-JWT-custody (auth-core 2.1.0, dark at defaults, lit in-cluster)"]
         BFF --> RECON["Single-writer reconcile loops<br/>(k8s Lease + resilience4j)"]
         BFF --> TENANCY["Tenancy: commons CasdoorAuthorities converter<br/>+ DomainRegistry + multi-issuer resolver"]
         BFF --> PHONE["MDM phone fleet<br/>ingest / superadmin registry / fleet-entitlements /<br/>public FLEET_ADMIN owner surface"]
@@ -279,14 +278,14 @@ flowchart TD
 | **Tier / namespace** | backend (`hugmesh-backend`) |
 | **Framework** | Spring Boot **4.0.7** (reactive **WebFlux**), Spring Cloud **2025.1.2**, **Java 25 LTS** |
 | **AuthN** | Casdoor OAuth2 **resource server** — validates the Casdoor JWT presented at the backend tier (the gateway swaps the browser's opaque `bff_` session → the internal custody JWT before it reaches here) |
-| **Shared libs** | `hugmesh-parent:2.8.0` (metapom) → `hugmesh-commons:2.1.0` (security/tenancy/web) + `hugmesh-auth-core:2.4.0` (shared account/session/MFA/Casdoor-admin + the BFF-JWT-custody seam; consumed by user-bff + admin-bff only) |
+| **Shared libs** | `hugmesh-parent:2.8.0` (metapom) → `hugmesh-commons:2.1.0` (security/tenancy/web) + `hugmesh-auth-core:2.5.0` (shared account/session/MFA/Casdoor-admin + the BFF-JWT-custody seam; consumed by user-bff + admin-bff only) |
 | **Persistence** | config Postgres over **R2DBC** (runtime, non-blocking); **Liquibase** owns schema (JDBC, migrations only) |
 | **Other stores** | **ClickHouse** (usage analytics, best-effort), **Kafka** (usage-event bus, optional), **Cassandra** (best-effort route-access mirror the gateways poll) |
-| **Image / CI** | multi-stage Dockerfile (temurin 25), `:8080`; built + pushed to the in-cluster GitLab registry by `.gitlab-ci.yml`, which also runs the platform OWASP pen-test stages (SCA + DAST + nuclei) — see [CI & pen-test stages](#ci--pen-test-stages). **CI is GitLab** (no GitHub Actions). Images carry **no** KEYS material |
+| **Image / CI** | multi-stage Dockerfile (temurin 25), `:8080`; built + pushed to the in-cluster GitLab registry by `.gitlab-ci.yml`, which also runs the platform OWASP pen-test stages (SCA + DAST + nuclei) — see [CI & pen-test stages](#ci--pen-test-stages). **CI is GitLab**; one manual GitHub Actions workflow (`.github/workflows/release.yml`) can also push to GHCR. Images carry **no** KEYS material |
 | **App id** | `net.hugmesh.adminbff` (`AdminBffApplication`) |
 
 It is the production Spring port of the verified reference contract in
-`catalyst-scripts/tests/stack/mock-bff.mjs`; JSON shapes mirror that mock so the
+`hugmesh-generator/tests/stack/mock-bff.mjs`; JSON shapes mirror that mock so the
 admin-ui / login-ui typed clients work unchanged.
 
 ---
@@ -327,13 +326,16 @@ hugmesh-actions converter and emits:
 | Path | Rule |
 |---|---|
 | `/actuator/health{,/**}`, `/actuator/info` | `permitAll` (probes) |
-| `POST /bff/login`, `/bff/register/**` | `permitAll` — no JWT yet; the BFF enforces the **admin-invite gate itself** (login/register orchestration is being relocated to user-bff — see [Current State](#current-state)) |
+| `POST /bff/login`, `POST /bff/login/local`, `/bff/register/**` | `permitAll` — no JWT yet; the BFF enforces the **admin-invite gate itself** (login/register orchestration is being relocated to user-bff — see [Current State](#current-state)); the local login 401s unless `app.local-login.enabled` |
+| `POST /bff/sessionOut` | `permitAll` — logout needs only the opaque `bff_` session; idempotent |
 | `/bff/public/**` | `permitAll` — intentionally unauthenticated; serves both the anonymous login-page **announcements** feed and the public **appeal-contact** (`GET /bff/public/appeal-contact`) |
 | `/bff/internal/**` | `hasRole('SERVICE')` — service-to-service only (user-bff account/session access, the gateway's session introspect/exchange, `POST /bff/internal/device-enrollment/self-report`, …). Satisfied by a Casdoor **client-credentials `ROLE_SERVICE` JWT** *or* by the in-cluster **`X-Internal-Token`**, which `SecurityConfig` promotes to a SERVICE principal — so every existing caller is unchanged. **Not** `permitAll`: this subtree mints `bff_` sessions for arbitrary accounts and it *is* reachable through the fe-gateway's `/bff/**` route (no `gateway_route_access` row covers it ⇒ NO_RULE ⇒ forward), and mTLS does not separate that traffic because the gateway presents its own cluster-CA client cert on the proxy leg. Human roles — **including SUPERADMIN** — get 403. Blank `app.internal.token` is dev/test-only parity with the old behaviour; `InternalSurfaceTokenBootGuard` refuses to boot a prod profile without it |
+| `/bff/admin/phone-fleet/**` | `hasAnyRole('FLEET_ADMIN','ADMIN','SUPERADMIN')` — listed before the generic admin rule, because a pure `FLEET_ADMIN` has no ADMIN role |
 | `/bff/admin/**` | `hasAnyRole('ADMIN','SUPERADMIN')` (each endpoint then re-applies its own `@PreAuthorize`; SUPERADMIN-only mutations 403 an ADMIN) |
 | `/bff/superadmin/**` | `hasRole('SUPERADMIN')` |
 | `/bff/games-services/**` | `hasAnyRole('GAMES_SERVICES','GAMES_SERVICES_ADMIN','GAMES_SERVICES_RUNNER')` |
-| `/bff/announcements/**` | authenticated (validated JWT, no special role) |
+| `/bff/announcements/**`, `/bff/mastodon/appearance-default`, `/bff/desktop/install-requests/**` | authenticated (validated JWT, no special role) |
+| `/bff/desktop/registry/**` | `hasRole('DISCOVER')` |
 | `/v3/api-docs/**`, `/swagger-ui/**` | `permitAll` under `dev`/`test` (so `gen:fetch` can curl the spec); `hasAnyRole('ADMIN','SUPERADMIN')` in prod |
 | everything else | authenticated |
 
@@ -346,9 +348,12 @@ role was stripped by a suspension can no longer mint a fresh token.
 When the in-cluster keystore initContainer is mounted, the deployment sets
 `SSL_ENABLED=true` + `SSL_CLIENT_AUTH=need` (TLSv1.3 floor) so the handshake
 **requires** a client cert chaining to the cluster CA — a caller not signed by the
-platform Vault/ESO PKI cannot reach the API at all. This is the boundary the user-bff
-→ `/bff/internal` account/session traffic rides (mTLS + `X-Internal-Token`). Defaults
-keep local/CI plaintext.
+platform Vault/ESO PKI cannot open a connection. This is the transport the user-bff
+→ `/bff/internal` account/session traffic rides (mTLS + `X-Internal-Token`). mTLS
+says who may connect, not who the user is: the fe-gateway presents its own cluster-CA
+cert when it proxies browser traffic, so that traffic passes the handshake too. That
+is why `/bff/internal/**` also requires `ROLE_SERVICE`. Defaults keep local/CI
+plaintext.
 
 ### Role cascade & SUPERADMIN (✅ on `main`)
 
@@ -432,7 +437,7 @@ Casdoor ⇒ distinct, cryptographically-validated `iss`). This is **shipped on `
 
 The canonical security/tenancy/web building blocks above now come from the org's shared
 Maven artifacts (`hugmesh-parent` on `2.8.0`, `hugmesh-commons` on `2.1.0`,
-`hugmesh-auth-core` on `2.4.0`) rather than per-repo copies:
+`hugmesh-auth-core` on `2.5.0`) rather than per-repo copies:
 
 1. **Parent POM →** `net.hugmesh:hugmesh-parent:2.8.0` (itself a child of
    `spring-boot-starter-parent:4.0.7`, so the whole Spring Boot dependency/plugin
@@ -464,9 +469,10 @@ Maven artifacts (`hugmesh-parent` on `2.8.0`, `hugmesh-commons` on `2.1.0`,
    - `commons.config.TenancyResourceServerConfig`.
 
 3. **Shared account / session / MFA / Casdoor-admin →**
-   `net.hugmesh:hugmesh-auth-core:2.4.0` (currently pinned; **adopted** this
-   cycle at #111, since bumped through several identity-fold correctness fixes and a
-   2.4.0 coordinate-only rebrand rename — see the version-by-version list below). The
+   `net.hugmesh:hugmesh-auth-core:2.5.0` (currently pinned; **adopted** this
+   cycle at #111, since bumped through several identity-fold correctness fixes, a
+   2.4.0 coordinate-only rebrand rename, a reserved-names sync and the 2.5.0 domain-scoped
+   registration gate — see the version-by-version list below). The
    stateful auth core that used to live in this BFF — the account / allowlist /
    `bff_session` store + `AccountStore`, the `CasdoorAdminClient`, the full MFA subsystem,
    the session-cookie + internal-token filters, the username gate, the login/MFA DTOs, and
@@ -485,7 +491,14 @@ Maven artifacts (`hugmesh-parent` on `2.8.0`, `hugmesh-commons` on `2.1.0`,
    **2.3.1**–**2.3.4** are the 2026-07-11/15 native-login identity-fold correctness fixes
    (see [Status](#status) above); **2.4.0** is a coordinate-only rename (legacy groupId
    → `net.hugmesh` groupId + package move, no behavior change, part of the HugMesh
-   rebrand, #236). This library is pinned explicitly here (it is BFF-only — kept off
+   rebrand, #236); **2.4.1** (never published) and **2.4.2** sync `ReservedNames` to
+   `reserved-prefixes.yaml` revision 9 (82 labels), so the invite/grant/provision
+   username gates and the route-access reserved-prefix warning enforce `hmdm`,
+   `attest`, `character-forge`, `games-character-forge` and
+   `games-shadows-of-the-net`; **2.5.0** (auth-core issue #1) adds
+   `AccountStore.isEmailInvited(email, domain)` / `isDiscordInvited(handle, domain)`
+   and deprecates the unscoped overloads, which is what makes the registration invite
+   gate brand-scoped (see `POST /bff/register/*` below). This library is pinned explicitly here (it is BFF-only — kept off
    the gateway classpath — so it is not in the parent BOM).
 
    **Stays per-repo:** this repo's A2 cookie/CSRF `config.SecurityConfig` (route matchers
@@ -506,9 +519,10 @@ Maven artifacts (`hugmesh-parent` on `2.8.0`, `hugmesh-commons` on `2.1.0`,
 
 #### Resolving the private shared artifacts
 
-`hugmesh-parent` / `hugmesh-commons` / `hugmesh-auth-core` are **not** on Maven
-Central — they live in the org GitLab Maven Package Registry. Two resolution paths,
-**no secrets in git**:
+`hugmesh-parent` / `hugmesh-commons` / `hugmesh-auth-core` (and `hugmesh-build-config`) are
+**not** on Maven Central — they live in the org GitLab Maven Package Registry and, for
+the GitHub release workflow, in GitHub Packages. Three resolution paths, **no secrets
+in git**:
 
 - **Local dev:** the shared artifacts are `mvn install`ed into `~/.m2`, so a plain
   `./mvnw test` resolves them locally and never touches the remote.
@@ -520,6 +534,12 @@ Central — they live in the org GitLab Maven Package Registry. Two resolution p
   lands in an image layer); `.gitlab-ci.yml` passes
   `--secret id=ci_job_token,env=CI_JOB_TOKEN` plus the `CI_API_V4_URL` /
   `GITLAB_GROUP_ID` build-args.
+- **GitHub release workflow:** when the BuildKit secret `packages_read_token` is
+  mounted, the `Dockerfile` builds with
+  [`.github/maven-ci-settings.xml`](.github/maven-ci-settings.xml) against GitHub
+  Packages instead (the `UPSTREAM_PACKAGES_ACTOR` build-arg names the login).
+  `release.yml` supplies the secret from the `PACKAGES_READ_TOKEN` repository secret, a
+  classic token with `read:packages`; a mounted but empty secret fails the build.
 
 ---
 
@@ -804,7 +824,8 @@ These surfaces are the unscoped infra control plane; an ADMIN never reaches them
   before a provision. The ArgoCD leg **ships dark** — gated by
   `app.appstore.effector.enabled` (default **false** → `NoopArgoCdClient`); the Casdoor
   role leg is independently gated by `casdoor.admin.enabled`.
-  > ✅ The **Kaniko in-cluster image builder** is now shipped (`app.appstore.builder.enabled=true`;
+  > ✅ The **Kaniko in-cluster image builder** is shipped, dark by default
+  > (`app.appstore.builder.enabled`, default `false`; when `true`,
   > `KanikoBuildLauncher` creates a Kaniko Job via Fabric8 — PR #152). What remains
   > **in-flight**: the TAILNET-ONLY superadmin-gateway + federation registration, and
   > per-service Vault/ESO/cert — see [Roadmap](#roadmap).
@@ -971,7 +992,9 @@ only when a generator checkout is present, so this repo's own CI still cannot ca
   deployment's own brand),
   `GET /accounts/{id}/namespaces`, `POST /sessions`, `DELETE /sessions/{token}`, and
   `GET /sessions/{accountId}` — the per-account live-session listing (auth-core 2.2.0,
-  #132). The boundary is **mTLS (cluster CA) + `X-Internal-Token`**, never a JWT role.
+  #132). The gate is `hasRole('SERVICE')`, on top of mTLS (cluster CA): the in-cluster
+  `X-Internal-Token`, promoted to a SERVICE principal, or a Casdoor client-credentials
+  SERVICE JWT. A human role, SUPERADMIN included, gets 403.
   - **Gateway BFF session introspection** (✅ on `main`, #126): `GET /session/introspect`
     validates an opaque `bff_` Bearer, resolves the account from the `bff_session` table,
     checks live suspension + the per-session MFA-satisfied flag, and returns a body whose
@@ -992,22 +1015,21 @@ only when a generator checkout is present, so this repo's own CI still cannot ca
     endpoint's own launch, PR #161) **403 when the account behind the session is
     suspended/banned** — `InternalAccountController.suspensionGate` consults
     `SuspensionService` *before* the custody row is even read, closing the
-    bff-exchange-bypasses-ban gap this section previously flagged as an open risk (that
-    note is now stale; the check is live in `InternalAccountController#exchange`).
-    Ships dark so no live traffic is affected until `app.bff.custody-key` is set.
-    Backed by the `bff_session`
-    custody columns (changelog **`180-bff-jwt-custody`**) and **DARK at defaults** —
-    `app.bff.custody-key` unset (so `BffCustodyCipher.isAvailable()` is false → exchange
-    503s) and `app.bff.oidc.enabled=false` (so the `OidcExchangeClient` refresh bean is
-    absent). Nothing in-cluster calls these until the gateway bff-exchange flag + the
-    user-bff OIDC flag flip; admin-bff's own `AuthController` keeps calling the in-process
-    `AccountStore` directly.
+    bff-exchange-bypasses-ban gap (history in [`SECURITY.md`](SECURITY.md)). Backed by the `bff_session`
+    custody columns (changelog **`180-bff-jwt-custody`**) and **DARK at the application
+    defaults** — `app.bff.custody-key` unset (so `BffCustodyCipher.isAvailable()` is false
+    → exchange 503s) and `app.bff.oidc.enabled=false` (so the `OidcExchangeClient`
+    refresh bean is absent). The in-cluster Deployment lights it: the generator's
+    `deployment.yaml` sets `APP_BFF_OIDC_ENABLED`, `APP_BFF_CUSTODY_KEY` and
+    `APP_BFF_EXCHANGE_ENABLED`, and the gateway's `bff_`→JWT exchange is on (see
+    [Current State](#current-state)). admin-bff's own `AuthController` keeps calling the
+    in-process `AccountStore` directly.
 - **`DeviceEnrollmentController`** — `POST /bff/internal/device-enrollment/self-report`:
   the **liveness-reconciliation** channel for the headscale-anchored `machine_key_fp`
   auto-capture flow. A node POSTs a cross-check ("node reports fp X; headscale reports
   fp Y; they agree"); this is **not** an authority — the trust gate remains headscale,
   and a superadmin still admits from the pending list (changelog `130-device-enrollment`).
-  No JWT role; the boundary is mTLS.
+  Same `/bff/internal/**` SERVICE gate, over mTLS; no human JWT.
 - **`DomainCapabilityInternalController`** — `GET
   /bff/internal/domain-capabilities/{domain}/{capability}` → `{"active": <bool>}`: the
   SERVICE-to-service capability check, mirroring `InternalAccountController`'s wiring
@@ -1057,7 +1079,7 @@ missing from the sections above; documenting them here to close that gap:
   (`/bff/admin/device-terminal/{deviceId}`) **ships dark behind two independent flags**
   (`app.device-terminal.enabled`, default false → `StubDeviceSshTransport`; and
   `app.device-terminal.dial.enabled`, default false → no real device is ever dialed even with the
-  transport flag on, per `src/main/resources/application.yml:646-689`).
+  transport flag on, per `src/main/resources/application.yml:746-797`).
 - **Cloud-backup v2 / Velero** (`net.hugmesh.adminbff.cloudbackup`) — a second,
   Velero-based backup plane distinct from the k8s-Job-templating `backup` package described under
   [`BackupController`](#admin-flow-hasroleadmin-base-bffadmin) above: `BackupAdminController`
@@ -1225,27 +1247,42 @@ use GitHub's built-in wiki) lives under [`docs/`](docs/README.md), starting from
 ## Build & run
 
 ```bash
-./mvnw test          # slice + converter tests (H2-backed, no external deps)
+./mvnw test          # unit, slice and converter tests; the Testcontainers classes need Docker
 ./mvnw package       # build the executable jar
 docker build -t hugmesh-admin-bff-api .
 ```
 
+The `docker build` needs a registry credential as a BuildKit secret (`ci_job_token`
+or `packages_read_token`, see above); without one the private `net.hugmesh` parent
+does not resolve. Locally, `./mvnw` resolves those artifacts from `~/.m2`.
+
 The reference contract this service implements is
-`catalyst-scripts/tests/stack/mock-bff.mjs` (exercised by the Playwright integration
+`hugmesh-generator/tests/stack/mock-bff.mjs` (exercised by the Playwright integration
 suite). See also `SECURITY.md` for the threat model and `src/main/resources/jobs/`
 for the backup / test-runner Job manifests + RBAC.
 
 ### CI & pen-test stages
 
-**CI is GitLab** (there are no GitHub Actions). `.gitlab-ci.yml` runs on push /
-mirror-sync (the GitHub repo is pull-mirrored into the in-cluster GitLab) on the
-privileged x86 runner. Stages are **`security`, `pentest`, `build`**:
+**CI is GitLab**, plus one manual GitHub Actions workflow (below). `.gitlab-ci.yml`
+runs on push / mirror-sync (the GitHub repo is pull-mirrored into the in-cluster
+GitLab) on the privileged x86 runner. Stages are **`test`, `security`, `pentest`,
+`build`**:
 
+- **`test:mvn`** (test) — `./mvnw -B -s settings.xml clean test` in
+  `maven:3.9-eclipse-temurin-25` with a `docker:27-dind` service for Testcontainers;
+  default branch and merge requests. It clones the generator and the service-catalog
+  console, and passes their paths plus `-Dappprofile.schema.mirror.required=true`, so the
+  catalog and app-profile drift guards read the other repo instead of skipping.
 - **`build:image`** — multi-stage docker build + push to the in-cluster registry
   (immutable SHA/tag + a moving branch tag), default branch / tags only. No KEYS material.
 - **`pentest:sca`** (security) — OWASP **Dependency-Check** SCA, `allow_failure: true`.
 - **`pentest:dast`** (pentest) — authenticated **ZAP** baseline + custom probes +
   **nuclei** against the running service, `allow_failure: true`.
+
+`.github/workflows/release.yml` ("Release image") runs only on `workflow_dispatch`. It
+checks that the four private libraries are readable, builds the same `Dockerfile`, and
+pushes `ghcr.io/hugmesh/hugmesh-admin-bff-api:<tag>` (the tag defaults to the commit
+SHA; `latest` moves only on `main`).
 
 The SCA + DAST job **bodies** are not defined here: they `extends:` the hidden
 `.pentest-*` jobs `include`d from `hugmesh-generator`
@@ -1264,10 +1301,12 @@ them as shipped.
   the shared `hugmesh-auth-core`); admin-bff keeps the **account/session DATA** in
   `admin-bff-db`. **Landed on admin-bff's side (✅, ships dark):** the `/bff/internal`
   account/session API (#113) and the BFF-JWT-custody tail (`/bff/internal/custody/stamp`
-  & `/session/exchange`, band-180, on auth-core 2.1.0 — #114). What remains roadmap is the
-  user-bff OIDC login itself, the gateway `bff_`→JWT exchange filter flipping on
-  (`app.bff.oidc.enabled` / `app.bff.custody-key`), and the legacy `AuthController`
-  user-facing paths being fully retired; the end-to-end SSO + e2e is in progress.
+  & `/session/exchange`, band-180, on auth-core 2.1.0 — #114). What remains roadmap is
+  retiring the legacy `AuthController` user-facing paths and finishing the end-to-end
+  SSO + e2e proof. The rest is lit in-cluster, as [Current State](#current-state)
+  records: user-bff's OIDC login is routed at the gateway, the gateway `bff_`→JWT
+  exchange is on, and this service's Deployment sets `APP_BFF_OIDC_ENABLED` and
+  `APP_BFF_CUSTODY_KEY`.
 - 🔭 **Casdoor MFA** (Liquibase 150-band, 9-PR plan) — WebAuthn + TOTP + recovery;
   per-role MFA defaults (superadmin/admin required, mod relaxable, user optional);
   enforced via `amr`/`acr` → `MFA_SATISFIED` + `gateway_route_access.mfa_required`
@@ -1275,7 +1314,7 @@ them as shipped.
   the custom login + a BFF-driven challenge stamping `mfa_satisfied` into the opaque
   `bff_session`. Shared MFA infrastructure lives in `hugmesh-auth-core`. **Substrate
   already on `main` (the APPLICATION default is still dark — `app.casdoor.mfa.enabled=false`,
-  `src/main/resources/application.yml:426`):** the MFA factor / WebAuthn-challenge tables
+  `src/main/resources/application.yml:447-448`):** the MFA factor / WebAuthn-challenge tables
   (bands 150–152), the `gateway_route_access.mfa_required` column wired through the
   route-access entity/repo/DTO (#116), the co-equal MFA step-up satisfier (auth-core
   `MfaStepUpService`) wired into the **image-gen / SSH-key-issue / terminal-dial** step-up
@@ -1285,8 +1324,8 @@ them as shipped.
   (#3). That consumer is READ/WRITE ONLY — it resolves the effective per-(domain, role)
   requirement and pins the non-relaxable superadmin/admin floor, but nothing in the request
   pipeline consults it yet. Both DEPLOY targets already override `APP_CASDOOR_MFA_ENABLED=true`
-  (generator `specs/cluster/manifests/admin-bff-api/deployment.yaml:563`,
-  `tests/stack/compose.local.yaml:837`), so it is only the application default that is dark.
+  (generator `specs/cluster/manifests/admin-bff-api/deployment.yaml:636`,
+  `tests/stack/compose.local.yaml:861`), so it is only the application default that is dark.
   What remains roadmap is (a) ROUTE-LEVEL enforcement — the shared gateway chart still ships
   `mfa.enabled: false` (`specs/cluster/charts/hugmesh-gateway/values.yaml:236`) and no
   Application overrides it, so the seeded `gateway_route_access.mfa_required` rows are inert —
@@ -1301,8 +1340,8 @@ them as shipped.
   (AddService → `create/deleteApplication`) + the `provision` action / `effector`
   pre-flight have landed **dark** (`app.appstore.effector.enabled=false` → `NoopArgoCdClient`;
   Casdoor role step gated by `casdoor.admin.enabled` — #147). ✅ The **Kaniko in-cluster
-  image builder** is now shipped (`app.appstore.builder.enabled=true`;
-  `KanikoBuildLauncher` creates a Kaniko Job via Fabric8 — PR #152). What remains
+  image builder** is shipped, dark by default (`app.appstore.builder.enabled`, default
+  `false`; when `true`, `KanikoBuildLauncher` creates a Kaniko Job via Fabric8 — PR #152). What remains
   in-flight is the TAILNET-ONLY superadmin-gateway + federation registration, and
   per-service Vault/ESO/cert.
 - 🔭 **Multi-tenancy provisioning leg** — materialise `domain_registry` rows into a
@@ -1369,12 +1408,13 @@ that share code/contracts with it, include:
 |---|---|
 | [`hugmesh/hugmesh-commons`](https://github.com/hugmesh/hugmesh-commons) | Shared security/tenancy/web building blocks (`CasdoorAuthorities`, `DomainRegistry`, `PrincipalDomain`, …) |
 | [`hugmesh/hugmesh-auth-core`](https://github.com/hugmesh/hugmesh-auth-core) | Shared account/session/MFA/Casdoor-admin library consumed by this service and `user-bff` |
-| [`hugmesh/hugmesh-user-bff`](https://github.com/hugmesh/hugmesh-user-bff) | `user-bff` — the SSO login/session orchestration this service's `/bff/internal` API backs |
+| [`hugmesh/hugmesh-user-bff-api`](https://github.com/hugmesh/hugmesh-user-bff-api) | `user-bff` — the SSO login/session orchestration this service's `/bff/internal` API backs |
 | [`hugmesh/hugmesh-admin-ui`](https://github.com/hugmesh/hugmesh-admin-ui) | The admin console frontend this BFF serves |
 | [`hugmesh/hugmesh-login-ui`](https://github.com/hugmesh/hugmesh-login-ui) | The login frontend that posts to `/bff/login` / `/bff/register/**` |
 | [`hugmesh/hugmesh-gateway`](https://github.com/hugmesh/hugmesh-gateway) | The platform gateway(s) that enforce `gateway_route_access` and perform the `bff_` → JWT exchange |
 | [`hugmesh/hugmesh-generator`](https://github.com/hugmesh/hugmesh-generator) | Cluster/image tooling: `docs/MDM.md` (Headwind + `phone-wizard.sh`), device provisioning scripts, the shared OWASP pen-test CI stage this repo's pipeline includes |
-| [`hugmesh/hugmesh-forum-api`](https://github.com/hugmesh/hugmesh-forum-api) | The phpBB forum backend proxied by `ForumAdminController` |
+| [`hugmesh/hugmesh-forum-bff-api`](https://github.com/hugmesh/hugmesh-forum-bff-api) | The forum BFF that `ForumAdminController` proxies to through `PhpbbAdminClient` (`EXTERNAL_FORUM_BASE_URL`) |
+| [`hugmesh/hugmesh-forum-api`](https://github.com/hugmesh/hugmesh-forum-api) | The phpBB API extension behind the forum BFF |
 | [`hugmesh/hugmesh-mastodon-ui`](https://github.com/hugmesh/hugmesh-mastodon-ui) | Consumes the Mastodon-UI appearance defaults described in `docs/SUBSYSTEMS.md` |
 
 See the [HugMesh](https://github.com/hugmesh) organization for the full set of
@@ -1384,8 +1424,9 @@ platform repositories.
 
 Issues and pull requests are welcome. A few things that make a change easier to review:
 
-- **Tests first.** `./mvnw test` runs the H2-backed slice/converter suite with no
-  external dependencies — please keep it green and add coverage for new behavior.
+- **Tests first.** `./mvnw test` runs the unit and slice suite (H2-backed where it can
+  be; 27 classes start Testcontainers and need Docker) — please keep it green and add
+  coverage for new behavior.
 - **New surfaces ship dark.** Follow the pattern used throughout this codebase: gate a
   new integration or mutation behind a default-off config flag until it's been
   reviewed, rather than defaulting it on.
