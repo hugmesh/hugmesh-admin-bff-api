@@ -1,35 +1,34 @@
 # hugmesh-admin-bff-api
 
-The **admin Backend-For-Frontend** of the HugMesh platform: a reactive Spring
-Boot (WebFlux) service that backs the admin UI/console. It sits in the **backend
-tier** (`hugmesh-backend` namespace), behind the platform gateways, and is a
-**Casdoor OAuth2 resource server**. It owns the admin-side control plane:
+The **admin Backend-For-Frontend** of the HugMesh platform: a reactive Spring Boot
+(WebFlux) service behind the admin UI and console. It sits in the **backend tier**
+(`hugmesh-backend` namespace), behind the platform gateways, and is a **Casdoor OAuth2
+resource server**. It owns the admin-side control plane:
 
-- the Google/Discord, admin-invited **registration allowlist** + per-user
-  **namespace grants**, with a best-effort **Casdoor** user/role write through the
-  PKI gateway;
-- the durable **account/session store** (`admin-bff-db`) that the SSO login flow
-  reads/writes — note the *login/session orchestration* itself is being relocated to
-  **user-bff** (see [Current State](#current-state)); admin-bff remains the system of
-  record and exposes it over the internal mTLS surface;
-- brokering **real Matrix/Mastodon service tokens** server-side (the UI never holds
-  homeserver admin credentials);
+- the Google/Discord, admin-invited **registration allowlist** and per-user
+  **namespace grants**, with a best-effort **Casdoor** user/role write through the PKI
+  gateway;
+- the durable **account/session store** (`admin-bff-db`) that the SSO login flow reads
+  and writes. The *login/session orchestration* itself is moving to **user-bff** (see
+  [Current State](#current-state)); admin-bff stays the system of record and exposes it
+  over the internal mTLS surface;
+- brokering **real Matrix/Mastodon service tokens** server-side, so the UI never holds
+  homeserver admin credentials;
 - the **gateway access-control surfaces** — per-gateway role→URL `route-access`
   rules (the `gateway_route_access` Postgres table is the source of truth the
   gateways' `GatewayRouteAccessFilter` enforces; mirrored to Cassandra for the
   gateways) and the DB-driven gateway **route definitions** (`url_registry`);
-- **access-role suspension** (ban / timed-suspend) and **domain-lock** (force
-  local-only / no-federation) desired-state, each driven by a single-writer
-  reconcile loop;
+- **access-role suspension** (ban, timed suspend) and **domain-lock** (force local-only,
+  no federation) desired state, each driven by a single-writer reconcile loop;
 - site **announcements** (multi-surface: home / public login / akkoma / forum);
 - the **phpBB forum admin console** proxy, **ClickHouse usage analytics**, an
   ADMIN **cloud backup & recovery** flow, the **test-architecture reports** console,
   and **ISO artifact** download links.
 
-In short: if an operator needs to invite a user, ban an account, lock down a domain to
-federate less, roll out a new service, or check on a mesh device from the admin
-console, the request ends up here. See [Related HugMesh repositories](#related-hugmesh-repositories)
-for how this service fits into the rest of the platform.
+In short: when an operator invites a user, bans an account, locks a domain down to
+federate less, rolls out a new service or checks a mesh device from the admin console,
+the request ends up here. [Related HugMesh repositories](#related-hugmesh-repositories)
+shows where this service fits in the platform.
 
 It also owns the **multi-tenancy** boundary (per-brand issuer-keyed domain scoping —
 ✅ shipped), the **device-license registry** + **domain registry** SUPERADMIN control
@@ -40,10 +39,10 @@ external channel adapters wiring up (🚧 in-flight), **OIDC provider default ro
 **Anubis** surfaces (✅ shipped), and a **device-enrollment** liveness self-report
 channel (✅ shipped).
 
-> **State convention used throughout this README:** **✅ shipped** = merged to `main`;
-> **🚧 in-flight** = code on an open branch/PR, not yet merged; **🔭 planned** =
-> design-complete, no code yet. Roadmap (🔭 / 🚧) items are collected in the
-> [Roadmap](#roadmap) section; the rest of this README describes `main`.
+> **State convention in this README:** **✅ shipped** = merged to `main`; **🚧 in-flight**
+> = code on an open branch/PR, not yet merged; **🔭 planned** = design-complete, no code
+> yet. The [Roadmap](#roadmap) collects the 🔭 and 🚧 items. The rest of this README
+> describes `main`.
 
 ---
 
@@ -78,22 +77,22 @@ above **ships dark** behind a default-off config flag even though the code is re
 tested — see each section for its specific gate.
 
 **Test-suite callout:** the 8 failures came from one Boot 4 `HttpStatus` rename
-(`UNPROCESSABLE_ENTITY` became `UNPROCESSABLE_CONTENT`): eight assertions compared
-the old enum constant against a controller that correctly returns 422. **Fixed.** The
-tests now assert the numeric code, and `HttpStatusAssertionStyleTest` fails the build if
-a test compares `HttpStatus` enum identity again (commit `ffa370a`). `UNPROCESSABLE_ENTITY`
+(`UNPROCESSABLE_ENTITY` became `UNPROCESSABLE_CONTENT`). Eight assertions compared the
+old enum constant against a controller that correctly returns 422. **Fixed.** The tests
+now assert the numeric code, and `HttpStatusAssertionStyleTest` fails the build if a
+test compares `HttpStatus` enum identity again (commit `ffa370a`). `UNPROCESSABLE_ENTITY`
 now appears in `src/test` only in that guard's own text. The 2414-test count was not
-re-measured: `src/test` holds 3225 `@Test`/`@ParameterizedTest` methods in 386 test
-classes (static count, 2026-10-07), and 27 of those classes start Testcontainers and
-need Docker, so a full run takes a Docker daemon.
+re-measured. `src/test` holds 3225 `@Test`/`@ParameterizedTest` methods in 386 test
+classes (static count, 2026-10-07). 27 classes use Testcontainers, so a full run needs a
+Docker daemon.
 
 **2026-07 security hardening:** a cross-cutting native-login identity-fold review found
-and fixed several real HIGH/MEDIUM authz bugs (Mastodon-localpart takeover-by-collision,
-an MFA-freshness bypass on the `bff_` introspect path, suspension
-gateway-revoke/Casdoor-role-sync identity-key mismatches, a workload-console
-superadmin-suspension bypass, and the `/bff/internal/session/exchange`
-suspension-bypass noted in the [Internal](#internal-service-to-service-mtls-bounded)
-section below) — all fixed on `main` (`#161`, `#209`/`#210`/`#218`, `#220`/`#221`/`#223`/`#224`).
+and fixed several real HIGH and MEDIUM authz bugs: Mastodon-localpart takeover by
+collision, an MFA-freshness bypass on the `bff_` introspect path, identity-key
+mismatches in suspension gateway-revoke and Casdoor-role-sync, a workload-console
+superadmin-suspension bypass, and the `/bff/internal/session/exchange` suspension bypass
+described in the [Internal](#internal-service-to-service-mtls-bounded) section below.
+All are fixed on `main` (`#161`, `#209`/`#210`/`#218`, `#220`/`#221`/`#223`/`#224`).
 
 **Known gaps** (real, not speculative — see [Roadmap](#roadmap) for the platform-scale
 items and the "Edge-AI infra triage" section of [`docs/SUBSYSTEMS.md`](docs/SUBSYSTEMS.md)
@@ -133,8 +132,8 @@ for the narrower ones):
 ## Current State
 
 _This section describes the platform's SSO authentication model as of the 2026-06-25
-auth reshape; see [Status](#status) above for everything that has shipped since. The
-versions below were refreshed on 2026-10-07, and the known gap it once named in the
+auth reshape. [Status](#status) above covers everything that shipped since. The versions
+below were refreshed on 2026-10-07, and the known gap this section once named in the
 [Internal](#internal-service-to-service-mtls-bounded) section is fixed._
 
 **Ecosystem baseline.** Spring **Boot 4.0.7** / Spring Cloud **2025.1.2** on
@@ -166,8 +165,8 @@ versions below were refreshed on 2026-10-07, and the known gap it once named in 
   [Shared libraries](#shared-libraries-hugmesh-parent--hugmesh-commons--hugmesh-auth-core)
   below for the full detail.
 
-**The SSO auth model.** Casdoor is the SSO IdP and the platform
-login flow has moved off a custom BFF login:
+**The SSO auth model.** Casdoor is the SSO IdP, and the platform login flow has moved
+off a custom BFF login:
 
 - **login-ui** POSTs a **native username/password (+MFA)** form to `/bff/login`;
   **user-bff** runs **PKCE (S256) + state server-side**, POSTs the credentials to the
@@ -180,17 +179,17 @@ login flow has moved off a custom BFF login:
   Casdoor JWT.
 - the **gateway** is a pure Casdoor-JWT OAuth2 resource server: a pre-security
   exchange filter swaps `bff_` → the internal custody JWT, so the gateway's JWT
-  validation + role gate run unchanged. Authorization is **data-driven** by the
-  `gateway_route_access` Postgres table (this service's source-of-truth surface) via
-  `GatewayRouteAccessFilter`; **ADMIN / GAME-MASTER** bypass within their own domain,
-  **SUPERADMIN** cross-domain. **Cloudflare** fronts prod.
+  validation and role gate run unchanged. Authorization is **data-driven**: the
+  `gateway_route_access` Postgres table (this service's source-of-truth surface) feeds
+  `GatewayRouteAccessFilter`. **ADMIN / GAME-MASTER** bypass within their own domain,
+  **SUPERADMIN** across domains. **Cloudflare** fronts prod.
 
 **What that means for admin-bff specifically:**
 
-- admin-bff stays a **Casdoor OAuth2 resource server** that validates the Casdoor
-  JWT presented at the backend tier (post-`bff_`-swap by the gateway). Its
-  three-layer defence-in-depth (gateway route-access → filter chain → `@PreAuthorize`)
-  is unchanged.
+- admin-bff stays a **Casdoor OAuth2 resource server**. It validates the Casdoor JWT
+  presented at the backend tier (after the gateway's `bff_` swap). Its three-layer
+  defence in depth (gateway route-access → filter chain → `@PreAuthorize`) is
+  unchanged.
 - **Login / session / account *orchestration* is being RELOCATED from admin-bff to
   user-bff**, and the shared core for it has been **extracted into `hugmesh-auth-core`**
   (#111 — the `AccountStore` / Casdoor-admin client / MFA subsystem / session + internal
@@ -208,12 +207,11 @@ login flow has moved off a custom BFF login:
   their *ownership* as in-transition (see [Roadmap](#roadmap)); the durable allowlist /
   namespace / entitlement data and the token broker remain admin-bff responsibilities.
 - **SCG-5 awareness.** Spring Cloud Gateway 5.0 moved route config from
-  `spring.cloud.gateway.routes` to `spring.cloud.gateway.server.webflux.routes` (the
-  legacy prefix silently binds nothing). admin-bff is **not** a gateway, but it is the
-  writer of the DB-driven route **definitions** (`url_registry`) and **route-access**
-  rules the gateways and the generator route templates consume; the gateways +
-  generator templates were corrected to the new namespace so the rules this service
-  emits actually bind.
+  `spring.cloud.gateway.routes` to `spring.cloud.gateway.server.webflux.routes`; the
+  legacy prefix silently binds nothing. admin-bff is **not** a gateway, but it writes
+  the DB-driven route **definitions** (`url_registry`) and **route-access** rules that
+  the gateways and the generator route templates consume. The gateways and generator
+  templates were corrected to the new namespace, so the rules this service emits bind.
 
 **Shipped & stable on `main`:** the full `/bff/admin/**` + `/bff/superadmin/**`
 control plane (allowlist / namespaces / route-access / routes / suspension /
