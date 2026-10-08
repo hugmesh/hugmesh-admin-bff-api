@@ -21,10 +21,12 @@ shape the admin surface already uses) — it does not shell out on the BFF pod.
   count the BFF uses for its `backup_history` **verifier** (`BackupCrypto`). The
   BFF stores only the one-way verifier (+ salt); the actual AES key is derived
   **inside the worker** from the password, so the BFF never holds the data key.
-- **Password delivery:** the BFF creates an **ephemeral Secret** `backup-pw-<id>`
+- **Password delivery (the design; `applyJob` is still a no-op, see follow-up 2):**
+  the BFF creates an **ephemeral Secret** `backup-pw-<id>`
   with an `ownerReference` to the Job, mounted read-only at `/run/backup/password`.
-  It is garbage-collected when the Job is reaped (`ttlSecondsAfterFinished`). The
-  password is never an env var, never in the manifest, never logged.
+  It is garbage-collected when the Job is reaped (`ttlSecondsAfterFinished`, 3600
+  in `backup-job.yaml`). The password is never an env var, never in the manifest,
+  never logged. Today nothing creates that Secret, because nothing applies the Job.
 - **Wrong password on restore:** verified by the BFF against the stored PBKDF2
   verifier **before** the restore Job is applied → `403 incorrect decryption
   password`. The key is never derived/revealed on a mismatch.
@@ -35,7 +37,8 @@ shape the admin surface already uses) — it does not shell out on the BFF pod.
 found on them). Enumeration runs **on the node** (the worker / a node agent reads
 `lsblk -J -o NAME,LABEL,MOUNTPOINT,SIZE,FSAVAIL,RO,TRAN` filtered to `TRAN=usb`);
 the BFF pod has no host block-device visibility. A `USB` backup/restore mounts the
-device at `/mnt/usb` (`hostPath` in the Job template). The default
+device at `/mnt/usb`: the Job template mounts the node's `hostPath`
+`/mnt/hugmesh-usb` there. The default
 `UsbDeviceProvider` returns an empty list until the node-agent endpoint is wired —
 see *Implemented vs follow-up* below.
 
@@ -107,6 +110,25 @@ write-time scrub.
    the ingest path).
 2. Flip `testreports.launch.enabled=true` (+ `testreports.launch.namespace` if the
    deployment relocates) so `Fabric8JobLauncher` applies Jobs for real.
-3. The cluster orchestrator (hugmesh-generator `apps/99-test-runner.yaml`) is the
+3. The cluster orchestrator (hugmesh-generator `specs/cluster/apps/99-test-runner.yaml`) is the
    automated trigger for the LEAN (fe/be/pki-ready) + HEAVY (x86-attach) runs; the
    admin `POST /run` is the on-demand path. Both write the same `test_run` rows.
+
+## Image-gen Job (image-build console)
+
+These resources back the admin image-build console (`/bff/admin/image-builds`,
+`/bff/internal/image-builds/{id}/ingest` and `/progress`).
+`ImageBuildOrchestrator.renderManifest` fills the template, one Job per build.
+
+| File | Role |
+|------|------|
+| `image-gen-job.yaml`       | Job template for one build. The runner writes the image and a non-secret keys bundle to the `hugmesh-image-artifacts` PVC under `build-<id>/`, and POSTs its terminal event to the ingest endpoint. |
+| `image-gen-rbac.yaml`      | ServiceAccount `image-gen`, the launcher Role and RoleBinding for the BFF's ServiceAccount (`admin-bff`; adjust to your deployment), and the artifacts PVC — **apply once**. |
+| `image-gen-admission.yaml` | A native `ValidatingAdmissionPolicy` that pins the BFF's ConfigMap writes to the `hugmesh-image-spec-` name prefix. RBAC cannot express a prefix. Needs Kubernetes 1.30 or later — **apply once**, after the RBAC. |
+
+The launch is off by default. With `imagegen.launch.enabled=false` (env
+`IMAGEGEN_LAUNCH_ENABLED`) the no-op `NoopImageJobLauncher` only logs, so no build
+runs. Set it to `true` (and `imagegen.launch.namespace` if the deployment moves)
+after the RBAC and the PVC exist. The per-device dial private key never enters the
+manifest or the BFF: the generator writes it to Vault, and an ESO-synced Secret
+carries it into the Job pod only.
