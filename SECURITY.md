@@ -114,7 +114,9 @@ correctly checked suspension.
 check against `SuspensionService` *before* the custody row is decrypted, and returns
 403 for an active suspension. The [Internal](README.md#internal-service-to-service-mtls-bounded)
 section of the README has the code-level detail. At the application defaults this
-surface is dark (`app.bff.custody-key` unset, so `/session/exchange` 503s). It is not
-dark in-cluster: the generator deployment above sets `APP_BFF_OIDC_ENABLED`,
+surface is dark (`app.bff.custody-key` unset, so `/session/exchange` 503s). On
+2026-06-25 that meant no live traffic depended on the bug: the generator deployment
+first set `APP_BFF_CUSTODY_KEY` on 2026-07-10 (generator commit `50021c55`). It is not
+dark in-cluster today: the generator deployment above sets `APP_BFF_OIDC_ENABLED`,
 `APP_BFF_CUSTODY_KEY` and `APP_BFF_EXCHANGE_ENABLED`, so the fix now protects live
 sessions.

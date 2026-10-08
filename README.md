@@ -1376,9 +1376,11 @@ as shipped.
   and the `device_enrollment` self-report channel exists. The live **headscale ACL push**
   and `machine_key` auto-capture admission need a live control node and are deferred. By
   decision 101 = B the push is the tailnet policy's only writer (headscale in
-  `policy.mode: database`); the node-side `gen-headscale-policy.sh` /
-  `hugmesh-policy-sync` agent is retired, but its removal has yet to land in
-  hugmesh-generator.
+  `policy.mode: database`, headscale's own spelling; the BFF declares it in
+  `app.registry.headscale-acl.policy-mode`, default `database`). The node-side
+  `gen-headscale-policy.sh` agent, which the `hugmesh-policy-sync` cron runs every 60 s in
+  file mode, is retired as a writer, but its removal and the control node's switch to
+  database mode have yet to land in hugmesh-generator.
 - 🔭 **MDM phone-lock real device push.** The control plane (ingest, fleet registry,
   management/lockout mutations, the fleet-entitlement gate) is shipped and tested. The
   three enforcement legs that `DefaultPhoneLockEnforcer` fans out to — Headwind
