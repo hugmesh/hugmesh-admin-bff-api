@@ -49,6 +49,9 @@ git mv src/main/java/net/hugmesh/app src/main/java/net/hugmesh/{{APP_SLUG}}
 git mv src/test/java/net/hugmesh/app src/test/java/net/hugmesh/{{APP_SLUG}}
 ```
 
+A ZIP from the admin BFF's Service-Store scaffold (`/archive`) is already relocated;
+skip these commands for it.
+
 ## No persistence yet — deliberately
 
 `hugmesh-parent` injects the fleet data stack (R2DBC + Liquibase), but this
@@ -64,5 +67,5 @@ The archetype's real path is overlay-on-base: when `hugmesh-{{REPO_NAME}}`
 is resolvable, `render-repo-tree.sh` pulls it and anchor-edits only the
 brand-coupled seams (see `templates/archetypes/spring-bff/recipe.yaml`). This
 skeleton is the standing example codebase + the base-absent fallback — see
-docs/FEDERATION-EXAMPLES.md for the full walkthrough of wiring a new BFF into
+docs/FEDERATION-EXAMPLES.md in hugmesh-generator for the full walkthrough of wiring a new BFF into
 the federation surface.

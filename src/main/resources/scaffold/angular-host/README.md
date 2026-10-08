@@ -2,8 +2,8 @@
 
 A minimal but **REAL** Angular 22 native-federation **HOST** in the platform
 shape, rendered by the mesh repo-templating **angular-host** archetype when the
-Tier-2 base (the `hugmesh.net` host shell, reachable only via
-`HOST_SHELL_BASE_DIR` — see the archetype README) is not pullable:
+Tier-2 base (the `hugmesh-host-shell` site shell — see the archetype README) is
+not pullable:
 
 ```
 npm ci && npm run build          # real @angular-architects/native-federation:build
@@ -46,4 +46,4 @@ exemplar's karma + REMOTE_ROUTES contract specs as the first tests.
 Session/guards (`roleHomeGuard`, per-remote guards), the HTTP-backed
 capabilities service (public `GET /api/federation/capabilities`), a prod
 manifest + `fileReplacements` split, and every further remote are walked in
-docs/FEDERATION-EXAMPLES.md (the 8-place registration surface).
+docs/FEDERATION-EXAMPLES.md in hugmesh-generator (the 8-place registration surface).
