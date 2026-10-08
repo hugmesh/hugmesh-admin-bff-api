@@ -15,39 +15,41 @@ Each sub-directory is one archetype:
 
 ## Provenance — VENDORED, not hand-authored
 
-These trees are a **build-time copy** of the canonical source of truth in the
-generator repo:
+These trees are a **build-time copy** of the source of truth in the generator repo:
 
 ```
 hugmesh-generator  templates/archetypes/<archetype>/_skeleton/
 ```
 
-The first copy came from generator commit `05fcab39ef09d8265eb60888fbac999cf9fa1a58`
-(UNVERIFIED: that commit is not in the generator's history on `main` today).
+The first copy came from generator commit `05fcab39ef09d8265eb60888fbac999cf9fa1a58`.
+That commit is not in the generator's history today (a fetch of `origin/main` on
+2026-10-07 does not have it).
 
 The copy rule:
 
 - every `<file>.hbs` becomes `<file>` (the `.hbs` suffix is stripped);
-- the `{{TOKEN}}` placeholders are kept exactly as the generator authors them (they
-  are rendered at request time by `TokenRenderer`, not at copy time);
-- the Java sources sit under the neutral `src/main/java/net/hugmesh/app/` directory;
-  `ScaffoldArchiveRenderer` relocates them into the real package path per request.
+- the `{{TOKEN}}` placeholders stay as the generator wrote them. `TokenRenderer`
+  fills them at request time, not at copy time;
+- the Java sources sit under the neutral `src/main/java/net/hugmesh/app/` directory,
+  and `ScaffoldArchiveRenderer` moves them into the real package path per request.
 
 The trees are no longer a clean copy. Compared with generator `main` on 2026-10-07:
 
-- The generator keeps the Java sources under `src/main/java/systems/hugmesh/app/`
-  and declares `systems.hugmesh`. This repo moved to `net.hugmesh` in commit
-  `877de6e`, in `pom.xml`, `settings.xml`, the `Dockerfile`, the README and the Java
-  files.
-- Other `spring-bff` files differ too: `deploy/deployment.yaml`,
-  `deploy/kustomization.yaml`, and the `Dockerfile` (the generator's also reads a
-  `packages_read_token` secret). The generator has a `.github/maven-ci-settings.xml`
-  that this copy lacks.
-- `angular-mfe` differs in `federation-base.js` and `src/styles.scss`;
-  `angular-host` in `README.md` and `src/styles.scss`. `remote-fragment` matches.
+- The generator keeps the Java sources under `src/main/java/systems/hugmesh/app/` and
+  declares `systems.hugmesh`. This repo moved to `net.hugmesh` in commit `877de6e`
+  (`pom.xml`, `settings.xml`, the `Dockerfile`, the README and the Java files).
+- Other `spring-bff` files differ too. `deploy/deployment.yaml` and
+  `deploy/kustomization.yaml` fix the namespace to `hugmesh-backend` and the image to
+  `hugmesh-systems/`, where the generator uses `{{BRAND}}-backend` and `hugmesh/`. The
+  generator's `Dockerfile` also reads a `packages_read_token` secret, and the generator
+  has a `.github/maven-ci-settings.xml` that this copy lacks.
+- `angular-mfe` differs in `federation-base.js` and `src/styles.scss`, and
+  `angular-host` in `src/styles.scss`.
+- The `README.md` files here carry corrected pointers (`angular-host`,
+  `remote-fragment`, `spring-bff`). The generator's copies still carry the old ones.
 
-The existing `resources/catalog/*.json` vendoring (`ImageCatalogProvider`) follows
-the same idea: one source of truth in the generator, copied in.
+The `resources/catalog/*.json` vendoring (`ImageCatalogProvider`) follows the same
+idea: one source of truth in the generator, copied in.
 
 ## Resync procedure
 
@@ -66,11 +68,11 @@ for a in spring-bff angular-mfe angular-host remote-fragment; do
 done
 ```
 
-**Do not run this as it stands.** It would copy the generator's
+**Do not run this as it stands.** It copies the generator's
 `systems/hugmesh/app/` Java path, and `ScaffoldArchiveRenderer` relocates only
 `net/hugmesh/app/`. After a resync, move the Java sources (main and test) back to
 `net/hugmesh/app/` and rename `systems.hugmesh` to `net.hugmesh`. Diff first: the
-`rm -rf` also drops any change made here.
+`rm -rf` also drops every change made here.
 
 Then bump the generator commit hash recorded above, and re-run the scaffold render
 tests (`ScaffoldArchiveRendererTest`, `TokenRendererTest`, `ScaffoldServiceTest`).
