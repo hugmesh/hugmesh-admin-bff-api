@@ -148,7 +148,7 @@ versions below were refreshed on 2026-10-07, and the known gap it once named in 
   `spring-boot-starter-parent:4.0.7`; manages testcontainers 2.0.5);
 - `net.hugmesh:hugmesh-commons:2.1.0` (managed by the parent BOM) — shared
   security/tenancy/web (`net.hugmesh.commons.*`);
-- `net.hugmesh:hugmesh-auth-core:2.5.0` (currently-pinned version — see
+- `net.hugmesh:hugmesh-auth-core:2.5.1` (currently-pinned version — see
   `pom.xml`) — the shared account / session / MFA / Casdoor-admin infrastructure
   (the account/session/MFA/Casdoor-admin classes that used to live in this repo were
   extracted into it). It depends on `hugmesh-commons` and is
@@ -164,7 +164,8 @@ versions below were refreshed on 2026-10-07, and the known gap it once named in 
   groupId + package move, no behavior change, part of the HugMesh rebrand, #236);
   **2.4.2** syncs the shared `ReservedNames` to reserved-prefixes revision 9 (82
   labels; 2.4.1, which pom.xml names as the first carrier, was never published);
-  **2.5.0** adds the domain-scoped registration gate — see
+  **2.5.0** adds the domain-scoped registration gate; **2.5.1**, the pin, is the only
+  coordinate the release chain publishes and adds a username gate that stays off here — see
   the version-by-version changelog under
   [Shared libraries](#shared-libraries-hugmesh-parent--hugmesh-commons--hugmesh-auth-core)
   below for the full detail.
@@ -278,7 +279,7 @@ flowchart TD
 | **Tier / namespace** | backend (`hugmesh-backend`) |
 | **Framework** | Spring Boot **4.0.7** (reactive **WebFlux**), Spring Cloud **2025.1.2**, **Java 25 LTS** |
 | **AuthN** | Casdoor OAuth2 **resource server** — validates the Casdoor JWT presented at the backend tier (the gateway swaps the browser's opaque `bff_` session → the internal custody JWT before it reaches here) |
-| **Shared libs** | `hugmesh-parent:2.8.0` (metapom) → `hugmesh-commons:2.1.0` (security/tenancy/web) + `hugmesh-auth-core:2.5.0` (shared account/session/MFA/Casdoor-admin + the BFF-JWT-custody seam; consumed by user-bff + admin-bff only) |
+| **Shared libs** | `hugmesh-parent:2.8.0` (metapom) → `hugmesh-commons:2.1.0` (security/tenancy/web) + `hugmesh-auth-core:2.5.1` (shared account/session/MFA/Casdoor-admin + the BFF-JWT-custody seam; consumed by user-bff + admin-bff only) |
 | **Persistence** | config Postgres over **R2DBC** (runtime, non-blocking); **Liquibase** owns schema (JDBC, migrations only) |
 | **Other stores** | **ClickHouse** (usage analytics, best-effort), **Kafka** (usage-event bus, optional), **Cassandra** (best-effort route-access mirror the gateways poll) |
 | **Image / CI** | multi-stage Dockerfile (temurin 25), `:8080`; built + pushed to the in-cluster GitLab registry by `.gitlab-ci.yml`, which also runs the platform OWASP pen-test stages (SCA + DAST + nuclei) — see [CI & pen-test stages](#ci--pen-test-stages). **CI is GitLab**; one manual GitHub Actions workflow (`.github/workflows/release.yml`) can also push to GHCR. Images carry **no** KEYS material |
@@ -438,7 +439,7 @@ per brand, so each has a distinct, cryptographically validated `iss`). It is **s
 
 The security, tenancy and web building blocks above come from the org's shared Maven
 artifacts (`hugmesh-parent` on `2.8.0`, `hugmesh-commons` on `2.1.0`, `hugmesh-auth-core`
-on `2.5.0`), not from per-repo copies:
+on `2.5.1`), not from per-repo copies:
 
 1. **Parent POM →** `net.hugmesh:hugmesh-parent:2.8.0`, a child of
    `spring-boot-starter-parent:4.0.7`, so the Spring Boot dependency and plugin
@@ -469,7 +470,7 @@ on `2.5.0`), not from per-repo copies:
    - `commons.config.TenancyResourceServerConfig`.
 
 3. **Shared account / session / MFA / Casdoor-admin →**
-   `net.hugmesh:hugmesh-auth-core:2.5.0` (currently pinned; **adopted** at #111). The
+   `net.hugmesh:hugmesh-auth-core:2.5.1` (currently pinned; **adopted** at #111). The
    stateful auth core that used to live in this BFF was extracted into it: the account,
    allowlist and `bff_session` store with `AccountStore`, the `CasdoorAdminClient`, the
    full MFA subsystem, the session-cookie and internal-token filters, the username gate,
@@ -499,6 +500,12 @@ on `2.5.0`), not from per-repo copies:
    - **2.5.0** (auth-core issue #1): adds `AccountStore.isEmailInvited(email, domain)` and
      `isDiscordInvited(handle, domain)` and deprecates the unscoped overloads. That is what
      makes the registration invite gate brand-scoped (see `POST /bff/register/*` below).
+   - **2.5.1**: the pin. 2.5.0 was never published to GitHub Packages, so the release
+     image build could not resolve it. 2.5.0 → 2.5.1 is source- and binary-compatible
+     (the deprecated overloads stay). 2.5.1 also carries the Casdoor-platform username
+     gate, which stays off here until `FEDERATION_USERNAME_GATE_ENABLED` is set with
+     `APP_CASDOOR_PLATFORM_BASE_URL`, `_CLIENT_ID`, `_CLIENT_SECRET` and
+     `HUGMESH_MTLS_CLIENT_ENABLED`.
 
    **Stays per-repo:** this repo's A2 cookie/CSRF `config.SecurityConfig` (route matchers
    plus CSRF/cookie/header policy), the per-repo `web.ApiExceptionHandler` and
