@@ -233,6 +233,22 @@ class MatrixSystemDmClientTest {
         assertThat(list.get(list.size() - 1).asText()).isEqualTo("!room2:probe.test");
     }
 
+    @Test
+    void afterRestart_withAReplacedRoomInMDirect_usesTheNewestOne() {
+        MatrixSystemDmClient c = client();
+        c.sendDirectMessage("alice", "one", "r1").block();
+        hs.deadRooms.add("!room1:probe.test");
+        c.sendDirectMessage("alice", "two", "r2").block();          // replaces room1 with room2
+        assertThat(hs.createdRooms()).hasSize(2);
+
+        // restarted pod: m.direct lists [room1 (dead), room2]; it must pick room2, not trip on room1
+        ChannelOutcome out = client().sendDirectMessage("alice", "three", "r3").block();
+
+        assertThat(out).isEqualTo(ChannelOutcome.SENT);
+        assertThat(hs.createdRooms()).as("no third room").hasSize(2);
+        assertThat(hs.events.get(hs.events.size() - 1).room()).isEqualTo("!room2:probe.test");
+    }
+
     // ── identity cache is dropped when the token is rejected ─────────────────
     @Test
     void identityIsRefetched_afterA401() {
