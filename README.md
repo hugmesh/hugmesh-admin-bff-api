@@ -1058,6 +1058,16 @@ missing from the sections above; documenting them here to close that gap:
   (`app.device-terminal.enabled`, default false → `StubDeviceSshTransport`; and
   `app.device-terminal.dial.enabled`, default false → no real device is ever dialed even with the
   transport flag on, per `src/main/resources/application.yml:646-689`).
+  The remote-install exec client (`DesktopRemoteInstallController`) is a third flag on the same
+  trust path: `app.desktop.remote-install.enabled` (env `DESKTOP_REMOTE_INSTALL_ENABLED`, default
+  false → `NoopDesktopSshClient`) now has an explicit `application.yml` entry (it was only a
+  `matchIfMissing` bean condition, invisible to a reader and to a deployment manifest), and it
+  rides the same dial factory, so it dials nothing while `app.device-terminal.dial.enabled` is
+  false. The env names of all three are `DEVICE_TERMINAL_ENABLED`,
+  `DEVICE_TERMINAL_DIAL_ENABLED` and `DESKTOP_REMOTE_INSTALL_ENABLED`; the generator's cluster
+  manifest and compose stack set them to false. `DesktopRemoteInstallYamlDefaultTest` pins the
+  entries and their default. Go-live preconditions (security re-review, `device_ssh_dial` rows,
+  per-device dial-key mount): hugmesh-generator `docs/CLIENT-IMAGES.md` section 7.
 - **Cloud-backup v2 / Velero** (`net.hugmesh.adminbff.cloudbackup`) — a second,
   Velero-based backup plane distinct from the k8s-Job-templating `backup` package described under
   [`BackupController`](#admin-flow-hasroleadmin-base-bffadmin) above: `BackupAdminController`
