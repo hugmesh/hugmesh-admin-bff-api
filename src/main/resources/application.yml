@@ -785,6 +785,24 @@ app:
       # NOT the connect timeout — a real `flatpak install` legitimately outlives a socket connect.
       # The interactive PTY dial is bounded by device-terminal.idle-timeout instead, not by this.
       exec-timeout: "${DEVICE_TERMINAL_DIAL_EXEC_TIMEOUT:5m}"
+  # DESKTOP REMOTE-INSTALL — the one-click install behind POST /bff/admin/desktop/remote-install
+  # (DesktopRemoteInstallConfig). SHIPS DARK, and until this entry existed the flag was INVISIBLE:
+  # the only place the key appeared was a @ConditionalOnProperty(matchIfMissing = true) bean
+  # condition, so nobody reading this file could tell the lever existed or what it was called, and
+  # no deployment manifest had a name to override. DEFAULT false is byte-identical to the old
+  # implicit behaviour (false → NoopDesktopSshClient; the Noop was already the matchIfMissing bean).
+  # true wires RestDesktopSshClient, which runs the install as a one-shot exec over the SAME
+  # DeviceSshChannelFactory the in-UI terminal dials through — so it is INERT while
+  # app.device-terminal.dial.enabled is false (the factory is then the fail-closed
+  # UnconfiguredDeviceSshChannelFactory) and it needs an ACTIVE device_ssh_dial row with a pinned
+  # host_key_fp per target device. Flipping dial.enabled carries the mandatory security re-review
+  # (see device-terminal.dial above); this flag adds no second trust path and needs none of its own.
+  desktop:
+    remote-install:
+      enabled: "${DESKTOP_REMOTE_INSTALL_ENABLED:false}"
+      # The command run on the device; {ref} is replaced with the (validated) Flatpak ref. This is
+      # the value RestDesktopSshClient's @Value already defaulted to — stated so it is reviewable.
+      command: "${DESKTOP_REMOTE_INSTALL_COMMAND:flatpak install -y {ref}}"
   # ADMIN SSH KEY-ISSUANCE (SSH PR-4, Option B) — MINT an Ed25519 credential for an operator to
   # SSH a licensed device by registering its SHA256 fingerprint into the backing
   # device_ssh_license (schema 011); the node's AuthorizedKeysCommand already matches the offered
