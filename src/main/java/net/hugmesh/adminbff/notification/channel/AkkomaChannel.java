@@ -1,5 +1,6 @@
 package net.hugmesh.adminbff.notification.channel;
 
+import edu.umd.cs.findbugs.annotations.Nullable;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -21,6 +22,13 @@ import net.hugmesh.adminbff.announcement.AnnouncementMastodonClient;
  * reports unavailable and the reconciler skips it (retried next tick). The underlying
  * notice is STUBBED until the confirmed akkoma per-user verb is wired, so a STUBBED/
  * degraded outcome is a transient FAILED→retry, never a false {@code sent}.
+ *
+ * <h3>Real transport (second gate)</h3>
+ * When {@code notify.akkoma.notice.wired=true} (default false) the channel is built with an
+ * {@link AkkomaSystemNoticeClient} and posts a {@code direct} status as the {@code @system}
+ * account instead of going through the stubbed announcement seam. That path does not need
+ * {@code external.mastodon.enabled} (that gate guards the ADMIN bearer, which a notice never
+ * uses); availability is then {@code notify.akkoma.enabled} AND the {@code @system} token.
  */
 @SuppressFBWarnings(value = "EI_EXPOSE_REP2",
         justification = "Spring constructor injection: the container owns this singleton collaborator and it is never mutated by this class after construction; a defensive copy of a bean is meaningless (not caller-owned mutable data).")
@@ -33,11 +41,23 @@ public class AkkomaChannel implements NotificationChannel {
     private final AnnouncementMastodonClient akkoma;
     private final boolean enabled;
     private final boolean systemTokenPresent;
+    @Nullable
+    private final AkkomaSystemNoticeClient notice;
 
     public AkkomaChannel(AnnouncementMastodonClient akkoma, boolean enabled, boolean systemTokenPresent) {
+        this(akkoma, enabled, systemTokenPresent, null);
+    }
+
+    /**
+     * @param notice the real Mastodon-API transport, or null to stay on the stubbed
+     *               announcement seam ({@code notify.akkoma.notice.wired=false})
+     */
+    public AkkomaChannel(AnnouncementMastodonClient akkoma, boolean enabled, boolean systemTokenPresent,
+                         @Nullable AkkomaSystemNoticeClient notice) {
         this.akkoma = akkoma;
         this.enabled = enabled;
         this.systemTokenPresent = systemTokenPresent;
+        this.notice = notice;
     }
 
     @Override
@@ -52,7 +72,7 @@ public class AkkomaChannel implements NotificationChannel {
 
     @Override
     public Mono<Boolean> available(String domain) {
-        return Mono.just(enabled && akkoma.enabled() && systemTokenPresent);
+        return Mono.just(enabled && (notice != null || akkoma.enabled()) && systemTokenPresent);
     }
 
     @Override
@@ -62,6 +82,10 @@ public class AkkomaChannel implements NotificationChannel {
             return Mono.just(ChannelOutcome.SKIPPED);
         }
         String body = message.title() + "\n\n" + (message.body() == null ? "" : message.body());
+        if (notice != null) {
+            // notice never throws; it maps every failure to FAILED and a missing account to SKIPPED.
+            return notice.sendDirectNotice(localpart, body, message.deliveryKey());
+        }
         return akkoma.postLocalUserNotice(localpart, body)
                 .map(AkkomaChannel::toOutcome)
                 .onErrorResume(e -> {
