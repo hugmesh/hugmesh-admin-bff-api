@@ -66,16 +66,19 @@ public class ExternalChannelConfig {
      * The email channel adapter. The {@link JavaMailSender} is only autoconfigured when
      * {@code spring.mail.host} is set, so it is injected via {@link ObjectProvider} and the
      * channel reports unavailable when absent — keeping a SMTP-less run clean.
-     * {@code MAIL_PROVIDER} → {@code spring.mail.*} is the per-brand SMTP secret.
+     * {@code MAIL_PROVIDER} → {@code spring.mail.*} is the per-brand SMTP secret. A
+     * {@link RecipientEmailResolver} bean, if one exists, resolves non-address subjects; none
+     * is defined in this repo.
      */
     @Bean
     public EmailChannel emailNotificationChannel(
             ObjectProvider<JavaMailSender> mailSenderProvider,
+            ObjectProvider<RecipientEmailResolver> resolverProvider,
             @Value("${notify.email.enabled:false}") boolean enabled,
             @Value("${spring.mail.host:}") String smtpHost) {
         JavaMailSender sender = mailSenderProvider.getIfAvailable();
         boolean smtpConfigured = sender != null && smtpHost != null && !smtpHost.isBlank();
-        return new EmailChannel(sender, enabled, smtpConfigured);
+        return new EmailChannel(sender, enabled, smtpConfigured, resolverProvider.getIfAvailable());
     }
 
     /**
