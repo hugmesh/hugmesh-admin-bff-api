@@ -47,17 +47,17 @@ import java.util.concurrent.atomic.AtomicReference;
  * gating lives on the in-app path (user-bff prefs) and is layered on the external
  * channels by PR7's preference consult — see the PR7 follow-up.
  *
- * <h3>Moderator channel directive (narrow-only)</h3>
+ * <h3>Moderator channel directive</h3>
  * An outbox row may carry the moderator's {@code notify_channels} directive (see
  * {@link NotifyChannelDirective}). It is checked before the availability gate and only
- * ever NARROWS: a channel the directive does not name records a terminal {@code skipped}
+ * selects a subset of the default fan-out: a channel the directive does not name records a terminal {@code skipped}
  * delivery (no send); a named channel still goes through its own {@code enabled()} /
  * {@code available()} gates, so the directive never turns a gated channel on. A
  * directive naming no enabled external channel is treated as absent, but one that names an
  * enabled channel is NOT checked against that channel's availability or recipient: if the
  * named channel is unavailable or skips the row, the others have already recorded a terminal
- * skip and no external channel delivers it (never retried). In-app, which ignores the
- * directive entirely, is the only guaranteed floor.
+ * skip and no external channel delivers it (not retried). The in-app reconciler does not
+ * read the directive.
  *
  * <h3>Neutral sender</h3>
  * The title/body handed to each adapter come from {@link NotificationTemplate} (composed
@@ -156,7 +156,7 @@ public class ExternalChannelReconciler {
     private Mono<Void> processRow(NotificationChannel ch, NotificationOutbox row,
                                   AtomicReference<String> advanceTo,
                                   AtomicReference<Boolean> prefixIntact) {
-        // The moderator's channel directive (narrow-only) comes BEFORE the availability gate: an
+        // The moderator's channel directive comes BEFORE the availability gate: an
         // excluded channel records a terminal skip so its cursor moves on, instead of being
         // retried as "unavailable" forever.
         if (!NotifyChannelDirective.allows(row.payload(), ch.name(), enabledChannelNames())) {

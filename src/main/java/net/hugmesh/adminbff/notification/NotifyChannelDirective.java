@@ -26,15 +26,16 @@ import java.util.Set;
  * is a 400 at the request boundary, see {@code SuspensionRequest}.)
  *
  * <h3>What the directive can and cannot do</h3>
- * It only ever NARROWS the external fan-out of the rows it is stamped on:
+ * It selects a subset of the default external fan-out of the rows it is stamped on, and
+ * never adds a channel the default would not have:
  * <ul>
  *   <li>It never enables anything. A channel the directive names that is disabled or
  *       unavailable stays disabled or unavailable: the reconciler's
  *       {@code enabled()}/{@code available()} gates are applied exactly as before.</li>
- *   <li>{@code in-app} is the only guaranteed floor and is not an external channel: the
- *       in-app reconciler never reads the directive, so a restriction always reaches the
- *       user's own console whatever the directive says. No external delivery is
- *       guaranteed.</li>
+ *   <li>{@code in-app} is not an external channel: the in-app reconciler does not read the
+ *       directive, so the directive never changes whether the in-app row is attempted.
+ *       That reconciler keeps its own outcomes (retry, dead-letter, a suppressed verdict
+ *       recorded as a terminal skip); this class promises no delivery on any channel.</li>
  *   <li>A directive that names no ENABLED external channel (absent, empty, {@code in-app}
  *       only, only unknown names, or only disabled channels) is treated as absent and the
  *       default fan-out applies. This also means a moderator's "email only" choice with
@@ -45,8 +46,10 @@ import java.util.Set;
  *       unavailable (a stub transport, no SMTP, an unwired seam) or skips the row (email
  *       with no resolvable address), the excluded channels have already recorded a
  *       terminal {@code skipped}, so NO external channel delivers that row, and the skip is
- *       never retried when the named channel later recovers. Only in-app is certain.</li>
+ *       not retried when the named channel later recovers.</li>
  * </ul>
+ * OPEN DECISION (operator): whether an "email only" directive with email disabled should keep
+ * widening to the default fan-out, as pinned by the tests today, or deliver nothing external.
  */
 public final class NotifyChannelDirective {
 

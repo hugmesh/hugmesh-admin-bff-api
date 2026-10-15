@@ -31,7 +31,7 @@ import java.util.Objects;
  *       which of the already-enabled external channels may carry the {@code @system}
  *       notice. At most 8 well-formed tokens (a malformed token is a 400); a well-formed
  *       but unknown name is IGNORED with a warning, not rejected. Absent or empty keeps
- *       the default fan-out. It only narrows, never enables a gated channel; see
+ *       the default fan-out. It never enables a gated channel; see
  *       {@code NotifyChannelDirective}.</li>
  * </ul>
  */

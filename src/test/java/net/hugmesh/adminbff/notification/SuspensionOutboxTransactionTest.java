@@ -244,6 +244,24 @@ class SuspensionOutboxTransactionTest {
         assertThat(outboxCount()).isEqualTo(1);
     }
 
+    // ── First request wins: a re-ban's directive is dropped, the first row's is kept ──
+    @Test
+    void reBanWithADifferentDirective_keepsTheFirstRequestsDirective() {
+        NotificationOutboxRepository outbox = new NotificationOutboxRepository(net.hugmesh.adminbff.testutil.R2dbcRepos.of(db, net.hugmesh.adminbff.notification.NotificationOutboxR2dbcRepository.class));
+        SuspensionService svc = service(outbox, ticking());
+
+        AccessSuspension first = svc.suspend(AccessSuspension.ROLE_PROFILE, "zed",
+                null, "abuse", "mod", SCOPE, java.util.List.of("email")).block();
+        AccessSuspension again = svc.suspend(AccessSuspension.ROLE_PROFILE, "zed",
+                null, "abuse", "mod", SCOPE, java.util.List.of("matrix")).block();
+
+        assertThat(again.id()).isEqualTo(first.id());
+        assertThat(outboxCount()).isEqualTo(1);
+        NotificationOutbox row = outbox.findBySource(NotificationOutbox.SOURCE_ACCESS_SUSPENSION, first.id(),
+                NotificationOutbox.CATEGORY_ACCOUNT_RESTRICTION).block();
+        assertThat(row.payload()).contains("\"notify_channels\":[\"email\"]").doesNotContain("matrix");
+    }
+
     // ── DEDUP at the DB level: the UNIQUE(source_table, source_id, category) ─
     @Test
     void uniqueConstraint_blocksASecondOutboxRowForTheSameEffect() {
