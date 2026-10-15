@@ -3055,6 +3055,32 @@
         }
       }
     },
+    "/bff/internal/accounts/{id}/restart-onboarding" : {
+      "post" : {
+        "tags" : [ "internal-account-controller" ],
+        "operationId" : "restartOnboarding",
+        "parameters" : [ {
+          "name" : "id",
+          "in" : "path",
+          "required" : true,
+          "schema" : {
+            "type" : "string"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/AccountOut"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/bff/internal/accounts/{id}/complete" : {
       "post" : {
         "tags" : [ "internal-account-controller" ],
