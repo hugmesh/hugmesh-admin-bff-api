@@ -431,4 +431,65 @@ class ExternalChannelReconcilerTest {
         assertThat(deliveries.status(id, "matrix").block()).isEqualTo(NotificationDeliveryRepository.STATUS_SKIPPED);
         assertThat(deliveries.status(id, "email").block()).isEqualTo(NotificationDeliveryRepository.STATUS_SKIPPED);
     }
+
+    // ── one failing directive-skip record must not abort the rest of the batch ──
+
+    /** A delivery repository whose first matrix record() fails, either as an error signal
+     *  or as a synchronous throw; every later call goes to the real repository. */
+    private NotificationDeliveryRepository failingFirstMatrixRecord(boolean synchronous) {
+        java.util.concurrent.atomic.AtomicInteger calls = new java.util.concurrent.atomic.AtomicInteger();
+        return new NotificationDeliveryRepository(net.hugmesh.adminbff.testutil.R2dbcRepos.of(db,
+                net.hugmesh.adminbff.notification.NotificationDeliveryR2dbcRepository.class)) {
+            @Override
+            public Mono<Long> record(String outboxId, String channel, String status) {
+                if ("matrix".equals(channel) && calls.incrementAndGet() == 1) {
+                    if (synchronous) {
+                        throw new IllegalStateException("record blew up synchronously");
+                    }
+                    return Mono.error(new IllegalStateException("record failed"));
+                }
+                return super.record(outboxId, channel, status);
+            }
+        };
+    }
+
+    private long matrixSkips(String... ids) {
+        return java.util.Arrays.stream(ids)
+                .filter(id -> NotificationDeliveryRepository.STATUS_SKIPPED.equals(deliveries.status(id, "matrix").block()))
+                .count();
+    }
+
+    private void assertBadDirectiveSkipDoesNotAbortBatch(boolean synchronous) {
+        FakeChannel matrix = up("matrix");
+        FakeChannel email = up("email");
+        String a = seedWithDirective("brandx", "subject-a", List.of("email"));
+        String b = seedWithDirective("brandx", "subject-b", List.of("email"));
+        ExternalChannelReconciler r = new ExternalChannelReconciler(failingFirstMatrixRecord(synchronous),
+                cursor, List.of(matrix, email), new AlwaysLeader(), meters, 100, 3);
+
+        r.runOnce().block();
+
+        // Exactly the failed row stays unrecorded; the other row was still processed.
+        assertThat(matrixSkips(a, b)).isEqualTo(1);
+        assertThat(meters.counter("notification.external.row_errors", "channel", "matrix").count()).isEqualTo(1.0);
+        assertThat(meters.find("notification.external.channel_errors").counter()).isNull();
+        // The failed row broke the contiguous prefix, so the matrix cursor does not move past it.
+        assertThat(cursor.find("ext:matrix").block()).isNull();
+        // Email is independent and delivered both rows.
+        assertThat(email.sent).hasSize(2);
+
+        // The next tick retries only the unrecorded row.
+        r.runOnce().block();
+        assertThat(matrixSkips(a, b)).isEqualTo(2);
+    }
+
+    @Test
+    void directiveSkip_recordFailure_doesNotAbortTheBatch_otherRowsStillProcessed() {
+        assertBadDirectiveSkipDoesNotAbortBatch(false);
+    }
+
+    @Test
+    void directiveSkip_recordThrowingSynchronously_doesNotAbortTheBatch() {
+        assertBadDirectiveSkipDoesNotAbortBatch(true);
+    }
 }
