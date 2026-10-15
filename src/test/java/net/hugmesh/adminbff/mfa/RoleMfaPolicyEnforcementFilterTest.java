@@ -22,6 +22,7 @@ import org.springframework.test.web.reactive.server.WebTestClient;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
+import java.net.URI;
 import java.util.Collection;
 import java.util.List;
 
@@ -129,6 +130,105 @@ class RoleMfaPolicyEnforcementFilterTest {
                 .expectHeader().valueEquals(RoleMfaPolicyEnforcementFilter.SIGNAL_HEADER, "true");
     }
 
+    // ── spelling variants of the gated path: gate on what the router matches ───────────
+
+    /** Every one of these is a spelling of a privileged surface and must be classified gated. */
+    static final List<String> GATED_SPELLINGS = List.of(
+            "/bff/admin/mfa/role-policy",
+            "/bff/%61dmin/mfa/role-policy",
+            "/bff/%61%64%6d%69%6e/mfa/role-policy",
+            "/bff/admin/mfa/%72ole-policy",
+            "/bff/admin%2Fmfa/role-policy",
+            "/bff/admin%2fmfa%2frole-policy",
+            "/bff/admin%5Cmfa/role-policy",
+            "/bff/admin;x=1/mfa/role-policy",
+            "/bff/admin/mfa;y=2/role-policy",
+            "/bff/admin%3Bx=1/mfa/role-policy",
+            "/bff/mfa/../admin/mfa/role-policy",
+            "/bff/mfa/%2e%2e/admin/mfa/role-policy",
+            "/bff/mfa%2F..%2Fadmin/mfa/role-policy",
+            "/bff/./admin/mfa/role-policy",
+            "/bff//admin/mfa/role-policy",
+            "/bff/%2561dmin/mfa/role-policy",
+            "/bff/%252561dmin/mfa/role-policy",
+            "/bff/ADMIN/mfa/role-policy",
+            "/BFF/Admin/mfa/role-policy",
+            "/bff/SuperAdmin/anything",
+            "/bff/%73uperadmin/anything",
+            "/bff/admin",
+            "/bff/admin/",
+            "/bff/superadmin",
+            "/bff/superadmin/");
+
+    /** Spellings of routes that are NOT privileged surfaces: gating them would break MFA enrolment. */
+    static final List<String> UNGATED_SPELLINGS = List.of(
+            "/bff/mfa/challenge", "/bff/mfa/challenge/", "/bff/%6dfa/challenge", "/bff/administrator",
+            "/bff/%61dministrator", "/bff/me;x=1", "/bff/mfa/admin", "/bff/mfa/../me", "/bff", "/",
+            "/bff/internal/session/introspect", "/other/admin/x");
+
+    @Test
+    void everySpellingOfAPrivilegedSurface_isClassifiedGated() {
+        for (String path : GATED_SPELLINGS) {
+            assertThat(RoleMfaPolicyEnforcementFilter.gated(path)).as(path).isTrue();
+        }
+    }
+
+    @Test
+    void routesThatAreNotPrivilegedSurfaces_areNotGated() {
+        for (String path : UNGATED_SPELLINGS) {
+            assertThat(RoleMfaPolicyEnforcementFilter.gated(path)).as(path).isFalse();
+        }
+    }
+
+    @Test
+    void theDecisionIsMadeOnTheContextRelativePath() {
+        var withContext = org.springframework.http.server.RequestPath.parse("/app/bff/%61dmin/x", "/app");
+        assertThat(RoleMfaPolicyEnforcementFilter.gated(withContext)).isTrue();
+    }
+
+    /** The exploit input: an encoded letter routes to the controller, so it must be refused first. */
+    @Test
+    void aPercentEncodedLetterInTheSegment_isDenied403_andNeverReachesTheController() {
+        when(service.requiredForAny(anyString(), any())).thenReturn(Mono.just(true));
+
+        admin().get().uri(URI.create("/bff/%61dmin/mfa/role-policy")).exchange()
+                .expectStatus().isForbidden()
+                .expectHeader().valueEquals(RoleMfaPolicyEnforcementFilter.SIGNAL_HEADER, "true");
+        admin().get().uri(URI.create("/bff/admin/mfa/%72ole-policy")).exchange()
+                .expectStatus().isForbidden();
+
+        verify(service, never()).listEffective(anyString());
+    }
+
+    @Test
+    void noSpellingOfAGatedPath_everReachesTheController_forAPolicyRequiredPrincipalWithoutEvidence() {
+        when(service.requiredForAny(anyString(), any())).thenReturn(Mono.just(true));
+
+        for (String path : GATED_SPELLINGS) {
+            admin().get().uri(URI.create(path)).exchange()
+                    .expectStatus().value(code -> assertThat(code).as(path).isIn(400, 403, 404));
+        }
+
+        verify(service, never()).listEffective(anyString());
+    }
+
+    @Test
+    void aPolicyLookupThatYieldsNothing_failsClosed() {
+        when(service.requiredForAny(anyString(), any())).thenReturn(Mono.empty());
+
+        admin().get().uri(GUARDED).exchange().expectStatus().isForbidden();
+        verify(service, never()).listEffective(anyString());
+    }
+
+    @Test
+    void aFreshnessLookupThatYieldsNothing_failsClosed() {
+        when(service.requiredForAny(anyString(), any())).thenReturn(Mono.just(true));
+        when(mfaStepUp.isFresh("bff_empty")).thenReturn(Mono.empty());
+
+        admin().get().uri(GUARDED).cookie("bff_session", "bff_empty").exchange().expectStatus().isForbidden();
+        verify(service, never()).listEffective(anyString());
+    }
+
     // ── allowed ───────────────────────────────────────────────────────────────────
 
     @Test
@@ -201,8 +301,8 @@ class RoleMfaPolicyEnforcementFilterTest {
 
     @Test
     void gatedPrefixes_areExactlyTheTwoPrivilegedSurfaces() {
-        assertThat(RoleMfaPolicyEnforcementFilter.GATED_PREFIXES)
-                .containsExactly("/bff/admin/", "/bff/superadmin/");
+        assertThat(RoleMfaPolicyEnforcementFilter.GATED_SEGMENTS)
+                .containsExactlyInAnyOrder("admin", "superadmin");
         assertThat(RoleMfaPolicyEnforcementFilter.gated("/bff/admin/x")).isTrue();
         assertThat(RoleMfaPolicyEnforcementFilter.gated("/bff/superadmin/x")).isTrue();
         assertThat(RoleMfaPolicyEnforcementFilter.gated("/bff/administrator")).isFalse();

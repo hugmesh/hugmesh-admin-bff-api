@@ -14,6 +14,8 @@ import org.springframework.http.HttpCookie;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.http.server.PathContainer;
+import org.springframework.http.server.RequestPath;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.context.ReactiveSecurityContextHolder;
@@ -24,9 +26,14 @@ import org.springframework.web.server.WebFilter;
 import org.springframework.web.server.WebFilterChain;
 import reactor.core.publisher.Mono;
 
+import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.List;
+import java.util.Locale;
+import java.util.Set;
 
 /**
  * The first CALLER of {@link RoleMfaPolicyService#requiredForAny}: on the privileged admin
@@ -48,7 +55,8 @@ import java.util.List;
  * state the filter passes every request through (and says so once at startup).
  *
  * <h2>Where it denies, and where it must not</h2>
- * Only {@code /bff/admin/**} and {@code /bff/superadmin/**}. Everything a principal needs in
+ * Only {@code /bff/admin/**} and {@code /bff/superadmin/**}, recognised on the decoded,
+ * normalised path (see {@link #gated(RequestPath)}), not on the raw spelling. Everything a principal needs in
  * order to GET fresh MFA stays reachable: {@code /bff/mfa/**} (enrol + challenge),
  * {@code /bff/login}, {@code /bff/session}, {@code /bff/sessionOut}, {@code /bff/me}, the
  * internal surface the gateway introspects through. Gating any of those would make the
@@ -97,7 +105,10 @@ public class RoleMfaPolicyEnforcementFilter implements WebFilter {
     /** Stable machine-readable signal on a denial. */
     public static final String SIGNAL_HEADER = "X-Mfa-Required";
 
-    static final List<String> GATED_PREFIXES = List.of("/bff/admin/", "/bff/superadmin/");
+    /** The two privileged surfaces: the segment directly under {@code /bff}, lower case. */
+    static final Set<String> GATED_SEGMENTS = Set.of("admin", "superadmin");
+
+    private static final int MAX_DECODE_ROUNDS = 4;
 
     private static final Logger log = LoggerFactory.getLogger(RoleMfaPolicyEnforcementFilter.class);
 
@@ -123,7 +134,7 @@ public class RoleMfaPolicyEnforcementFilter implements WebFilter {
 
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, WebFilterChain chain) {
-        if (!mfaStepUp.enabled() || !gated(exchange.getRequest().getPath().value())) {
+        if (!mfaStepUp.enabled() || !gated(exchange.getRequest().getPath())) {
             return chain.filter(exchange);
         }
         return ReactiveSecurityContextHolder.getContext()
@@ -136,13 +147,69 @@ public class RoleMfaPolicyEnforcementFilter implements WebFilter {
                 .flatMap(allowed -> allowed ? chain.filter(exchange) : deny(exchange));
     }
 
-    static boolean gated(String path) {
-        for (String prefix : GATED_PREFIXES) {
-            if (path.startsWith(prefix)) {
-                return true;
+    /**
+     * Whether the request targets a gated surface, decided on the SAME decoded form the router
+     * matches rather than on the raw wire spelling. The raw path is never prefix-tested: a
+     * percent-encoded letter ({@code /bff/%61dmin/...}), a path parameter ({@code
+     * /bff/admin;x=1/...}), dot segments or repeated slashes all route to the guarded
+     * controllers while defeating a {@code startsWith} on the raw string.
+     *
+     * <p>The decision errs toward gating (fail CLOSED): segments are percent-decoded repeatedly
+     * until stable, an encoded or literal separator ({@code /} or {@code \}) inside a segment
+     * is treated as a separator, {@code .} / {@code ..} are resolved, empty segments are
+     * dropped and the comparison ignores case. Only the segment that follows {@code /bff} is
+     * compared, so {@code /bff/administrator} and {@code /bff/mfa/...} stay ungated.
+     */
+    static boolean gated(RequestPath path) {
+        List<String> segments = normalisedSegments(path.pathWithinApplication());
+        return segments.size() >= 2 && "bff".equalsIgnoreCase(segments.get(0))
+                && GATED_SEGMENTS.contains(segments.get(1).toLowerCase(Locale.ROOT));
+    }
+
+    /** Convenience for a raw request path with no context path. */
+    static boolean gated(String rawPath) {
+        return gated(RequestPath.parse(rawPath, null));
+    }
+
+    static List<String> normalisedSegments(PathContainer path) {
+        Deque<String> out = new ArrayDeque<>();
+        for (PathContainer.Element element : path.elements()) {
+            if (!(element instanceof PathContainer.PathSegment segment)) {
+                continue;
+            }
+            // valueToMatch() is percent-decoded once and has any ;params removed, exactly as
+            // the router sees it. Decode further so a double-encoded spelling cannot hide.
+            String value = segment.valueToMatch();
+            for (int i = 0; i < MAX_DECODE_ROUNDS && value.indexOf('%') >= 0; i++) {
+                String next = decodeQuietly(value);
+                if (next.equals(value)) {
+                    break;
+                }
+                value = next;
+            }
+            for (String part : value.split("[/\\\\]", -1)) {
+                int semi = part.indexOf(';');
+                String name = semi >= 0 ? part.substring(0, semi) : part;
+                if (name.isEmpty() || ".".equals(name)) {
+                    continue;
+                }
+                if ("..".equals(name)) {
+                    out.pollLast();
+                    continue;
+                }
+                out.addLast(name);
             }
         }
-        return false;
+        return List.copyOf(out);
+    }
+
+    private static String decodeQuietly(String value) {
+        try {
+            return URLDecoder.decode(value.replace("+", "%2B"), StandardCharsets.UTF_8);
+        } catch (IllegalArgumentException malformed) {
+            // Undecodable text cannot be a spelling of a gated name; compare it as it is.
+            return value;
+        }
     }
 
     /** {@code true} = let the request through. */
@@ -160,6 +227,8 @@ public class RoleMfaPolicyEnforcementFilter implements WebFilter {
         String domain = PrincipalDomain.of(auth, domainRegistry).domain();
         boolean carriedEvidence = mfaAuthority;
         return policies.requiredForAny(domain, roles)
+                // A lookup that yields nothing is an unknown answer: it must not read as "allow".
+                .defaultIfEmpty(Boolean.TRUE)
                 .flatMap(required -> {
                     if (!required || carriedEvidence) {
                         return Mono.just(Boolean.TRUE);
@@ -167,7 +236,8 @@ public class RoleMfaPolicyEnforcementFilter implements WebFilter {
                     String token = sessionToken(exchange);
                     return token == null
                             ? Mono.just(Boolean.FALSE)
-                            : mfaStepUp.isFresh(token).map(fresh -> Boolean.TRUE.equals(fresh));
+                            : mfaStepUp.isFresh(token).map(fresh -> Boolean.TRUE.equals(fresh))
+                                    .defaultIfEmpty(Boolean.FALSE);
                 });
     }
 
