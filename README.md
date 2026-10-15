@@ -250,7 +250,7 @@ flowchart TD
         BFF --> RECON["Single-writer reconcile loops<br/>(k8s Lease + resilience4j)"]
         BFF --> TENANCY["Tenancy: commons CasdoorAuthorities converter<br/>+ DomainRegistry + multi-issuer resolver"]
         BFF --> PHONE["MDM phone fleet<br/>ingest / superadmin registry / fleet-entitlements /<br/>public FLEET_ADMIN owner surface"]
-        BFF --> BACKSVC["Backing-services admin plane<br/>catalog + mode-intent (SUPERADMIN, ships dark)"]
+        BFF --> BACKSVC["Backing-services admin plane<br/>catalog + mode-intent + endpoint effector (SUPERADMIN, ships dark)"]
     end
 
     BFF --> PG[("config Postgres<br/>R2DBC + Liquibase")]
@@ -263,7 +263,6 @@ flowchart TD
         MFA["Casdoor MFA enforcement flip-on<br/>(substrate + step-up satisfiers shipped dark)"]:::planned
         EXTCH["Notification external channels<br/>Matrix / Akkoma / phpBB / email"]:::planned
         ASET["domain_registry → per-brand<br/>ArgoCD ApplicationSet (signed export shipped)"]:::planned
-        BACKEFF["Backing-services live effector<br/>(prune + managed re-point; Noop today)"]:::planned
     end
     BFF -.-> roadmap
 
@@ -899,10 +898,16 @@ tagged trivial/easy/docs-only-tier) joined with each service's current recorded 
 row + an outbox event in one tx) — tier-3 (docs-only) ids are refused (409). While
 `app.backing-services.enabled=false` (the default) the mutating verb 503s with a `dark:
 true` descriptor and writes nothing, but reads and the SUPERADMIN+step-up authorization
-run for real either way. **Intent-only, today:** the actual cluster prune / managed-
-endpoint re-point is a build-time generator act or a future reconciler; the
-`BackingServiceModeReconciler` skeleton that would drive it is wired but currently only
-calls a `NoopBackingServiceEffector` (logs only, no live effect) — see
+run for real either way. **Intent-only by default:** the live effector is merged
+(`Fabric8BackingServiceEffector`, PR #70) but ships dark. At defaults
+(`app.backing-services.effector.enabled=false`, env `APP_BACKING_SERVICES_EFFECTOR_ENABLED`)
+the `NoopBackingServiceEffector` is wired (logs only, no cluster dialled) and a recorded
+mode stays durable intent. With the flag `true`, the `BackingServiceModeReconciler` (its own
+flag, `app.backing-services.reconcile.enabled`, default `false`) hands each recorded row to
+the fabric8 effector, which merge-patches that service's two address keys into the
+`backing-service-endpoints` ConfigMap in the service's own namespace and stamps the ledger
+generation onto that service's consumer Deployments for a targeted rolling restart. The
+in-mesh workload **prune** is not part of that effector (see its class Javadoc) — see
 [Roadmap](#roadmap).
 
 ### Optional cluster services (`/bff/superadmin/optional-services`, ✅ shipped, actuation ships dark)
@@ -1331,10 +1336,14 @@ them as shipped.
   today records authoritative DB state and reports DEGRADED with the documented
   Headwind-console fallback reason. Live-cluster smoke of each leg is the remaining
   work, not new code.
-- 🔭 **Backing-services live effector** — the SUPERADMIN managed/self-hosted admin plane
-  (catalog + mode-intent recording + step-up) is shipped; the actual cluster prune /
-  managed-endpoint re-point is still a `NoopBackingServiceEffector` (logs only) pending
-  a follow-on generator/effector leg — today's mutation is genuinely intent-only.
+- ✅ **Backing-services live effector** — shipped, dark: `Fabric8BackingServiceEffector`
+  (PR #70, closes #9) does the per-namespace `backing-service-endpoints` ConfigMap
+  fan-out plus a targeted rolling restart of that service's consumers, behind
+  `app.backing-services.effector.enabled` (default `false` → `NoopBackingServiceEffector`)
+  and the reconcile loop's own `app.backing-services.reconcile.enabled` (default `false`).
+  Still open: pruning the in-mesh workload is not implemented by the effector, and flipping
+  the flag on a live cluster needs the generator-side ConfigMap, RBAC and consumer
+  conversion described in `application.yml` and `BackingServiceEffectorConfig`.
 - ✅🔭 **Platform roadmap (org-wide, dependent on this BFF) — two of three shipped, dark:**
   - ✅ **Egress VPN drop-in `.conf`** — shipped, both halves. This side: admin-bff PR #18
     (`be40e144`, on `main` as `d059af8`) added `VpnConfigSecretWriter` /
