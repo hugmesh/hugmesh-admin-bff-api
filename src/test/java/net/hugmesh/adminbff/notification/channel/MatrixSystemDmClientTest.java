@@ -14,7 +14,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * Contract tests for the real Matrix {@code @system} DM transport against
  * {@link FakeMatrixHomeserver} — a real HTTP server whose semantics were measured on a
- * tuwunel v1.7.0 container. The fake is the contract; {@code MatrixSystemDmClientLiveIT}
+ * tuwunel v1.7.0 container. The fake is the contract; {@code MatrixSystemDmClientLiveTest}
  * re-checks the same contract against a real homeserver when one is supplied.
  */
 class MatrixSystemDmClientTest {
@@ -231,6 +231,20 @@ class MatrixSystemDmClientTest {
         // the newest room is the one a restarted client will pick from m.direct
         JsonNode list = hs.accountData.get("m.direct").get("@alice:probe.test");
         assertThat(list.get(list.size() - 1).asText()).isEqualTo("!room2:probe.test");
+    }
+
+    @Test
+    void roomThatAnswers404OnSend_isReplacedWithAFreshDm() {
+        MatrixSystemDmClient c = client();
+        c.sendDirectMessage("alice", "one", "r1").block();
+        hs.deadRooms.add("!room1:probe.test");
+        hs.deadRoomStatus = 404;
+
+        ChannelOutcome out = c.sendDirectMessage("alice", "two", "r2").block();
+
+        assertThat(out).isEqualTo(ChannelOutcome.SENT);
+        assertThat(hs.createdRooms()).hasSize(2);
+        assertThat(hs.events.get(hs.events.size() - 1).room()).isEqualTo("!room2:probe.test");
     }
 
     @Test

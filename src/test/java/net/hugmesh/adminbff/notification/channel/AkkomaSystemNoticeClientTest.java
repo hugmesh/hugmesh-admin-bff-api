@@ -44,6 +44,7 @@ class AkkomaSystemNoticeClientTest {
     private final List<JsonNode> statuses = Collections.synchronizedList(new ArrayList<>());
     private final Set<String> accounts = Set.of("alice", "bob");
     private volatile int forcePostStatus = 0;
+    private volatile int forceLookupStatus = 0;
     private volatile boolean dropNextPostReply = false;
 
     @BeforeEach
@@ -70,7 +71,9 @@ class AkkomaSystemNoticeClientTest {
             reply(ex, 401, "{\"error\":\"The access token is invalid\"}");
         } else if (ex.getRequestMethod().equals("GET") && path.equals("/api/v1/accounts/lookup")) {
             String acct = ex.getRequestURI().getQuery().replace("acct=", "");
-            if (accounts.contains(acct)) {
+            if (forceLookupStatus != 0) {
+                reply(ex, forceLookupStatus, "{\"error\":\"forced\"}");
+            } else if (accounts.contains(acct)) {
                 reply(ex, 200, "{\"id\":\"1\",\"acct\":\"" + acct + "\"}");
             } else {
                 reply(ex, 404, "{\"error\":\"Record not found\"}");
@@ -177,6 +180,17 @@ class AkkomaSystemNoticeClientTest {
         forcePostStatus = 503;
         assertThat(client().sendDirectNotice("alice", "x", "r").block()).isEqualTo(ChannelOutcome.FAILED);
         assertThat(statuses).isEmpty();
+    }
+
+    @Test
+    void lookupErrors_areFailed_andPostNothing_evenThoughThePostWouldSucceed() {
+        for (int status : new int[] {500, 503}) {
+            forceLookupStatus = status;
+            assertThat(client().sendDirectNotice("alice", "x", "r").block())
+                    .as("lookup HTTP %d", status).isEqualTo(ChannelOutcome.FAILED);
+        }
+        assertThat(statuses).isEmpty();
+        assertThat(requests).extracting(Seen::method).containsOnly("GET");
     }
 
     @Test

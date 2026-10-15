@@ -60,6 +60,8 @@ final class FakeMatrixHomeserver implements AutoCloseable {
     final Map<String, String> roomInvitee = new LinkedHashMap<>();
     /** Rooms the system user can no longer post into (left / forgotten). */
     final Set<String> deadRooms = new HashSet<>();
+    /** Status a send into a dead room answers with (403 by default, 404 in one test; neither measured on a real homeserver). */
+    volatile int deadRoomStatus = 403;
     /** "METHOD path-suffix" -> status to answer with instead of handling the request. */
     final Map<String, Integer> forcedStatus = new HashMap<>();
     /** When true the next send commits the event and then drops the connection unanswered. */
@@ -150,7 +152,7 @@ final class FakeMatrixHomeserver implements AutoCloseable {
         String room = rest.substring(0, rest.indexOf("/send/"));
         String txn = rest.substring(rest.lastIndexOf('/') + 1);
         if (!roomInvitee.containsKey(room) || deadRooms.contains(room)) {
-            reply(ex, 403, "{\"errcode\":\"M_FORBIDDEN\",\"error\":\"not in room\"}");
+            reply(ex, deadRoomStatus, "{\"errcode\":\"M_FORBIDDEN\",\"error\":\"not in room\"}");
             return;
         }
         String key = room + "|" + txn;

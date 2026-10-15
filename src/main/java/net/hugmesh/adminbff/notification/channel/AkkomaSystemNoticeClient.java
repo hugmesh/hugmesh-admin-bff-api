@@ -44,8 +44,9 @@ import java.util.regex.Pattern;
  * <p><b>Verification status.</b> The Mastodon-API shapes used here are the standard ones, and
  * the fake server in the tests encodes them, but no Akkoma instance was available to run
  * them against. Treat the {@code lookup} 404 and the {@code Idempotency-Key} replay as
- * UNCONFIRMED against a real Akkoma until {@code AkkomaSystemNoticeClientLiveTest} has been
- * run against one. Ships dark: the bean exists only when {@code notify.akkoma.notice.wired=true}.
+ * UNCONFIRMED against a real Akkoma: no live test exists for Akkoma.
+ *
+ * <p>Ships dark: the bean exists only when {@code notify.akkoma.notice.wired=true}.
  */
 @SuppressFBWarnings(value = "EI_EXPOSE_REP2",
         justification = "Spring constructor injection: the container owns these singleton collaborators and they are never mutated by this class after construction; a defensive copy of a bean is meaningless (not caller-owned mutable data).")

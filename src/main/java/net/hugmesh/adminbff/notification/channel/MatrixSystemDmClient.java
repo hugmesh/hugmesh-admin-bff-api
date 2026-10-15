@@ -28,7 +28,7 @@ import java.util.regex.Pattern;
  * does NOT use the tuwunel admin-room command transport the suspend/lock seams are stuck
  * with ({@code HomeserverAdminClient}); a DM is an ordinary client action.
  *
- * <h3>Wire sequence (all verified against tuwunel v1.7.0, see the PR body)</h3>
+ * <h3>Wire sequence (profile, m.direct and txn-id behaviour measured on tuwunel v1.7.0, see the PR body; the dead-room 403/404 reply is not)</h3>
  * <ol>
  *   <li>{@code GET /_matrix/client/v3/account/whoami} — learns the {@code @system} user id,
  *       hence the homeserver name, so no server-name config can drift from the token.
@@ -58,6 +58,12 @@ import java.util.regex.Pattern;
  * {@link ChannelOutcome#FAILED} so the reconciler retries next tick. Only a blank/invalid
  * recipient or a recipient with no Matrix account is the terminal {@link ChannelOutcome#SKIPPED}.
  * The access token is never logged.
+ *
+ * <h3>Known limits</h3>
+ * In the gone-room self-heal the {@code m.direct} re-read that precedes the best-effort
+ * update treats any non-2xx reply (a 5xx as well as the 404 of a first write) as an empty
+ * map, so that update can replace the stored {@code m.direct} with a single entry. No test
+ * covers it.
  *
  * <p>Ships dark: this bean only exists when {@code notify.matrix.dm.wired=true}
  * (default false); the channel itself is separately gated by {@code notify.matrix.enabled}.
