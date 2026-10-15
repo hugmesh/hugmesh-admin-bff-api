@@ -23,13 +23,15 @@ import java.util.regex.Pattern;
  *
  * <h3>Wire sequence</h3>
  * <ol>
- *   <li>{@code GET /api/v1/accounts/lookup?acct={localpart}} — <b>existence probe</b>. A
- *       {@code direct} status that @-mentions a name nobody owns is still created and
- *       reaches no one, so without the probe a user with no Akkoma account would be
- *       recorded {@code sent}. 404 is the terminal {@link ChannelOutcome#SKIPPED}.</li>
+ *   <li>{@code GET /api/v1/accounts/lookup?acct={localpart}} — <b>existence probe</b>. Per the
+ *       Mastodon API documentation (not measured on Akkoma), a {@code direct} status that
+ *       @-mentions a name nobody owns is still created and reaches no one, so without the probe
+ *       a user with no Akkoma account would be recorded {@code sent}. 404 is the terminal
+ *       {@link ChannelOutcome#SKIPPED}.</li>
  *   <li>{@code POST /api/v1/statuses} with {@code visibility=direct} and a body that
  *       starts with the {@code @localpart} mention. A bare local name (no
- *       {@code @domain}) cannot federate, so the notice stays on this instance.</li>
+ *       {@code @domain}) is assumed, from the API documentation and not measured, to stay on
+ *       this instance.</li>
  * </ol>
  *
  * <h3>Idempotent retry</h3>

@@ -13,8 +13,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Contract tests for the real Matrix {@code @system} DM transport against
- * {@link FakeMatrixHomeserver} — a real HTTP server whose semantics were measured on a
- * tuwunel v1.7.0 container. The fake is the contract; {@code MatrixSystemDmClientLiveTest}
+ * {@link FakeMatrixHomeserver} — a real HTTP server whose semantics were partly measured on a
+ * tuwunel v1.7.0 container (its javadoc says which). The fake is the contract; {@code MatrixSystemDmClientLiveTest}
  * re-checks the same contract against a real homeserver when one is supplied.
  */
 class MatrixSystemDmClientTest {
@@ -185,6 +185,18 @@ class MatrixSystemDmClientTest {
     }
 
     @Test
+    void sendRateLimitedOrServerError_createsNoSecondRoom() {
+        // Only a 403/404 means "the room is gone". A 429 or 5xx must not make a new room per retry tick.
+        MatrixSystemDmClient c = client();
+        hs.forcedStatus.put("PUT /send/m.room.message/hm-r1", 429);
+        assertThat(c.sendDirectMessage("alice", "x", "r1").block()).isEqualTo(ChannelOutcome.FAILED);
+        assertThat(hs.count("POST", "createRoom")).isEqualTo(1);
+        hs.forcedStatus.put("PUT /send/m.room.message/hm-r2", 500);
+        assertThat(c.sendDirectMessage("alice", "x", "r2").block()).isEqualTo(ChannelOutcome.FAILED);
+        assertThat(hs.count("POST", "createRoom")).isEqualTo(1);
+    }
+
+    @Test
     void profileProbeServerError_isFailed_notSkipped() {
         // A 5xx on the probe is "unknown", not "no account": retry, never a terminal skip.
         hs.forcedStatus.put("GET /profile/@alice:probe.test", 500);
@@ -210,7 +222,7 @@ class MatrixSystemDmClientTest {
     }
 
     @Test
-    void homeserverDown_isFailed_neverThrows() {
+    void homeserverDown_isFailed() {
         MatrixSystemDmClient c = client();
         hs.close();
         assertThat(c.sendDirectMessage("alice", "x", "r").block()).isEqualTo(ChannelOutcome.FAILED);

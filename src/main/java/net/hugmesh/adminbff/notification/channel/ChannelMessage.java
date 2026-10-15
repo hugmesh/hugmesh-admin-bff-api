@@ -15,7 +15,7 @@ package net.hugmesh.adminbff.notification.channel;
  */
 public record ChannelMessage(String category, String title, String body, String deliveryKey) {
 
-    /** A message with no delivery key (no transport-level idempotency). */
+    /** A message with no delivery key. */
     public ChannelMessage(String category, String title, String body) {
         this(category, title, body, null);
     }

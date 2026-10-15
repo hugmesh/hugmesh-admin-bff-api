@@ -1122,17 +1122,19 @@ reconciler** engine that delivers in-app to the user-bff:
 >
 > | Channel | Channel gate | Real-transport gate | State |
 > |---|---|---|---|
-> | Matrix DM | `notify.matrix.enabled` | `notify.matrix.dm.wired` | `MatrixSystemDmClient`: standard client-server API as `@system` (whoami, profile existence probe, `createRoom`, `m.direct`, `send` with a txn id from the outbox row). Contract-tested against a fake whose semantics were measured on tuwunel v1.7.0, plus `MatrixSystemDmClientLiveTest` against a real homeserver. With `dm.wired=false` it stays on the stubbed admin seam. |
+> | Matrix DM | `notify.matrix.enabled` | `notify.matrix.dm.wired` | `MatrixSystemDmClient`: standard client-server API as `@system` (whoami, profile existence probe, `createRoom`, `m.direct`, `send` with a txn id from the outbox row). Contract-tested against a fake whose profile, `m.direct` and txn-id semantics were measured on tuwunel v1.7.0 (its forced 403/404/429/5xx replies were not), plus `MatrixSystemDmClientLiveTest` against a real homeserver. With `dm.wired=false` it stays on the stubbed admin seam. |
 > | Akkoma | `notify.akkoma.enabled` | `notify.akkoma.notice.wired` | `AkkomaSystemNoticeClient`: `accounts/lookup` probe + a `direct` status as `@system`, `Idempotency-Key` from the outbox row. Contract-tested against a fake built from the API docs; **not run against a real Akkoma**. |
 > | email | `notify.email.enabled` | none (SMTP is the transport) | `EmailChannel` is real, but it only resolves a recipient that already IS an email address; a Casdoor subject like `org/alice` is `skipped`. The profile-email lookup is not written (the auth-core `CasdoorAdminClient` has no email getter). |
 > | phpBB forum | `notify.forum.enabled` | `notify.forum.seam-wired` | Still a visible stub: the forum-bff send seam (`hugmesh/forum-api` phpBB extension) is not pinned. |
 >
 > Flipping a flag needs the `@system` token for that channel
 > (`notification.system-account.channel.<channel>.token`, Vault via ESO, empty default) and a
-> `@system` account that exists on that homeserver; nothing here creates the homeserver-side
-> account. A recipient with no account on the homeserver is recorded `skipped`, not `sent`.
+> `@system` account that exists on that homeserver; this change adds no code that creates the
+> homeserver-side account (whether the Casdoor `@system` user from `SystemAccountProvisioner`
+> yields one there was not established). A recipient with no account on the homeserver is recorded `skipped`, not `sent`.
 > A DM is an invite plus a message: the recipient is invited to a private room and the text is
-> in it once they accept (verified: after joining, both messages were there). Whether a given
+> in it once they accept (seen once in a manual run against a real homeserver; the live test
+> `MatrixSystemDmClientLiveTest` is skipped unless `MATRIX_LIVE_URL` is set and was not re-run in the last rounds). Whether a given
 > client surfaces a pending invite is not something this code controls or was checked for.
 
 ### Announcement surface feeds (`AnnouncementSurfaceController`)

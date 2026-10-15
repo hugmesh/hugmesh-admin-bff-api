@@ -78,8 +78,9 @@ public class MatrixSystemDmClient {
     private static final Logger log = LoggerFactory.getLogger(MatrixSystemDmClient.class);
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
-    /** The Matrix grammar for a user-id localpart (spec: historical user ids). Anything
-     *  else cannot be a tuwunel account, so it is a terminal SKIP, never a request. */
+    /** A conservative subset of the Matrix grammar for a user-id localpart (the spec's
+     *  historical user ids allow more; this was not checked against tuwunel). A value outside
+     *  it is a terminal SKIP, never a request. */
     private static final Pattern LOCALPART = Pattern.compile("[a-z0-9._=+-]+");
     private static final Pattern TXN_UNSAFE = Pattern.compile("[^A-Za-z0-9_-]");
     private static final int MAX_LOCALPART = 255;

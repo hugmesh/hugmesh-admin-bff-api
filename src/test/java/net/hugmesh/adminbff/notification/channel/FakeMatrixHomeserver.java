@@ -23,8 +23,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 /**
  * A real HTTP server (JDK {@code HttpServer}, loopback, ephemeral port) that plays a Matrix
  * homeserver for the contract tests: just the client-server endpoints the {@code @system}
- * DM transport uses, with the semantics MEASURED against a tuwunel v1.7.0 container on
- * 2026-10-14, including the surprising ones:
+ * DM transport uses. Part of its semantics was MEASURED against a tuwunel v1.7.0 container on
+ * 2026-10-14 (the list below says which, including the surprising ones); the forced 403/404/429/5xx
+ * replies were not measured:
  * <ul>
  *   <li>{@code createRoom} inviting an UNKNOWN local user still answers 200 with a room id,
  *       so only {@code GET /profile} (404 {@code M_NOT_FOUND}) reveals the account does not

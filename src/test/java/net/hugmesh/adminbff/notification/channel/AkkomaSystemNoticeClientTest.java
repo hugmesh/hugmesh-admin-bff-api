@@ -174,7 +174,7 @@ class AkkomaSystemNoticeClientTest {
     }
 
     @Test
-    void postErrors_areFailed_neverSent() {
+    void postErrors_areFailed() {
         forcePostStatus = 422;
         assertThat(client().sendDirectNotice("alice", "x", "r").block()).isEqualTo(ChannelOutcome.FAILED);
         forcePostStatus = 503;
@@ -194,7 +194,7 @@ class AkkomaSystemNoticeClientTest {
     }
 
     @Test
-    void serverDown_isFailed_neverThrows() {
+    void serverDown_isFailed() {
         AkkomaSystemNoticeClient c = client();
         server.stop(0);
         assertThat(c.sendDirectNotice("alice", "x", "r").block()).isEqualTo(ChannelOutcome.FAILED);
