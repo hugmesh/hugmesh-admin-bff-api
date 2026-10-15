@@ -31,14 +31,21 @@ import java.util.Set;
  *   <li>It never enables anything. A channel the directive names that is disabled or
  *       unavailable stays disabled or unavailable: the reconciler's
  *       {@code enabled()}/{@code available()} gates are applied exactly as before.</li>
- *   <li>{@code in-app} is the floor and is not an external channel: the in-app
- *       reconciler never reads the directive, so a restriction always reaches the user's
- *       own console whatever the directive says.</li>
- *   <li>Forced-on rule (account-restriction must reach the user): the directive may
- *       never cut the external fan-out to zero. It narrows only when it names at least
- *       one ENABLED external channel; a directive that names none (absent, empty,
- *       {@code in-app} only, only unknown names, or only disabled channels) is treated as
- *       absent and the default fan-out applies.</li>
+ *   <li>{@code in-app} is the only guaranteed floor and is not an external channel: the
+ *       in-app reconciler never reads the directive, so a restriction always reaches the
+ *       user's own console whatever the directive says. No external delivery is
+ *       guaranteed.</li>
+ *   <li>A directive that names no ENABLED external channel (absent, empty, {@code in-app}
+ *       only, only unknown names, or only disabled channels) is treated as absent and the
+ *       default fan-out applies. This also means a moderator's "email only" choice with
+ *       email disabled widens to the full default fan-out (matrix, akkoma, forum) rather
+ *       than narrowing it.</li>
+ *   <li>A directive that DOES name an enabled channel is not checked against that
+ *       channel's {@code available()} or recipient resolution. If every named channel is
+ *       unavailable (a stub transport, no SMTP, an unwired seam) or skips the row (email
+ *       with no resolvable address), the excluded channels have already recorded a
+ *       terminal {@code skipped}, so NO external channel delivers that row, and the skip is
+ *       never retried when the named channel later recovers. Only in-app is certain.</li>
  * </ul>
  */
 public final class NotifyChannelDirective {
@@ -66,7 +73,9 @@ public final class NotifyChannelDirective {
     /**
      * Canonicalise a raw request list: trimmed, lower-cased, {@code mastodon} mapped to
      * {@code akkoma}, de-duplicated, order-stable; blank and unknown names dropped (unknown
-     * ones with a warning). Never null; empty means "no directive".
+     * ones with a warning). Never null; empty means "no directive". (Over HTTP the request
+     * pattern already rejects capitals and spaces with a 400, so trimming and lower-casing
+     * only matter to direct callers of this method.)
      */
     public static List<String> normalize(List<String> raw) {
         if (raw == null || raw.isEmpty()) {
@@ -133,7 +142,7 @@ public final class NotifyChannelDirective {
     }
 
     /** Keep an attacker-chosen token from forging log lines. */
-    private static String sanitize(String s) {
+    static String sanitize(String s) {
         String t = s.length() > 64 ? s.substring(0, 64) : s;
         return t.replaceAll("[^A-Za-z0-9 _.:/-]", "?");
     }

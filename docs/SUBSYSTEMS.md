@@ -305,7 +305,7 @@ Both legs are best-effort and fail-**open**: a transport/parse error is logged a
 swallowed, never fails registration (the account + session are already durable by the
 time this runs).
 
-## Moderator channel directive (`notifyChannels`) — ✅ shipped, narrow-only
+## Moderator channel directive (`notifyChannels`) — draft (#137), narrow-only
 
 mod-bff sends the moderator's per-action channel choice as `notifyChannels` in the body of
 `POST /bff/admin/access-roles/{role}/{user}`. `SuspensionRequest.notifyChannels` accepts it,
@@ -313,8 +313,9 @@ mod-bff sends the moderator's per-action channel choice as `notifyChannels` in t
 it is stored on the `notification_outbox` row as the `notify_channels` array (no schema
 change: the payload is already a JSON string). `ExternalChannelReconciler` reads it per row.
 
-- **Names.** Canonicalised by `NotifyChannelDirective.normalize`: trimmed, lower-cased,
-  de-duplicated; `mastodon` (mod-bff's platform name) maps to the `akkoma` channel. A
+- **Names.** Canonicalised by `NotifyChannelDirective.normalize` (the HTTP pattern already
+  rejects capitals and spaces, so trimming and lower-casing only matter to direct callers):
+  trimmed, lower-cased, de-duplicated; `mastodon` (mod-bff's platform name) maps to the `akkoma` channel. A
   well-formed name outside `in-app`, `email`, `matrix`, `akkoma`, `mastodon`, `forum` is
   **ignored with a warning**, not rejected; a malformed token or more than 8 names is a 400.
 - **Absent or empty** (or nothing left after normalising): the payload is byte-for-byte what it
@@ -322,8 +323,16 @@ change: the payload is already a JSON string). `ExternalChannelReconciler` reads
 - **Narrow-only.** A channel the directive does not name records a terminal `skipped` delivery
   (no send, its cursor moves on). A named channel still has to pass its own `enabled()` and
   `available()` gates, so a directive never turns a channel on.
-- **Forced-on.** `account-restriction` must still reach the user: the in-app reconciler ignores
-  the directive entirely, and a directive that names no *enabled* external channel (only
-  `in-app`, only unknown names, only disabled channels) is treated as absent.
+- **Floor.** In-app is the only guaranteed channel: the in-app reconciler ignores the directive
+  entirely. A directive that names no *enabled* external channel (only `in-app`, only unknown
+  names, only disabled channels) is treated as absent, so e.g. "email only" with email disabled
+  widens to the full default external fan-out rather than narrowing it.
+- **No external guarantee.** A directive that names an enabled channel is not checked against
+  that channel's `available()` or recipient resolution. If the named channel is unavailable (stub
+  transport, no SMTP, unwired seam) or skips the row (email with no resolvable address), the
+  excluded channels have already recorded a terminal `skipped`, so no external channel delivers
+  that row and the skip is not retried when the named channel recovers.
+- **First request wins.** If an active suspension already exists, `suspend` returns it and a
+  new request's `notifyChannels` is dropped, as the reason is.
 - Not consumed: mod-bff's redundant `notifyEmailOnly` flag (its channel list already carries
   `email` + `in-app` in that case), and the lift path (mod-bff sends no directive there).

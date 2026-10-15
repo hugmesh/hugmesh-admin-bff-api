@@ -62,4 +62,10 @@ class NotifyChannelDirectiveTest {
         assertThat(NotifyChannelDirective.narrowedTo(payload("[1,null,\"email\"]"), ENABLED))
                 .isEqualTo(Set.of("email"));
     }
+
+    @Test
+    void sanitize_stripsLogForgingCharacters_andTruncates() {
+        assertThat(NotifyChannelDirective.sanitize("a\nb\r[ERROR] x\u0000y")).doesNotContain("\n", "\r", "\u0000", "[", "]");
+        assertThat(NotifyChannelDirective.sanitize("x".repeat(200))).hasSize(64);
+    }
 }

@@ -370,11 +370,13 @@ class ExternalChannelReconcilerTest {
     }
 
     @Test
-    void directiveNamingOnlyADisabledChannel_cannotSilenceTheUser_forcedOnSurvives() {
+    void directiveNamingOnlyADisabledChannel_isTreatedAsAbsent_widensToDefaultFanOut() {
         FakeChannel matrix = up("matrix");
         FakeChannel email = up("email");
         email.enabled = false;
-        // The mod asked for email only, but email is off: the restriction must still go out.
+        // The mod asked for email only (the low-noise choice), but email is off: the directive is
+        // treated as absent, so this WIDENS to the default fan-out (matrix) rather than narrowing.
+        // Pinned on purpose; see NotifyChannelDirective javadoc.
         seedWithDirective("brandx", "subject-forced", List.of("email"));
 
         reconciler(matrix, email).runOnce().block();
@@ -392,5 +394,41 @@ class ExternalChannelReconcilerTest {
 
         assertThat(akkoma.sent).hasSize(1);
         assertThat(email.sent).isEmpty();
+    }
+
+    // ── No external guarantee: only in-app is a floor ─────────────────────────
+
+    @Test
+    void directiveNamingAnEnabledButUnavailableChannel_sendsNothingExternal_andSkipIsTerminal() {
+        FakeChannel matrix = up("matrix");
+        FakeChannel email = up("email");
+        email.availableDomains = Set.of();                      // enabled, named, but unavailable
+        String id = seedWithDirective("brandx", "subject-zero-b", List.of("email"));
+        ExternalChannelReconciler r = reconciler(matrix, email);
+
+        r.runOnce().block();
+
+        assertThat(matrix.sent).isEmpty();                      // excluded
+        assertThat(email.sent).isEmpty();                       // named but unavailable
+        assertThat(deliveries.status(id, "matrix").block()).isEqualTo(NotificationDeliveryRepository.STATUS_SKIPPED);
+
+        email.availableDomains = Set.of("brandx");              // the named channel recovers
+        r.runOnce().block();
+        assertThat(email.sent).hasSize(1);
+        assertThat(matrix.sent).isEmpty();                      // the excluded skip is never retried
+    }
+
+    @Test
+    void directiveNamingEmail_whenEmailSkipsTheRow_noExternalChannelDelivers() {
+        FakeChannel matrix = up("matrix");
+        FakeChannel email = up("email");
+        email.outcome = ChannelOutcome.SKIPPED;                 // e.g. no resolvable address
+        String id = seedWithDirective("brandx", "subject-zero-a", List.of("in-app", "email"));
+
+        reconciler(matrix, email).runOnce().block();
+
+        assertThat(matrix.sent).isEmpty();
+        assertThat(deliveries.status(id, "matrix").block()).isEqualTo(NotificationDeliveryRepository.STATUS_SKIPPED);
+        assertThat(deliveries.status(id, "email").block()).isEqualTo(NotificationDeliveryRepository.STATUS_SKIPPED);
     }
 }

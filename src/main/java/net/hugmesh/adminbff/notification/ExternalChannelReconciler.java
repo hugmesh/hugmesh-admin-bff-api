@@ -52,9 +52,12 @@ import java.util.concurrent.atomic.AtomicReference;
  * {@link NotifyChannelDirective}). It is checked before the availability gate and only
  * ever NARROWS: a channel the directive does not name records a terminal {@code skipped}
  * delivery (no send); a named channel still goes through its own {@code enabled()} /
- * {@code available()} gates, so the directive never turns a gated channel on. It cannot
- * cut the fan-out to zero: a directive naming no enabled external channel is treated as
- * absent. The in-app reconciler ignores the directive entirely.
+ * {@code available()} gates, so the directive never turns a gated channel on. A
+ * directive naming no enabled external channel is treated as absent, but one that names an
+ * enabled channel is NOT checked against that channel's availability or recipient: if the
+ * named channel is unavailable or skips the row, the others have already recorded a terminal
+ * skip and no external channel delivers it (never retried). In-app, which ignores the
+ * directive entirely, is the only guaranteed floor.
  *
  * <h3>Neutral sender</h3>
  * The title/body handed to each adapter come from {@link NotificationTemplate} (composed

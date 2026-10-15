@@ -72,6 +72,8 @@ public class SuspensionService {
      * As {@link #suspend(String, String, Long, String, String, PrincipalDomain)}, carrying
      * the moderator's {@code notifyChannels} directive into the outbox row's payload (see
      * {@link NotifyChannelDirective}). An absent or empty list is today's behaviour.
+     * If an active suspension already exists this is the idempotent no-op and the new
+     * request's directive is dropped (first request wins, as for the reason).
      */
     public Mono<AccessSuspension> suspend(String role, String casdoorUser, Long ttlSeconds,
                                           String reason, String setBy, PrincipalDomain scope,
