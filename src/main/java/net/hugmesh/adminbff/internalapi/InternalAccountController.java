@@ -245,6 +245,14 @@ public class InternalAccountController {
             roles = roles == null ? null : Collections.unmodifiableList(new ArrayList<>(roles));
         }}
 
+    /**
+     * Body of {@code POST /accounts/ensure}. Like every {@code @RequestBody} record on this
+     * controller ({@link CreateSessionRequest}, {@link StampCustodyRequest}, {@link
+     * ExchangeRequest}, {@link RecordUsageRequest}) its {@code @NotBlank} constraints are
+     * ENFORCED only because the handler parameter is {@code @Valid}; the class-level
+     * {@code @Validated} does not reach a body record (hugmesh-admin-bff-api#107, pinned by
+     * {@code InternalAccountControllerBodyValidationWireTest}).
+     */
     public record EnsureAccountRequest(@NotBlank String provider, @NotBlank String handle) {
     }
 
@@ -354,7 +362,7 @@ public class InternalAccountController {
      * a new account each login). The non-casdoor (invite) providers pass through verbatim.
      */
     @PostMapping("/accounts/ensure")
-    public Mono<AccountOut> ensureAccount(@RequestBody EnsureAccountRequest body) {
+    public Mono<AccountOut> ensureAccount(@Valid @RequestBody EnsureAccountRequest body) {
         String provider = body.provider();
         if ("casdoor".equals(provider)) {
             String handle = subjectFromIdToken(body.handle());
@@ -714,7 +722,7 @@ public class InternalAccountController {
 
     /** Mint a new opaque {@code bff_} session for an account; 404 when the account is absent. */
     @PostMapping("/sessions")
-    public Mono<Map<String, String>> createSession(@RequestBody CreateSessionRequest body) {
+    public Mono<Map<String, String>> createSession(@Valid @RequestBody CreateSessionRequest body) {
         return accounts.account(body.accountId())
                 .switchIfEmpty(Mono.error(notFound("account")))
                 .flatMap(accounts::newSession)
@@ -807,7 +815,7 @@ public class InternalAccountController {
      */
     @PostMapping("/custody/stamp")
     @org.springframework.web.bind.annotation.ResponseStatus(HttpStatus.NO_CONTENT)
-    public Mono<Void> stampCustody(@RequestBody StampCustodyRequest body) {
+    public Mono<Void> stampCustody(@Valid @RequestBody StampCustodyRequest body) {
         LocalDateTime accessExpiresAt =
                 LocalDateTime.now().plusSeconds(body.expiresInSeconds() > 0 ? body.expiresInSeconds() : 3600);
         return accounts.stampCustody(body.sessionToken(), body.encAccess(), body.encRefresh(), accessExpiresAt)
@@ -837,7 +845,7 @@ public class InternalAccountController {
      * refusing the swap for a blocked account.
      */
     @PostMapping("/session/exchange")
-    public Mono<Map<String, String>> exchange(@RequestBody ExchangeRequest body) {
+    public Mono<Map<String, String>> exchange(@Valid @RequestBody ExchangeRequest body) {
         if (custodyCipher == null || !custodyCipher.isAvailable()) {
             return Mono.error(serviceUnavailable("custody disabled"));
         }

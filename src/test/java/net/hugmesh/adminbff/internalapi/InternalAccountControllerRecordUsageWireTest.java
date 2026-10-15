@@ -41,7 +41,8 @@ import static org.springframework.security.test.web.reactive.server.SecurityMock
  * only the web layer decides: the response STATUS (204, not the 200 a {@code Mono<Void>} would
  * otherwise render) and whether the record's {@code @NotBlank} constraints are ENFORCED. The
  * second is the load-bearing pin: with the class-level {@code @Validated} alone a {@code
- * @RequestBody} record's constraints are inert (sibling {@code ExchangeRequest} has that shape),
+ * @RequestBody} record's constraints are inert (the four sibling bodies were that way until #107;
+ * see {@link InternalAccountControllerBodyValidationWireTest}),
  * and a body with no {@code action} would reach {@code UsageService.moduleOf(null)} and NPE
  * into a 500 — so {@link InternalAccountController#recordUsage} takes the body {@code @Valid},
  * and this class goes RED if that annotation is removed. Real {@link SecurityConfig} and real
