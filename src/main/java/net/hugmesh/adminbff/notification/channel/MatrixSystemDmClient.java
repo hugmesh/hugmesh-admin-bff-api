@@ -50,14 +50,17 @@ import java.util.regex.Pattern;
  * The transaction id is derived from the outbox row id ({@link ChannelMessage#deliveryKey()}).
  * A reply lost after the homeserver accepted the event is retried by the reconciler with
  * the SAME txn id, and the homeserver returns the original event id instead of posting a
- * second copy (verified live: same txn twice, one event in the room). With no key a random
- * txn id is used (no dedupe).
+ * second copy (measured once on tuwunel v1.7.0: same txn twice, one event in the room).
  *
- * <h3>Never throws</h3>
- * Every failure (transport error, 4xx/5xx, malformed JSON, rate limit, timeout) resolves to
- * {@link ChannelOutcome#FAILED} so the reconciler retries next tick. Only a blank/invalid
- * recipient or a recipient with no Matrix account is the terminal {@link ChannelOutcome#SKIPPED}.
- * The access token is never logged.
+ * <h3>Outcome mapping</h3>
+ * Covered by tests (against the fake homeserver): a transport error (homeserver down), a
+ * bad or absent token, a 5xx on the profile probe or on {@code createRoom}, and a 429 or 5xx
+ * on the send each resolve to {@link ChannelOutcome#FAILED}, so the reconciler retries next
+ * tick. A blank/invalid recipient or a recipient with no Matrix account (profile 404) is the
+ * terminal {@link ChannelOutcome#SKIPPED}.
+ * <p>NOT covered by any test: a timeout, and a malformed or non-JSON body. A 2xx reply to
+ * the send PUT is trusted by its status alone: a body that does not parse is ignored, so a
+ * 200 with a non-JSON body (a captive portal page, say) is returned as {@link ChannelOutcome#SENT}.
  *
  * <h3>Known limits</h3>
  * In the gone-room self-heal the {@code m.direct} re-read that precedes the best-effort

@@ -159,7 +159,7 @@ class MatrixSystemDmClientTest {
         assertThat(hs.events.get(0).txn()).isEqualTo("hm-a_b_c_d_e");
     }
 
-    // ── failure mapping: always FAILED (retry), never SENT, never an exception ─
+    // ── failure mapping: the cases below resolve to FAILED (retry) ─
     @Test
     void wrongToken_isFailed_andStopsAtWhoami() {
         ChannelOutcome out = client("not-the-token").sendDirectMessage("alice", "x", "r").block();

@@ -35,11 +35,17 @@ import java.util.regex.Pattern;
  * <h3>Idempotent retry</h3>
  * The {@code Idempotency-Key} header is derived from the outbox row id
  * ({@link ChannelMessage#deliveryKey()}); Akkoma replays the first response for a repeated
- * key instead of posting a second status. With no key a random one is used.
+ * key instead of posting a second status (assumed from the API documentation; see below).
  *
- * <h3>Never throws; never lies</h3>
- * Every failure resolves to {@link ChannelOutcome#FAILED} (retry). Only a non-account is a
- * terminal SKIP. The token is never logged.
+ * <h3>Outcome mapping</h3>
+ * Covered by tests (against the fake server): a transport error (server down), a bad or
+ * absent token, a 5xx on the lookup, and a 422 or 503 on the post each resolve to
+ * {@link ChannelOutcome#FAILED} (retry). A lookup 404, or an invalid localpart, is the
+ * terminal SKIP.
+ * <p>NOT covered by any test: a timeout, and a malformed or non-JSON body. A 2xx reply to
+ * the post is trusted by its status alone: a body that does not parse is ignored, so a 200
+ * with a non-JSON body (a captive portal page, say) is returned as {@link ChannelOutcome#SENT}.
+ * The token is never logged.
  *
  * <p><b>Verification status.</b> The Mastodon-API shapes used here are the standard ones, and
  * the fake server in the tests encodes them, but no Akkoma instance was available to run

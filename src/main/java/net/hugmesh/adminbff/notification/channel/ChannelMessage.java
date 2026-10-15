@@ -9,7 +9,8 @@ package net.hugmesh.adminbff.notification.channel;
  *
  * <p>{@code deliveryKey} is the stable id of the outbox row being delivered (or null). A
  * transport that supports idempotent submission (the Matrix txn id) derives it from this,
- * so a retry after a lost reply cannot post the notification twice. It identifies a row,
+ * so a retry after a lost reply is deduplicated by a homeserver that honours the txn id
+ * (tested against the fake only). It identifies a row,
  * never a person, and never the acting mod/admin.
  */
 public record ChannelMessage(String category, String title, String body, String deliveryKey) {

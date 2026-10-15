@@ -94,7 +94,7 @@ public class MatrixChannel implements NotificationChannel {
         }
         String body = message.title() + "\n\n" + (message.body() == null ? "" : message.body());
         if (dm != null) {
-            // dm never throws; it maps every failure to FAILED and a missing account to SKIPPED.
+            // outcome mapping (FAILED to retry, SKIPPED for a missing account) is on MatrixSystemDmClient.
             return dm.sendDirectMessage(localpart, body, message.deliveryKey());
         }
         return homeserver.sendSystemDirectMessage(localpart, body)

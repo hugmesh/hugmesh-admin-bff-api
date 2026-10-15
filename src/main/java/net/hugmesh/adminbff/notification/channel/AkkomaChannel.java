@@ -83,7 +83,7 @@ public class AkkomaChannel implements NotificationChannel {
         }
         String body = message.title() + "\n\n" + (message.body() == null ? "" : message.body());
         if (notice != null) {
-            // notice never throws; it maps every failure to FAILED and a missing account to SKIPPED.
+            // outcome mapping (FAILED to retry, SKIPPED for a missing account) is on AkkomaSystemNoticeClient.
             return notice.sendDirectNotice(localpart, body, message.deliveryKey());
         }
         return akkoma.postLocalUserNotice(localpart, body)
