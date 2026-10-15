@@ -129,19 +129,22 @@ public class MatrixSystemDmClient {
     private Mono<ChannelOutcome> deliver(String token, String me, String mxid, String lp,
                                          String text, String txn) {
         return call(token, HttpMethod.GET, "/_matrix/client/v3/profile/{mxid}", null, mxid)
-                .flatMap(profile -> {
-                    if (profile.status() == 404) {
-                        log.debug("[notify-matrix] {} has no Matrix account; SKIPPED", mxid);
-                        return Mono.just(ChannelOutcome.SKIPPED);
-                    }
-                    if (!profile.ok()) {
-                        return failed("profile probe", lp, profile);
-                    }
-                    return roomFor(token, me, mxid)
-                            .flatMap(room -> sendInto(token, room, text, txn)
-                                    .flatMap(r -> retryInFreshRoomIfGone(token, me, mxid, room, text, txn, r)))
-                            .map(r -> r.ok() ? ChannelOutcome.SENT : failedOutcome("send", lp, r));
-                });
+                .flatMap(profile -> afterProfile(profile, token, me, mxid, lp, text, txn));
+    }
+
+    private Mono<ChannelOutcome> afterProfile(Reply profile, String token, String me, String mxid,
+                                              String lp, String text, String txn) {
+        if (profile.status() == 404) {
+            log.debug("[notify-matrix] {} has no Matrix account; SKIPPED", mxid);
+            return Mono.just(ChannelOutcome.SKIPPED);
+        }
+        if (!profile.ok()) {
+            return failed("profile probe", lp, profile);
+        }
+        return roomFor(token, me, mxid)
+                .flatMap(room -> sendInto(token, room, text, txn)
+                        .flatMap(r -> retryInFreshRoomIfGone(token, me, mxid, room, text, txn, r)))
+                .map(r -> r.ok() ? ChannelOutcome.SENT : failedOutcome("send", lp, r));
     }
 
     /** A cached/stored room we have left or that no longer exists answers 403/404 on send:
@@ -173,22 +176,24 @@ public class MatrixSystemDmClient {
         }
         return call(token, HttpMethod.GET,
                 "/_matrix/client/v3/user/{me}/account_data/m.direct", null, me)
-                .flatMap(r -> {
-                    if (r.status() == 404) {
-                        return createRoom(token, me, mxid, MAPPER.createObjectNode());
-                    }
-                    if (!r.ok()) {
-                        return Mono.<String>error(new IllegalStateException(
-                                "m.direct read HTTP " + r.status()));
-                    }
-                    JsonNode direct = r.body() == null ? MAPPER.createObjectNode() : r.body();
-                    String known = lastRoom(direct.get(mxid));
-                    if (known != null) {
-                        rooms.put(mxid, known);
-                        return Mono.just(known);
-                    }
-                    return createRoom(token, me, mxid, direct);
-                });
+                .flatMap(r -> afterDirectRead(r, token, me, mxid));
+    }
+
+    private Mono<String> afterDirectRead(Reply r, String token, String me, String mxid) {
+        if (r.status() == 404) {
+            return createRoom(token, me, mxid, MAPPER.createObjectNode());
+        }
+        if (!r.ok()) {
+            return Mono.<String>error(new IllegalStateException(
+                    "m.direct read HTTP " + r.status()));
+        }
+        JsonNode direct = r.body() == null ? MAPPER.createObjectNode() : r.body();
+        String known = lastRoom(direct.get(mxid));
+        if (known != null) {
+            rooms.put(mxid, known);
+            return Mono.just(known);
+        }
+        return createRoom(token, me, mxid, direct);
     }
 
     /**
@@ -202,35 +207,37 @@ public class MatrixSystemDmClient {
         req.put("preset", "trusted_private_chat");
         req.putArray("invite").add(mxid);
         return call(token, HttpMethod.POST, "/_matrix/client/v3/createRoom", req)
-                .flatMap(r -> {
-                    String room = r.ok() && r.body() != null && r.body().hasNonNull("room_id")
-                            ? r.body().get("room_id").asText() : null;
-                    if (room == null) {
-                        return Mono.<String>error(new IllegalStateException(
-                                "createRoom HTTP " + r.status()));
+                .flatMap(r -> afterCreate(r, token, me, mxid, direct));
+    }
+
+    private Mono<String> afterCreate(Reply r, String token, String me, String mxid, JsonNode direct) {
+        String room = r.ok() && r.body() != null && r.body().hasNonNull("room_id")
+                ? r.body().get("room_id").asText() : null;
+        if (room == null) {
+            return Mono.<String>error(new IllegalStateException(
+                    "createRoom HTTP " + r.status()));
+        }
+        // Cache FIRST: if the m.direct write below fails we must still reuse
+        // this room on the next send instead of creating a second one.
+        rooms.put(mxid, room);
+        Mono<JsonNode> current = direct != null ? Mono.just(direct)
+                : call(token, HttpMethod.GET,
+                        "/_matrix/client/v3/user/{me}/account_data/m.direct", null, me)
+                        .map(d -> d.ok() && d.body() != null ? d.body() : MAPPER.createObjectNode());
+        return current
+                .flatMap(cur -> call(token, HttpMethod.PUT,
+                        "/_matrix/client/v3/user/{me}/account_data/m.direct",
+                        withRoom(cur, mxid, room), me))
+                .doOnNext(w -> {
+                    if (!w.ok()) {
+                        log.warn("[notify-matrix] m.direct update HTTP {} (room still cached)", w.status());
                     }
-                    // Cache FIRST: if the m.direct write below fails we must still reuse
-                    // this room on the next send instead of creating a second one.
-                    rooms.put(mxid, room);
-                    Mono<JsonNode> current = direct != null ? Mono.just(direct)
-                            : call(token, HttpMethod.GET,
-                                    "/_matrix/client/v3/user/{me}/account_data/m.direct", null, me)
-                                    .map(d -> d.ok() && d.body() != null ? d.body() : MAPPER.createObjectNode());
-                    return current
-                            .flatMap(cur -> call(token, HttpMethod.PUT,
-                                    "/_matrix/client/v3/user/{me}/account_data/m.direct",
-                                    withRoom(cur, mxid, room), me))
-                            .doOnNext(w -> {
-                                if (!w.ok()) {
-                                    log.warn("[notify-matrix] m.direct update HTTP {} (room still cached)", w.status());
-                                }
-                            })
-                            .onErrorResume(e -> {
-                                log.warn("[notify-matrix] m.direct update failed (room still cached): {}", e.toString());
-                                return Mono.empty();
-                            })
-                            .thenReturn(room);
-                });
+                })
+                .onErrorResume(e -> {
+                    log.warn("[notify-matrix] m.direct update failed (room still cached): {}", e.toString());
+                    return Mono.empty();
+                })
+                .thenReturn(room);
     }
 
     /** {@code direct} plus {@code room} appended under {@code mxid}; the input is not mutated. */

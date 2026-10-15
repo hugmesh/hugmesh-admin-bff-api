@@ -89,22 +89,24 @@ public class AkkomaSystemNoticeClient {
                 ? UUID.randomUUID().toString()
                 : "hm-" + KEY_UNSAFE.matcher(deliveryKey).replaceAll("_");
         return lookup(token, lp)
-                .flatMap(r -> {
-                    if (r.status() == 404) {
-                        log.debug("[notify-akkoma] '{}' has no akkoma account; SKIPPED", lp);
-                        return Mono.just(ChannelOutcome.SKIPPED);
-                    }
-                    if (!r.ok()) {
-                        return Mono.just(failed("account lookup", lp, r.status()));
-                    }
-                    return post(token, lp, text, key)
-                            .map(p -> p.ok() ? ChannelOutcome.SENT : failed("status post", lp, p.status()));
-                })
+                .flatMap(r -> afterLookup(r, token, lp, text, key))
                 .onErrorResume(e -> {
                     log.warn("[notify-akkoma] notice to '{}' failed (retry next tick): {}", lp, e.toString());
                     return Mono.just(ChannelOutcome.FAILED);
                 })
                 .defaultIfEmpty(ChannelOutcome.FAILED);
+    }
+
+    private Mono<ChannelOutcome> afterLookup(Reply r, String token, String lp, String text, String key) {
+        if (r.status() == 404) {
+            log.debug("[notify-akkoma] '{}' has no akkoma account; SKIPPED", lp);
+            return Mono.just(ChannelOutcome.SKIPPED);
+        }
+        if (!r.ok()) {
+            return Mono.just(failed("account lookup", lp, r.status()));
+        }
+        return post(token, lp, text, key)
+                .map(p -> p.ok() ? ChannelOutcome.SENT : failed("status post", lp, p.status()));
     }
 
     private Mono<Reply> lookup(String token, String lp) {
