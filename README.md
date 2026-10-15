@@ -964,7 +964,8 @@ only when a generator checkout is present, so this repo's own CI still cannot ca
   preferred_username > sub) is stored as the handle so account.id is bounded and stable
   across logins (changelog 181-casdoor-provider, #160); other providers pass the handle
   verbatim. `GET /accounts/{id}`,
-  `POST /accounts/{id}/complete`, `GET /allowlist/{provider}/{handle}[?domain=…]`
+  `POST /accounts/{id}/complete`, `POST /accounts/{id}/restart-onboarding` (resets
+  `registrationComplete` to false; the mirror of `/complete`, #84), `GET /allowlist/{provider}/{handle}[?domain=…]`
   (the invite gate, **domain-scoped** — on this mTLS + `X-Internal-Token` surface the
   trusted in-cluster caller MAY name the brand, but only a brand this deployment serves: an
   unknown brand fails closed to `invited:false` (#47); omitting it falls back to the

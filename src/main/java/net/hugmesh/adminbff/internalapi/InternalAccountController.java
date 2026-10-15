@@ -650,6 +650,29 @@ public class InternalAccountController {
     }
 
     /**
+     * Send an account back to the start of onboarding ({@code registrationComplete} reset to
+     * {@code false}); 404 when absent. The exact mirror of {@link #complete}: the same lookup,
+     * the same 404, the same {@link AccountOut} read-back of the already-persisted localpart.
+     *
+     * <p>This is the verb {@code AuthController#registerGoogle} / {@code #registerDiscord}
+     * apply through {@code AccountStore.restartOnboarding} on this BFF's own register path. A
+     * caller on the user-bff side has no way to reach it without this route: a re-registration
+     * of an already-complete account would otherwise report {@code registrationComplete: true}
+     * and skip onboarding (hugmesh-admin-bff-api#84).
+     *
+     * <p>Gated like every sibling on {@code /bff/internal/**}: {@code ROLE_SERVICE} or the
+     * shared {@code X-Internal-Token} (see {@code SecurityConfig}). Like {@link #complete}, it
+     * only READS the localpart; it never resolves or writes one.
+     */
+    @PostMapping("/accounts/{id}/restart-onboarding")
+    public Mono<AccountOut> restartOnboarding(@PathVariable String id) {
+        return accounts.account(id)
+                .switchIfEmpty(Mono.error(notFound("account")))
+                .flatMap(accounts::restartOnboarding)
+                .flatMap(this::readWithLocalpart);
+    }
+
+    /**
      * A pure READ of the already-resolved localpart (never resolves/writes/collision-checks —
      * that only ever happens at {@link #withLocalpart}, an account-CREATION call site). Blank
      * when unset (see {@link AccountOut}'s doc for why that can legitimately happen and how a
