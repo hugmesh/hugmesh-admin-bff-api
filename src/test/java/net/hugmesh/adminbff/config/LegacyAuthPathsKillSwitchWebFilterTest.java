@@ -128,6 +128,29 @@ class LegacyAuthPathsKillSwitchWebFilterTest {
         assertThat(new LegacyAuthPathsKillSwitchWebFilter(env).switchedOff()).isEmpty();
     }
 
+    @Test
+    void theEnvVarNamesDocumentedInApplicationYmlReallyDriveTheSwitch() throws Exception {
+        // README and application.yml promise these two env names; a typo in the placeholder would
+        // ship a switch no operator can flip, and the other tests set the property directly.
+        var yaml = new org.springframework.boot.env.YamlPropertySourceLoader()
+                .load("application", new org.springframework.core.io.ClassPathResource("application.yml"));
+        var env = new org.springframework.core.env.StandardEnvironment();
+        env.getPropertySources().remove(org.springframework.core.env.StandardEnvironment.SYSTEM_ENVIRONMENT_PROPERTY_SOURCE_NAME);
+        env.getPropertySources().remove(org.springframework.core.env.StandardEnvironment.SYSTEM_PROPERTIES_PROPERTY_SOURCE_NAME);
+        yaml.forEach(env.getPropertySources()::addLast);
+        assertThat(new LegacyAuthPathsKillSwitchWebFilter(env).switchedOff()).as("yml defaults").isEmpty();
+
+        env.getPropertySources().addFirst(new org.springframework.core.env.MapPropertySource("fake-env", java.util.Map.of(
+                "APP_AUTH_LEGACY_PATHS_DISABLED", "POST /bff/login,GET /bff/me")));
+        assertThat(new LegacyAuthPathsKillSwitchWebFilter(env).switchedOff())
+                .containsExactlyInAnyOrder("POST /bff/login", "GET /bff/me");
+
+        env.getPropertySources().addFirst(new org.springframework.core.env.MapPropertySource("fake-env2", java.util.Map.of(
+                "APP_AUTH_LEGACY_PATHS_ENABLED", "false")));
+        assertThat(new LegacyAuthPathsKillSwitchWebFilter(env).switchedOff())
+                .isEqualTo(LegacyAuthPathsKillSwitchWebFilter.LEGACY_PATHS);
+    }
+
     // ── posture 2: switched OFF ─────────────────────────────────────────
 
     @Test
@@ -280,13 +303,14 @@ class LegacyAuthPathsKillSwitchWebFilterTest {
         var filter = new LegacyAuthPathsKillSwitchWebFilter(true, List.of("POST /bff/login"));
         appender.list.clear();
         MockServerWebExchange ex = MockServerWebExchange.from(MockServerHttpRequest.post("/bff/login")
-                .header("User-Agent", "evil\r\nINFO forged line " + "x".repeat(5000))
+                .header("User-Agent", "evil\r\nINFO forged line \u0085 \u2028 \u2029 " + "x".repeat(5000))
                 .build());
 
         run(filter, ex);
 
         String message = appender.list.get(0).getFormattedMessage();
-        assertThat(message).doesNotContain("\r").doesNotContain("\n");
+        assertThat(message).doesNotContain("\r").doesNotContain("\n")
+                .doesNotContain("\u0085").doesNotContain("\u2028").doesNotContain("\u2029");
         assertThat(message.length()).isLessThan(1000);
         assertThat(message).contains("(truncated)");
     }

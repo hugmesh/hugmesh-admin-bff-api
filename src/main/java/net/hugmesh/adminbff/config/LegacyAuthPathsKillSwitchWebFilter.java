@@ -67,9 +67,13 @@ import java.util.Set;
  * {@code LegacyAuthPathsKillSwitchWebFilterTest}.
  *
  * <h2>Where it sits</h2>
- * Ahead of the security chain and of the {@code bff_} session bridge, so a switched-off path
- * answers 404 to EVERY caller (anonymous included, where the security floor would otherwise
- * answer 401 and hide that the path was switched off) and costs no session lookup. After a real
+ * At {@code HIGHEST_PRECEDENCE + 5}: ahead of Spring Security's chain and of the session lookups
+ * ({@code +9} to {@code +11}), so a switched-off path answers 404 to EVERY caller (anonymous
+ * included, where the security floor would otherwise answer 401 and hide that the path was
+ * switched off) and costs no session lookup. It is tied at {@code +5} with auth-core's
+ * {@code SessionCookieWebFilter}, which only copies the cookie into the Authorization header and
+ * neither looks up a session nor rejects, so the order between the two does not change the
+ * answer; the test pins "before {@code +9}", not "first". After a real
  * deletion an anonymous caller of a protected path would be answered by the security floor
  * instead, so the 404 seen here is the observation signal, not a byte-exact preview of every
  * caller's post-deletion answer.
@@ -87,9 +91,12 @@ import java.util.Set;
  *
  * <h2>What is logged</h2>
  * One WARN per hit: the matched key, the socket peer, the claimed {@code X-Forwarded-For}
- * (client-controlled, so labelled as claimed) and the {@code User-Agent}. Header values are
- * stripped of control characters and truncated, so a caller cannot forge log lines. The
- * request path itself is NOT logged raw; the matched key (a fixed string) is.
+ * (client-controlled, so labelled as claimed) and the {@code User-Agent}. Header values have
+ * every control character (ASCII, C1 and the Unicode line/paragraph separators) replaced and
+ * are truncated, so a caller cannot start a new log line. There is NO rate limit: while a path
+ * is switched off, every anonymous hit writes one WARN, so a caller can raise log volume at
+ * the cost of one request per line. The request path itself is NOT logged raw; the matched key
+ * (a fixed string) is.
  */
 @Component
 @Order(Ordered.HIGHEST_PRECEDENCE + 5)
@@ -221,12 +228,12 @@ public class LegacyAuthPathsKillSwitchWebFilter implements WebFilter {
         return parts.get(0).toUpperCase(Locale.ROOT) + " " + parts.get(1);
     }
 
-    /** Header text safe to put in a log line: no control characters, bounded length. */
+    /** Header text safe to put in a log line: no control or line-separator characters, bounded length. */
     static String loggable(String value) {
         if (value == null) {
             return "-";
         }
-        String clean = value.replaceAll("\\p{Cntrl}", "?");
+        String clean = value.replaceAll("[\\p{Cc}\\u2028\\u2029]", "?");
         return clean.length() > MAX_LOGGED_HEADER_CHARS
                 ? clean.substring(0, MAX_LOGGED_HEADER_CHARS) + "...(truncated)"
                 : clean;
