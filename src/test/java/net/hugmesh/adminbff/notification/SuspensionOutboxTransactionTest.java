@@ -150,6 +150,39 @@ class SuspensionOutboxTransactionTest {
         assertThat(payload).doesNotContain("actor");
     }
 
+    // ── notify_channels directive (issue #93) reaches the outbox row ────────
+    @Test
+    void notifyChannels_reachTheOutboxPayload_asCanonicalArray_withoutLeakingTheActor() throws Exception {
+        NotificationOutboxRepository outbox = new NotificationOutboxRepository(net.hugmesh.adminbff.testutil.R2dbcRepos.of(db, net.hugmesh.adminbff.notification.NotificationOutboxR2dbcRepository.class));
+        SuspensionService svc = service(outbox, ticking());
+
+        AccessSuspension s = svc.suspend(AccessSuspension.ROLE_MASTODON, "gina",
+                null, "abuse", "mod-SECRET", SCOPE, java.util.List.of("mastodon", "email", "carrier-pigeon")).block();
+
+        NotificationOutbox row = outbox.findBySource(NotificationOutbox.SOURCE_ACCESS_SUSPENSION, s.id(),
+                NotificationOutbox.CATEGORY_ACCOUNT_RESTRICTION).block();
+        com.fasterxml.jackson.databind.JsonNode n = new com.fasterxml.jackson.databind.ObjectMapper().readTree(row.payload());
+        assertThat(n.get("notify_channels").toString()).isEqualTo("[\"akkoma\",\"email\"]");
+        assertThat(row.payload()).doesNotContain("mod-SECRET");
+    }
+
+    @Test
+    void absentOrEmptyNotifyChannels_leaveThePayloadExactlyAsToday() {
+        NotificationOutboxRepository outbox = new NotificationOutboxRepository(net.hugmesh.adminbff.testutil.R2dbcRepos.of(db, net.hugmesh.adminbff.notification.NotificationOutboxR2dbcRepository.class));
+        SuspensionService svc = service(outbox, ticking());
+
+        AccessSuspension a = svc.suspend(AccessSuspension.ROLE_PROFILE, "hank", 60L, "abuse", "mod", SCOPE).block();
+        AccessSuspension b = svc.suspend(AccessSuspension.ROLE_PROFILE, "ivy", 60L, "abuse", "mod", SCOPE,
+                java.util.List.of()).block();
+
+        String expectedA = AccountRestrictionPayload.build("hank", AccessSuspension.ROLE_PROFILE, 60L, "abuse");
+        String expectedB = AccountRestrictionPayload.build("ivy", AccessSuspension.ROLE_PROFILE, 60L, "abuse");
+        assertThat(outbox.findBySource(NotificationOutbox.SOURCE_ACCESS_SUSPENSION, a.id(),
+                NotificationOutbox.CATEGORY_ACCOUNT_RESTRICTION).block().payload()).isEqualTo(expectedA);
+        assertThat(outbox.findBySource(NotificationOutbox.SOURCE_ACCESS_SUSPENSION, b.id(),
+                NotificationOutbox.CATEGORY_ACCOUNT_RESTRICTION).block().payload()).isEqualTo(expectedB);
+    }
+
     // ── COUPLED ROLLBACK: an outbox-insert failure rolls the EFFECT back ────
     @Test
     void outboxInsertFailure_rollsBackTheEffect_noOrphanSuspension() {

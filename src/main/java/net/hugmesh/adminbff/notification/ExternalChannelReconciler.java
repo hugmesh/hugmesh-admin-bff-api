@@ -47,6 +47,15 @@ import java.util.concurrent.atomic.AtomicReference;
  * gating lives on the in-app path (user-bff prefs) and is layered on the external
  * channels by PR7's preference consult — see the PR7 follow-up.
  *
+ * <h3>Moderator channel directive (narrow-only)</h3>
+ * An outbox row may carry the moderator's {@code notify_channels} directive (see
+ * {@link NotifyChannelDirective}). It is checked before the availability gate and only
+ * ever NARROWS: a channel the directive does not name records a terminal {@code skipped}
+ * delivery (no send); a named channel still goes through its own {@code enabled()} /
+ * {@code available()} gates, so the directive never turns a gated channel on. It cannot
+ * cut the fan-out to zero: a directive naming no enabled external channel is treated as
+ * absent. The in-app reconciler ignores the directive entirely.
+ *
  * <h3>Neutral sender</h3>
  * The title/body handed to each adapter come from {@link NotificationTemplate} (composed
  * from the outbox payload's reason/ttl, NEVER the actor), so the {@code @system} voice is
@@ -144,6 +153,13 @@ public class ExternalChannelReconciler {
     private Mono<Void> processRow(NotificationChannel ch, NotificationOutbox row,
                                   AtomicReference<String> advanceTo,
                                   AtomicReference<Boolean> prefixIntact) {
+        // The moderator's channel directive (narrow-only) comes BEFORE the availability gate: an
+        // excluded channel records a terminal skip so its cursor moves on, instead of being
+        // retried as "unavailable" forever.
+        if (!NotifyChannelDirective.allows(row.payload(), ch.name(), enabledChannelNames())) {
+            return onTerminal(ch, row, advanceTo, prefixIntact,
+                    NotificationDeliveryRepository.STATUS_SKIPPED, "directive_skipped");
+        }
         // Gate on channel availability, render and send, then record the delivery outcome.
         return ch.available(row.domain())
                 .flatMap(available -> deliverIfAvailable(available, ch, row, advanceTo, prefixIntact))
@@ -154,6 +170,11 @@ public class ExternalChannelReconciler {
             prefixIntact.set(Boolean.FALSE);
             return Mono.empty();
         });
+    }
+
+    /** The names of the channels whose enabled() gate is on: the only channels a directive can name. */
+    private List<String> enabledChannelNames() {
+        return channels.stream().filter(NotificationChannel::enabled).map(NotificationChannel::name).toList();
     }
 
     /** Skip unavailable channels; otherwise resolve recipient + send + record outcome. */
