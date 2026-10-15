@@ -109,7 +109,14 @@ for the narrower ones):
   Kaniko in-cluster image builder, by contrast, is live).
 - Device-license Layer-A headscale enforcement needs a live control node to confirm
   which reported key is canonical — tracked in [`docs/CANONICAL-FP.md`](docs/CANONICAL-FP.md),
-  unresolved.
+  unresolved. The tailnet ACL policy's single writer is decided (decision 101 = B,
+  2026-09-23): this BFF's direct `PUT /api/v1/policy`, with headscale keeping the policy in
+  its database (`policy.mode: database`, headscale's own spelling; the BFF declares it in
+  `app.registry.headscale-acl.policy-mode`, default `database`). The node-side agent
+  (hugmesh-generator `gen-headscale-policy.sh`, run every 60 s by the `hugmesh-policy-sync`
+  cron in file mode) is retired as a writer, but its removal and the control node's switch
+  to database mode are generator work that has not landed, so the push still ships dark
+  (`app.registry.headscale-acl.enabled=false`).
 - The SSH-terminal dial's real, host-key-pinned `SshjDeviceSshChannelFactory` (sshj,
   no TOFU — refuses without an ACTIVE `device_ssh_dial` row and a matching pinned
   `host_key_fp`) **already exists and is tested** (merged 2026-06-18, #81). It ships
@@ -685,6 +692,23 @@ event path. See `src/main/resources/jobs/README.md` for the Job + RBAC + storage
   tailnet direct), per-domain and role-gated. `GET` (`hasAnyRole('ADMIN','SUPERADMIN')`)
   reads; mutations are `hasRole('SUPERADMIN')`. Secrets stay off-git (changelog
   `080-egress-vpn-configs`).
+- **`TorAdminController`** / **`TorInternalController`** — the admin-bff half of the node
+  Tor contract (#108; the node half is hugmesh-generator #583/#599). A tor-selected node
+  reports the onions it exports (`/var/lib/hugmesh/tor/hostname` and one
+  `/var/lib/hugmesh/tor/<slug>.hostname` per Tor domain) to
+  `POST /bff/internal/tor/onions` — the same `/bff/internal/**` SERVICE + mTLS channel
+  as the device-enrollment self-report, telemetry only. `GET /bff/admin/tor/nodes` lists
+  each node as `{primary, domains: {slug: onion}}`: a SUPERADMIN sees everything, a
+  domain ADMIN only their own domain's onion (the primary only for `default`) with node
+  identity and routing redacted. `PUT /bff/admin/tor/nodes/{fp}/upstream` (SUPERADMIN)
+  manages a node's `/etc/hugmesh/tor/upstream` (`null` = the agent's default
+  `127.0.0.1:443`), validated against the agent's own `host:port` rule. The per-domain
+  list `/etc/hugmesh/tor/domains` is the `tor-onion` key of `/bff/admin/domain-capabilities`
+  (unmanaged until a SUPERADMIN writes its `' global'` row). Both files reach the node
+  only through the signed per-node `GET /bff/admin/tor/export?node=` (canonical
+  `v1-tor` bytes + detached Ed25519, unknown fingerprint = empty body); the node-side
+  consumer that fetches it and writes the files is not built yet (changelog
+  `360-tor-node`).
 - **`StoragePoolController`** — `/bff/admin/device-storage-pools`
   (`hasAnyRole('ADMIN','SUPERADMIN')`): attach + register extra storage to a specific
   node (node-pinned local PV / local-path pool, FDE) so capacity-aware scheduling can
@@ -746,7 +770,32 @@ These surfaces are the unscoped infra control plane; an ADMIN never reaches them
   `AppProfileController` (`/bff/superadmin/app-profiles`), and
   `ServiceDeploymentController` (`/bff/superadmin/service-store/{domain}/deployments`, now
   in the `servicecatalog` package). Backed by changelogs `100-service-curation` /
-  `101-app-profile` / `102-service-deployment`. The deployment plane now exposes
+  `101-app-profile` / `102-service-deployment`.
+  > **`profileJson` is validated on save (#55).** `POST`/`PUT /bff/superadmin/app-profiles`
+  > check the body against `src/main/resources/schema/app-profile.schema.json` — a
+  > **byte-identical** copy of the Service Catalog console's
+  > `schemas/app-profile.schema.json` — before the write, so a direct API call or a stale
+  > tab cannot store a body the console would refuse. Sections `resources` / `roles` /
+  > `certs` / `exposure`, every object closed; a refusal is the ordinary
+  > `{"error":"validation failed","fields":{path:message}}` 400 with EVERY offending path
+  > named, in the same message vocabulary the console uses. Three things it deliberately
+  > does not do: it never rewrites a body, it never validates a READ (a row written before
+  > the schema existed is still returned in full — it is WARN-logged on the superadmin read
+  > and fixed in the console), and it does not RESOLVE the values (that effector is still
+  > open, catalog-ui#3). `AppProfileSchemaMirrorTest` guards the copy with TWO checks: a
+  > local sha256 pin (which makes an edit deliberate but proves nothing about the other
+  > repo — moving the schema and the literal together in one repo satisfies it, and that
+  > left both suites green with the files diverged when it was measured), and a **mirror
+  > check that reads the console's file and compares bytes**, which is the one that
+  > actually enforces byte-identity. The mirror check SKIPS when the console checkout is
+  > absent, so CI clones it and passes `-Dappprofile.schema.mirror.required=true` to turn
+  > that skip into a failure; locally a sibling checkout satisfies it
+  > (`-Dappprofile.schema.console.dir` overrides). Un-parked by operator decision 37
+  > (hugmesh-generator#347, 2026-09-17): `ROLE_<UPPER>` roles, strict on unknown keys,
+  > `exposure.mfaRequired` kept. The wire shape is UNCHANGED — `profileJson` is still a
+  > bounded string and `openapi.json` does not move.
+
+  The deployment plane now exposes
   `POST …/deployments/{id}/provision` (#147), which drives the **`AddServiceEffector`**
   (AddService → ArgoCD `create/deleteApplication`) and returns a `ProvisionOutcome`
   carrying an `effectorReal` flag (false when the injected `NoopArgoCdClient` ran, i.e.
@@ -843,7 +892,7 @@ operator-side (Headwind + `phone-wizard.sh`) half.
 `BackingServiceController` (`hasRole('SUPERADMIN')` + step-up
 `X-BackingServices-StepUp` on the mutating verb) is the admin web-UI half of the
 managed/self-hosted axis (cloud-deploy DESIGN I8-DESIGN, Lane M3): `GET ""` returns the
-closed `BackingServiceCatalog` (object-store / SMTP / Kafka / ClickHouse / federation
+closed `BackingServiceCatalog` (Velero object store `velero-objectstore` / SMTP / Kafka / ClickHouse / federation
 bundles / the per-service Postgres set / Cassandra / Harbor / Vault-KV / Vault-PKI, each
 tagged trivial/easy/docs-only-tier) joined with each service's current recorded mode;
 `PUT /{id}/mode` records a self-hosted/managed **mode intent** (a `backing_service_mode`
@@ -866,11 +915,10 @@ tree; this is the post-deploy lever.
 - `GET ""` — the CATALOGUE: **every slug the platform knows**, joined with its live
   `OptionalService` CR state, plus `toggleable` and — when false — a NAMED
   `notToggleableReason`. A slug the reconciler cannot action is reported as such rather than
-  listed as if it worked. Today `meshbridge` is `NOT_IN_CRD_ENUM` (it has an `apps/13a`
-  element and an `installed-services` key but no CRD `spec.slug` enum value, so the API
-  server rejects its CR outright) and `workloadConsole` / `headwind` /
-  `attestation-server` are `NO_APPLICATIONSET_ELEMENT` (ConfigMap greying booleans with no
-  Application to create or prune).
+  listed as if it worked. Today `workloadConsole` / `headwind` / `attestation-server` are
+  `NO_APPLICATIONSET_ELEMENT` (ConfigMap greying booleans with no Application to create or
+  prune). The other reason, `NOT_IN_CRD_ENUM` (a 13a element but no CRD `spec.slug` enum
+  value, so the API server rejects the CR outright), applies to no slug today.
 - `PUT /{slug}` — set `enabled` with an audit `reason`, written to the CR's
   `spec.enabled` / `spec.reason` / `spec.requestedBy` (the SUPERADMIN's JWT subject). The
   Lease-gated `OptionalServiceReconciler` converges it onto the `apps/13a` ApplicationSet
@@ -881,9 +929,11 @@ carrying the named reason, with **no write attempted**; the reconciler wired to 
 (`app.optional-services.reconcile.enabled=false`, the shipped default) → 503 `dark: true`
 with no write, while the catalogue stays readable and says `reconcilerEnabled: false`; an
 API-server rejection → 422. A managed slug whose `/data/<slug>` pointer is missing from
-`apps/16`'s `ignoreDifferences` (today: `character-forge`) toggles for real on the
-ApplicationSet side but has its greying mirror reverted by ArgoCD `selfHeal`, and says so in
-a `warnings` entry on both the catalogue row and the toggle response.
+`apps/16`'s `ignoreDifferences` toggles for real on the ApplicationSet side but has its
+greying mirror reverted by ArgoCD `selfHeal`, and says so in a `warnings` entry on both the
+catalogue row and the toggle response. No managed slug has that gap today (the generator's
+`apps/16` carries a pointer for all of them); `character-forge` raised the warning until
+#106 even though its pointer had already landed.
 
 `character-forge` used to be a **silently inert toggle**: the CRD enum accepted it, a seed CR
 shipped for it, it had a 13a element and a ConfigMap key — and it was missing from
@@ -893,6 +943,15 @@ the reconciler logged "unknown slug — ignoring", wrote neither target and skip
 the CRD enum, the seed CRs, the 13a elements, the ConfigMap booleans and the `apps/16`
 pointers from vendored copies of the generator manifests and fails when any two disagree — an
 empty derivation is a hard failure, not a free pass.
+
+That test is only as current as its vendored copies, and #106 is what that costs: `meshbridge`
+had the same silently inert shape (the generator's CRD enum and seed CRs carried it while the
+registry refused it as `NOT_IN_CRD_ENUM` and the reconciler ignored its CR) and the test
+stayed green, because the copies predated the generator change. The generator's slug-closure
+gate (`tests/scripts/test-optional-service-slug-closure.sh`), which parses
+`OptionalServiceRegistry.java` against the live manifests, caught it. `meshbridge` is now
+managed and the copies were refreshed. `OptionalServiceManifestDriftTest` flags a stale copy
+only when a generator checkout is present, so this repo's own CI still cannot catch one.
 
 ### Internal (service-to-service, mTLS-bounded)
 
@@ -999,6 +1058,16 @@ missing from the sections above; documenting them here to close that gap:
   (`app.device-terminal.enabled`, default false → `StubDeviceSshTransport`; and
   `app.device-terminal.dial.enabled`, default false → no real device is ever dialed even with the
   transport flag on, per `src/main/resources/application.yml:646-689`).
+  The remote-install exec client (`DesktopRemoteInstallController`) is a third flag on the same
+  trust path: `app.desktop.remote-install.enabled` (env `DESKTOP_REMOTE_INSTALL_ENABLED`, default
+  false → `NoopDesktopSshClient`) now has an explicit `application.yml` entry (it was only a
+  `matchIfMissing` bean condition, invisible to a reader and to a deployment manifest), and it
+  rides the same dial factory, so it dials nothing while `app.device-terminal.dial.enabled` is
+  false. The env names of all three are `DEVICE_TERMINAL_ENABLED`,
+  `DEVICE_TERMINAL_DIAL_ENABLED` and `DESKTOP_REMOTE_INSTALL_ENABLED`; the generator's cluster
+  manifest and compose stack set them to false. `DesktopRemoteInstallYamlDefaultTest` pins the
+  entries and their default. Go-live preconditions (security re-review, `device_ssh_dial` rows,
+  per-device dial-key mount): hugmesh-generator `docs/CLIENT-IMAGES.md` section 7.
 - **Cloud-backup v2 / Velero** (`net.hugmesh.adminbff.cloudbackup`) — a second,
   Velero-based backup plane distinct from the k8s-Job-templating `backup` package described under
   [`BackupController`](#admin-flow-hasroleadmin-base-bffadmin) above: `BackupAdminController`
@@ -1166,7 +1235,7 @@ use GitHub's built-in wiki) lives under [`docs/`](docs/README.md), starting from
 ## Build & run
 
 ```bash
-./mvnw test          # slice + converter tests (H2-backed, no external deps)
+./mvnw test          # full suite; needs a reachable Docker daemon (Testcontainers postgres:16-alpine)
 ./mvnw package       # build the executable jar
 docker build -t hugmesh-admin-bff-api .
 ```
@@ -1250,7 +1319,10 @@ them as shipped.
   per-brand ArgoCD `ApplicationSet` (namespaces / CA / Casdoor org / gateway / BFF / UI).
 - 🔭 **Device-license enforcement Layer-A** — the registry + signed export are shipped
   and the `device_enrollment` self-report channel exists; the live **headscale ACL push**
-  + `machine_key` auto-capture admission (needs a live control node) is deferred.
+  + `machine_key` auto-capture admission (needs a live control node) is deferred. The push
+  is the tailnet policy's only writer by decision 101 = B (headscale in `policy.mode:
+  database`; the node-side `gen-headscale-policy.sh` / `hugmesh-policy-sync` agent retired,
+  its removal still to land in hugmesh-generator).
 - 🔭 **MDM phone-lock real device push** — the control plane (ingest, fleet registry,
   management/lockout mutations, the fleet-entitlement gate) is shipped and tested; the
   three enforcement legs the aggregate (`DefaultPhoneLockEnforcer`) fans out to —
@@ -1263,8 +1335,27 @@ them as shipped.
   (catalog + mode-intent recording + step-up) is shipped; the actual cluster prune /
   managed-endpoint re-point is still a `NoopBackingServiceEffector` (logs only) pending
   a follow-on generator/effector leg — today's mutation is genuinely intent-only.
-- 🔭 **Platform roadmap (org-wide, dependent on this BFF):** egress VPN drop-in `.conf`,
-  per-node attached storage, and A/V via coturn/TURN (currently LAN-only, no TURN/SFU).
+- ✅🔭 **Platform roadmap (org-wide, dependent on this BFF) — two of three shipped, dark:**
+  - ✅ **Egress VPN drop-in `.conf`** — shipped, both halves. This side: admin-bff PR #18
+    (`be40e144`, on `main` as `d059af8`) added `VpnConfigSecretWriter` /
+    `Fabric8VpnConfigSecretWriter` + `VpnEgressLabeler`. Node side: hugmesh-generator
+    `a265cb89` (`specs/cluster/manifests/egress-vpn/secret-projector-daemonset.yaml`,
+    `specs/usr/sbin/hugmesh-vpn-reconcile`, `specs/usr/sbin/hugmesh-egress-vpn`), made
+    interoperable by `47f526de` (the shared `specs/cluster/egress-vpn-secret-contract.env`
+    contract + its guard test). Both sides ship behind default-off flags — a stock
+    deployment has this off, not absent.
+  - ✅ **Per-node attached storage** — shipped: hugmesh-generator `e8850c9c` + `ea059902`
+    (`specs/cluster/apps/13b-node-storage.yaml`, the graceful-degrade leg,
+    `docs/NODE-STORAGE.md`, `specs/usr/sbin/hugmesh-node-storage-reconcile` with an OpenRC
+    service + cron timer, baked by every `build-*-stage4.sh` builder).
+  - 🔭 **A/V — TURN is landed but still LAN-only by default.** hugmesh-generator `6ca52bc7`
+    added the coturn TURN/STUN optional service (RFC-5766 REST-credential mode); it is
+    **default-off** — a default build deploys no coturn and clients keep `iceServers: []`.
+    `1ec3f8f6` added `specs/cluster/manifests/coturn-public`, a further opt-in,
+    operator-deferred public-reachability overlay. So off-LAN A/V is reachable **by
+    configuration**, not absent — but a stock build is still LAN-only. **SFU stays
+    genuinely 🔭 roadmap**, with no landed work yet.
+
   These ride the surfaces above as they land.
 
   > **Note:** encrypted versioned backups (Velero + kopia/restic) and desktop app
@@ -1303,8 +1394,8 @@ platform repositories.
 
 Issues and pull requests are welcome. A few things that make a change easier to review:
 
-- **Tests first.** `./mvnw test` runs the H2-backed slice/converter suite with no
-  external dependencies — please keep it green and add coverage for new behavior.
+- **Tests first.** `./mvnw test` runs the full suite against a real Postgres started by Testcontainers
+  (`postgres:16-alpine`), so it needs a reachable Docker daemon — please keep it green and add coverage for new behavior.
 - **New surfaces ship dark.** Follow the pattern used throughout this codebase: gate a
   new integration or mutation behind a default-off config flag until it's been
   reviewed, rather than defaulting it on.

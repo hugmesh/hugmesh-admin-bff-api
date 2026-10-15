@@ -1,5 +1,7 @@
 package net.hugmesh.adminbff.radio;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 /**
@@ -53,6 +55,10 @@ public final class RadioExportModels {
             String nodeFp,
             long generation,
             List<RadioEntry> radios) {
+
+        public RadioExportBody {
+            radios = radios == null ? null : Collections.unmodifiableList(new ArrayList<>(radios));
+        }
     }
 
     /**

@@ -34,6 +34,11 @@ public record DomainRegistryRow(
         @Column("ca_provisioned") boolean caProvisioned,
         @Column("appset_registered") boolean appsetRegistered,
         @Column("last_reconciled_generation") long lastReconciledGeneration,
+        // Decision 29 (operator, 2026-09-17) — the three columns the generator's per-domain
+        // element schema needed and this row could not supply. Appended to changelog 012.
+        @Column("idp") String idp,
+        @Column("selinux_level") String selinuxLevel,
+        @Column("selinux_level_pg") String selinuxLevelPg,
         @Transient boolean isNew) implements Persistable<String> {
 
     @org.springframework.data.annotation.PersistenceCreator
@@ -41,10 +46,27 @@ public record DomainRegistryRow(
                              String nsPrefix, String casdoorOrg, String meshTag, boolean enabled,
                              Instant createdAt, String createdBySubject, Instant updatedAt,
                              boolean caProvisioned, boolean appsetRegistered,
+                             long lastReconciledGeneration, String idp, String selinuxLevel,
+                             String selinuxLevelPg) {
+        this(id, clusterDomain, brand, org, caRef, nsPrefix, casdoorOrg, meshTag, enabled,
+                createdAt, createdBySubject, updatedAt, caProvisioned, appsetRegistered,
+                lastReconciledGeneration, idp, selinuxLevel, selinuxLevelPg, false);
+    }
+
+    /**
+     * Pre-decision-29 15-arg shape (band-190 columns, no idp / MCS pair). Defaults {@code idp}
+     * to the {@link DomainIdp#SUPERDOMAIN} floor and leaves the MCS pair UNALLOCATED
+     * ({@code null}) — never a guessed category, because a wrong category silently co-locates
+     * two workloads (docs/SECURITY.md §3) while a missing one fails closed at provisioning.
+     */
+    public DomainRegistryRow(String id, String clusterDomain, String brand, String org, String caRef,
+                             String nsPrefix, String casdoorOrg, String meshTag, boolean enabled,
+                             Instant createdAt, String createdBySubject, Instant updatedAt,
+                             boolean caProvisioned, boolean appsetRegistered,
                              long lastReconciledGeneration) {
         this(id, clusterDomain, brand, org, caRef, nsPrefix, casdoorOrg, meshTag, enabled,
                 createdAt, createdBySubject, updatedAt, caProvisioned, appsetRegistered,
-                lastReconciledGeneration, false);
+                lastReconciledGeneration, DomainIdp.SUPERDOMAIN, null, null, false);
     }
 
     /**
@@ -57,7 +79,8 @@ public record DomainRegistryRow(
                              String nsPrefix, String casdoorOrg, String meshTag, boolean enabled,
                              Instant createdAt, String createdBySubject, Instant updatedAt) {
         this(id, clusterDomain, brand, org, caRef, nsPrefix, casdoorOrg, meshTag, enabled,
-                createdAt, createdBySubject, updatedAt, false, false, 0L, false);
+                createdAt, createdBySubject, updatedAt, false, false, 0L,
+                DomainIdp.SUPERDOMAIN, null, null, false);
     }
 
     /** Full 13-arg shape WITH an explicit {@code isNew} (the create-path INSERT marker),
@@ -67,13 +90,15 @@ public record DomainRegistryRow(
                              Instant createdAt, String createdBySubject, Instant updatedAt,
                              boolean isNew) {
         this(id, clusterDomain, brand, org, caRef, nsPrefix, casdoorOrg, meshTag, enabled,
-                createdAt, createdBySubject, updatedAt, false, false, 0L, isNew);
+                createdAt, createdBySubject, updatedAt, false, false, 0L,
+                DomainIdp.SUPERDOMAIN, null, null, isNew);
     }
 
     DomainRegistration toDomain() {
         return new DomainRegistration(id, clusterDomain, brand, org, caRef, nsPrefix,
                 casdoorOrg, meshTag, enabled, createdAt, createdBySubject, updatedAt,
-                caProvisioned, appsetRegistered, lastReconciledGeneration);
+                caProvisioned, appsetRegistered, lastReconciledGeneration,
+                idp, selinuxLevel, selinuxLevelPg);
     }
 
     @Override

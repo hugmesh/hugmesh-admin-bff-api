@@ -1,5 +1,7 @@
 package net.hugmesh.adminbff.forum;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -30,6 +32,10 @@ import java.util.Map;
  * config-only.
  */
 public record ForumOutcome(String result, Map<String, Object> payload) {
+
+    public ForumOutcome {
+        payload = payload == null ? null : Collections.unmodifiableMap(new LinkedHashMap<>(payload));
+    }
 
     private static final Map<String, Object> EMPTY = Map.of();
 

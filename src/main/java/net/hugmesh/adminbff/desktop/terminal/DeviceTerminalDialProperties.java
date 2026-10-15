@@ -46,11 +46,16 @@ public class DeviceTerminalDialProperties {
     private String keyMountPath = "/var/run/secrets/device-ssh-dial";
 
     /** The file within EACH per-device Secret mount that holds the PEM/OpenSSH private dial key.
+     *  DEFAULT {@code dial_private_key} (decision 73d = A, hugmesh-admin-bff-api#53): the key name
+     *  every producer in the tree writes — the per-device {@code device-ssh-<deviceId>} Secret of
+     *  hugmesh-generator's device-ssh ExternalSecret template and the build Job's own dial-key
+     *  mount ({@code docker/build-image.sh}). So with no {@code DEVICE_TERMINAL_DIAL_KEY_FILE} the
+     *  dial reads {@code <keyMountPath>/<k8s_secret_name>/dial_private_key}.
      *  ONE plain file name: no separator, never {@code .}/{@code ..} — a value that climbs out of
-     *  the per-device directory (e.g. {@code ../id_dial}, which points back at the retired
-     *  mesh-wide file) is refused at startup (ERROR) and on every dial
+     *  the per-device directory (e.g. {@code ../dial_private_key}, which would point back at a
+     *  retired mesh-wide file at the mount root) is refused at startup (ERROR) and on every dial
      *  ({@code SshjDeviceSshChannelFactory.keyFileRefusal}). */
-    private String keyFile = "id_dial";
+    private String keyFile = "dial_private_key";
 
     /** The TCP port the BFF dials the mesh node's sshd on. */
     private int port = 22;

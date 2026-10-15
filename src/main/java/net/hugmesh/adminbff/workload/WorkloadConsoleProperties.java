@@ -1,5 +1,6 @@
 package net.hugmesh.adminbff.workload;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 import java.util.ArrayList;
@@ -28,7 +29,9 @@ import java.util.Set;
  * </ul>
  * {@link #execReadOnlyCommands} is the read-only exec command allowlist (the safe
  * non-TTY exec variant); the full interactive TTY is gated by the danger tier + step-up +
- * Lease + device/SSH-license, not by this list.
+ * Lease + device/SSH-license, not by this list. A one-token entry is a BARE NAME
+ * (any arguments); a multi-token entry is a PINNED ARGV matched against the WHOLE
+ * requested argv — see {@link #execReadOnlyAllowed}.
  */
 @ConfigurationProperties(prefix = "app.workload-console")
 public class WorkloadConsoleProperties {
@@ -44,7 +47,11 @@ public class WorkloadConsoleProperties {
     /** Curated (namespace, workload, port) port-forward triples (DECISION 2). */
     private List<PortForwardTarget> portForwardAllowlist = new ArrayList<>();
 
-    /** The read-only exec command allowlist (first token matched). */
+    /** The read-only exec command allowlist, in the generator's two forms: a BARE NAME
+     *  ({@code "ls"}) licenses that command with any arguments; a PINNED ARGV, its tokens
+     *  joined by single spaces ({@code "ps -e"} is {@code [ps, -e]}), licenses exactly that
+     *  whole argv (see {@link #execReadOnlyAllowed}). EMPTY by default (fail-closed:
+     *  nothing is exec-able). */
     private List<String> execReadOnlyCommands = new ArrayList<>();
 
     /** Default grant TTL in hours (DECISION 4/6, ~24h). */
@@ -62,27 +69,27 @@ public class WorkloadConsoleProperties {
     }
 
     public List<String> getNamespaceAllowlist() {
-        return namespaceAllowlist;
+        return List.copyOf(namespaceAllowlist);
     }
 
     public void setNamespaceAllowlist(List<String> namespaceAllowlist) {
-        this.namespaceAllowlist = namespaceAllowlist == null ? new ArrayList<>() : namespaceAllowlist;
+        this.namespaceAllowlist = namespaceAllowlist == null ? new ArrayList<>() : new ArrayList<>(namespaceAllowlist);
     }
 
     public List<PortForwardTarget> getPortForwardAllowlist() {
-        return portForwardAllowlist;
+        return List.copyOf(portForwardAllowlist);
     }
 
     public void setPortForwardAllowlist(List<PortForwardTarget> portForwardAllowlist) {
-        this.portForwardAllowlist = portForwardAllowlist == null ? new ArrayList<>() : portForwardAllowlist;
+        this.portForwardAllowlist = portForwardAllowlist == null ? new ArrayList<>() : new ArrayList<>(portForwardAllowlist);
     }
 
     public List<String> getExecReadOnlyCommands() {
-        return execReadOnlyCommands;
+        return List.copyOf(execReadOnlyCommands);
     }
 
     public void setExecReadOnlyCommands(List<String> execReadOnlyCommands) {
-        this.execReadOnlyCommands = execReadOnlyCommands == null ? new ArrayList<>() : execReadOnlyCommands;
+        this.execReadOnlyCommands = execReadOnlyCommands == null ? new ArrayList<>() : new ArrayList<>(execReadOnlyCommands);
     }
 
     public long getGrantTtlHours() {
@@ -93,10 +100,14 @@ public class WorkloadConsoleProperties {
         this.grantTtlHours = grantTtlHours;
     }
 
+    @SuppressFBWarnings(value = "EI_EXPOSE_REP",
+            justification = "Spring Boot @ConfigurationProperties nested-bean binding: the binder must reach the live nested K8s bean through this getter to populate app.workload-console.k8s.* ; a copy would silently drop the bound values.")
     public K8s getK8s() {
         return k8s;
     }
 
+    @SuppressFBWarnings(value = "EI_EXPOSE_REP2",
+            justification = "Spring Boot @ConfigurationProperties setter: the bound nested K8s bean is stored as-is (configuration holder, not caller-owned mutable data).")
     public void setK8s(K8s k8s) {
         this.k8s = k8s == null ? new K8s() : k8s;
     }
@@ -122,11 +133,96 @@ public class WorkloadConsoleProperties {
         return false;
     }
 
-    /** True iff the first command token is on the read-only exec allowlist. */
+    /**
+     * True iff {@code command} is licensed by one allowlist entry, under the generator's TWO
+     * deliberate entry forms (hugmesh-generator
+     * {@code specs/cluster/manifests/admin-bff-api/workload-console-patch.yaml}, env
+     * {@code WORKLOAD_CONSOLE_EXEC_READONLY}: "BARE NAME ONLY for a command that holds the
+     * property under ARBITRARY argv. PINNED ARGV an exact, whole-argv safe form"):
+     * <ul>
+     *   <li><b>BARE NAME</b> — a ONE-token entry ({@code "ls"}, {@code "uname"}) licenses
+     *       its command with ARBITRARY arguments: the head token must equal the entry, the
+     *       rest is free. The generator admits a bare name only after auditing that command
+     *       under arbitrary argv (its {@code tests/workload-console/exec_argv_property.py}
+     *       re-derives that on every run), so {@code [ls, -la, /]} is licensed by
+     *       {@code "ls"} — narrowing it here would silently drop a capability the curation
+     *       deliberately kept;</li>
+     *   <li><b>PINNED ARGV</b> — a MULTI-token entry ({@code "ps -e"}, {@code "df -h"},
+     *       {@code "stat -t"}, {@code "date -u"}) licenses EXACTLY that argv: same length,
+     *       same tokens, same order, case-sensitive. No prefix match ({@code "ps -e"} does
+     *       not license {@code [ps, -e, eww]}), and no head match ({@code [ps]} or
+     *       {@code [ps, eww]} is refused when only {@code "ps -e"} is listed). Pinning is how
+     *       the generator lists a command whose bare form is NOT argument-safe
+     *       ({@code ps eww} prints every process's environment, {@code date -f FILE} echoes
+     *       FILE's lines, {@code df --output=… <path>} is a mount-topology oracle).</li>
+     * </ul>
+     *
+     * <p><b>Why not the first token alone.</b> This used to be
+     * {@code execReadOnlyCommands.contains(command.get(0))}. That honoured the BARE form but
+     * made every PINNED form unreachable: the real argv {@code [ps, -e]} has the head
+     * {@code ps}, which is not an entry, and the only argv whose head equalled
+     * {@code "ps -e"} was the one-token {@code [ps -e]} — a program literally named
+     * "ps -e", not {@code ps}. (The generator's cross-repo TODO asked for exactly this fix:
+     * "match the WHOLE argv … not command.get(0)".)
+     *
+     * <p>No shell semantics and no normalisation on the {@code command} side: nothing is
+     * unquoted, split, globbed, trimmed, case-folded or path-resolved. So {@code [ps -e]}
+     * (ONE token containing a space), {@code [/bin/ps, -e]}, {@code [ps, -e;env]},
+     * {@code [ls;env]} and {@code [sh, -c, ps -e]} are refused. A bare name's free
+     * arguments are passed on as argv elements ({@code Fabric8WorkloadClient} hands the
+     * list over as a {@code String[]}, never to a shell), so a metacharacter there is just a
+     * file-name argument to the audited command. A MALFORMED entry licenses nothing (see
+     * {@link #entryArgv}); a null/empty command, or one whose head is null, is refused; the
+     * default (empty) allowlist refuses everything.
+     */
     public boolean execReadOnlyAllowed(List<String> command) {
         if (command == null || command.isEmpty()) return false;
-        String head = command.get(0);
-        return head != null && execReadOnlyCommands.contains(head);
+        for (String entry : execReadOnlyCommands) {
+            List<String> argv = entryArgv(entry);
+            if (argv == null) continue;
+            if (argv.size() == 1) {
+                // BARE NAME: head must match; the remaining arguments are free.
+                if (argv.get(0).equals(command.get(0))) return true;
+            } else if (argv.equals(command)) {
+                // PINNED ARGV: List.equals is element-wise, length- and order-sensitive, and
+                // calls equals() on argv's (never-null) elements, so a null token in command
+                // is simply unequal rather than an NPE.
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * One allowlist entry as the exact argv it licenses, or {@code null} when the entry is
+     * MALFORMED and must license nothing.
+     *
+     * <p>The split is on the single ASCII space {@code ' '} and nothing else, because that is
+     * how the generator writes a pinned form (its argv "space-joined, flags only, no path").
+     * An entry is malformed when it is null/empty, when splitting it yields an EMPTY token (a
+     * leading, trailing or doubled space), or when a token contains any other whitespace,
+     * Unicode space or ISO control character. Refusing those instead of "cleaning them up" is
+     * the point: a mistyped {@code "ps  -e"} would otherwise license an argv carrying an
+     * empty-string argument, and a tab, newline or no-break space inside an entry has no
+     * reading that is both exact and obviously intended. (Spring's comma-delimited binding of
+     * {@code WORKLOAD_CONSOLE_EXEC_READONLY} already trims each element — pinned by
+     * {@code WorkloadConsolePropertiesTest} — so blanks around a comma never reach here; and
+     * that same comma split is why no entry can itself contain a comma.)
+     */
+    static List<String> entryArgv(String entry) {
+        if (entry == null || entry.isEmpty()) return null;
+        String[] tokens = entry.split(" ", -1);
+        for (String t : tokens) {
+            if (t.isEmpty()) return null;
+            for (int i = 0; i < t.length(); i++) {
+                char c = t.charAt(i);
+                if (Character.isWhitespace(c) || Character.isSpaceChar(c)
+                        || Character.isISOControl(c)) {
+                    return null;
+                }
+            }
+        }
+        return List.of(tokens);
     }
 
     /**

@@ -92,7 +92,8 @@ class DeviceSshTerminalRealTransportDenyTest {
 
         handler = new DeviceSshTerminalWebSocketHandler(
                 authz, devices, REGISTRY, stepUp, stepUpGate, mfaStepUp, realTransport, props,
-                new ObjectMapper());
+                new ObjectMapper(),
+                TranscriptChainSupport.realTranscripts(TranscriptChainSupport.ephemeralKeys().signer()));
 
         // ALLOW defaults; each DENY test breaks exactly one gate.
         when(stepUp.validate(eq(OPERATOR), eq(STEP_UP))).thenReturn(true);

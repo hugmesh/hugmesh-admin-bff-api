@@ -64,6 +64,16 @@ class DomainRegistryExportServiceTest {
                 caProvisioned, appsetRegistered, gen);
     }
 
+    /** A row carrying the DECISION-29 columns: the idp choice and an allocated MCS pair. */
+    private static DomainRegistration domain29(String clusterDomain, String idp,
+                                               String level, String levelPg) {
+        return new DomainRegistration("id-" + clusterDomain, clusterDomain, "brand-" + clusterDomain,
+                "Org " + clusterDomain, "vault:pki/" + clusterDomain, "ns-" + clusterDomain,
+                "casdoor-" + clusterDomain, "tag:" + clusterDomain, true,
+                Instant.now(), "superadmin@infra", Instant.now(),
+                false, false, 0L, idp, level, levelPg);
+    }
+
     // ════════════════════════ 1. compile predicate ═════════════════════════════
 
     @Test
@@ -201,7 +211,8 @@ class DomainRegistryExportServiceTest {
         // Adversary edits the compiled set (adds a rogue domain) but cannot re-sign.
         DomainExportBody tampered = new DomainExportBody(export.body().node(), export.body().generation(),
                 List.of(new DomainEntry("evil.test", "evil", "Evil", "vault:pki/evil", "ns-evil",
-                        "casdoor-evil", "tag:evil", true, true, 99L)));
+                        "casdoor-evil", "tag:evil", true, true, 99L,
+                        DomainIdp.OWN, "s0:c256", "s0:c257")));
         byte[] tamperedBytes = DomainRegistryExportService.canonicalBytes(tampered);
         assertThat(RegistrySigner.verify(tamperedBytes, export.signature(), export.publicKey())).isFalse();
     }
@@ -256,6 +267,97 @@ class DomainRegistryExportServiceTest {
                             .isTrue();
                 })
                 .verifyComplete();
+    }
+
+    // ═══════════ 4. DECISION 29 on the WIRE (the row is not the wire) ═══════════
+
+    /**
+     * The 29b/29c payoff: the columns have to reach the CONSUMER. hugmesh-generator's
+     * {@code specs/usr/sbin/hugmesh-domain-reconcile:413} already reads
+     * {@code .body.entries[i].idp} and validates it as a closed enum at :429-431; before this
+     * field existed that read returned absent, which it treats as {@code superdomain} — so
+     * EVERY exported domain reconciled as superdomain and no per-domain Casdoor was ever
+     * provisioned, whatever the row said. Deleting any of these three mappings restores that
+     * silent no-op.
+     */
+    @Test
+    void compile_carriesTheDecision29FieldsToTheWire_idpAndTheMcsPair() {
+        DomainExportBody body = DomainRegistryExportService.compile("",
+                List.of(domain29("own.test", DomainIdp.OWN, "s0:c256", "s0:c257")));
+
+        DomainEntry e = body.entries().get(0);
+        assertThat(e.idp())
+                .as("DECISION 29b: the idp column is useless if the export does not carry it — "
+                        + "hugmesh-domain-reconcile reads .idp and renders the own-IdP template "
+                        + "set only when it says \"own\"")
+                .isEqualTo("own");
+        assertThat(e.selinuxLevel())
+                .as("DECISION 29c: the Casdoor pod's allocated MCS category (05b element field "
+                        + "selinuxLevel)")
+                .isEqualTo("s0:c256");
+        assertThat(e.selinuxLevelPg())
+                .as("DECISION 29c: the Postgres pod's allocated MCS category (05b element field "
+                        + "selinuxLevelPg)")
+                .isEqualTo("s0:c257");
+    }
+
+    @Test
+    void compile_normalisesTheIdp_becauseTheConsumerValidatesAClosedEnum() {
+        DomainExportBody body = DomainRegistryExportService.compile("",
+                List.of(domain29("legacy.test", null, "s0:c258", "s0:c259")));
+
+        assertThat(body.entries().get(0).idp())
+                .as("a pre-29b row has no idp; the consumer refuses an entry whose idp is "
+                        + "neither own nor superdomain (:429-431), so the export normalises "
+                        + "absent to superdomain rather than emitting null")
+                .isEqualTo(DomainIdp.SUPERDOMAIN);
+    }
+
+    @Test
+    void compile_unallocatedMcsPair_staysNull_neverSubstitutesADefault() {
+        DomainExportBody body = DomainRegistryExportService.compile("",
+                List.of(domain29("preallocator.test", DomainIdp.OWN, null, null)));
+
+        DomainEntry e = body.entries().get(0);
+        assertThat(e.selinuxLevel())
+                .as("a row registered before 29c has NO categories. Substituting a default "
+                        + "would co-locate two workloads on one MCS category, which is the one "
+                        + "failure in this leg that fails OPEN — null means 'not provisionable'")
+                .isNull();
+        assertThat(e.selinuxLevelPg()).isNull();
+    }
+
+    /**
+     * The v1 signature contract, pinned. hugmesh-generator
+     * {@code specs/usr/lib/hugmesh/domain-verify.sh:domain_canonical_bytes} rebuilds these
+     * bytes from the JSON with a jq expression naming exactly these TEN fields and FAILS
+     * CLOSED on a byte divergence. Adding {@code idp} or the MCS pair to the signed bytes
+     * (however tempting — they ride unsigned today) stops reconciliation on every node running
+     * an older verifier, so it is a lockstep two-repo change: teach the consumer v1 AND v2,
+     * ship it, only then emit v2 here. This test is what makes that a deliberate act.
+     */
+    @Test
+    void canonicalBytes_stillCarriesExactlyTheV1TenFields_theConsumerRebuildsThemByteForByte() {
+        DomainExportBody body = DomainRegistryExportService.compile("fp",
+                List.of(domain29("own.test", DomainIdp.OWN, "s0:c256", "s0:c257")));
+
+        String canonical = new String(DomainRegistryExportService.canonicalBytes(body),
+                java.nio.charset.StandardCharsets.UTF_8);
+
+        assertThat(canonical)
+                .as("the exact v1 encoding domain-verify.sh reconstructs")
+                .isEqualTo("v1-domain\n"
+                        + "node=fp\n"
+                        + "generation=1\n"
+                        + "dom=own.test\tbrand=brand-own.test\torg=Org own.test"
+                        + "\tca=vault:pki/own.test\tns=ns-own.test\tcasdoor=casdoor-own.test"
+                        + "\tmesh=tag:own.test\tca_prov=false\tappset=false\tgen=0\n");
+        assertThat(canonical)
+                .as("idp and the MCS pair are on the JSON entry but OUTSIDE the signature. If "
+                        + "this assertion is being edited, the consumer half in hugmesh-generator "
+                        + "(specs/usr/lib/hugmesh/domain-verify.sh) must already accept the new "
+                        + "encoding, or every node fails closed and reconciles nothing.")
+                .doesNotContain("idp=", "s0:c256", "s0:c257");
     }
 
     @Test

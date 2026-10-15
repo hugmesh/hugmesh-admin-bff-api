@@ -18,6 +18,17 @@
 # and NEVER returned to the BFF. The generator writes it to Vault directly; an
 # ESO-synced k8s Secret (referenced below, READ FROM THE MOUNT) carries it into this
 # Job pod only. The ingest payload carries only the NON-SECRET pointer/fingerprints.
+#
+# DEVICE IDENTITY (decisions 73a/73b/73c, hugmesh-admin-bff-api#53 / hugmesh-generator#368):
+# the BFF mints the device's stable id (${DEVICE_ID} = dev-<first 12 lowercase alnum of the
+# build id>, the derivation build-image.sh used on its own before) and the Vault path of its
+# dial key (${VAULT_REF} = hugmesh/device/<DEVICE_ID>/ssh, the remoteRef key of the generator's
+# device-ssh ExternalSecret template), passes both to the Job, and derives the Secret name
+# device-ssh-<DEVICE_ID> itself. The Job reports DEVICE_ID/VAULT_REF back in its ingest body; the
+# BFF seeds a dial row only when they equal what it passed here, and never takes a Secret name
+# from the body. NOT rendered here: the device-ssh-<DEVICE_ID> ExternalSecret itself, and the
+# Vault seed at hugmesh/device/<DEVICE_ID>/ssh — until something creates them the optional
+# dial-key volume below mounts nothing and the build proceeds without SSH dial access.
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -55,6 +66,10 @@ spec:
             - { name: IMAGE_TYPE,     value: "${IMAGE_TYPE}" }      # primary | mesh-extension | client
             - { name: HARDWARE_CLASS, value: "${HARDWARE_CLASS}" }
             - { name: SSH_KEYS_ALLOWED, value: "${SSH_KEYS_ALLOWED}" }
+            # The BFF-minted stable device id and the Vault path of its dial key (73b/73c): the
+            # builder reports both back verbatim in its ingest body; it must not derive its own.
+            - { name: DEVICE_ID,      value: "${DEVICE_ID}" }
+            - { name: VAULT_REF,      value: "${VAULT_REF}" }
             # The BFF internal ingest endpoint the build POSTs its terminal report to.
             - { name: INGEST_URL, value: "https://hugmesh-admin-bff-api.hugmesh-backend.svc.cluster.local:8443/bff/internal/image-builds/${BUILD_ID}/ingest" }
             # OPTIONAL non-terminal progress side channel (worklist redesign item 8): the builder's
@@ -91,8 +106,9 @@ spec:
             # BFF prepends to this Job. optional volume => a legacy (no-spec) build has no ConfigMap
             # and simply sees no file here. Mirrors the dial-key optional Secret mount below.
             - { name: image-spec, mountPath: /image-spec, readOnly: true }
-            # The per-device dial PRIVATE key, synced by ESO from Vault into a k8s Secret and
-            # mounted READ-ONLY. The builder seeds the matching PUBLIC key into the image's
+            # The per-device dial PRIVATE key, synced by ESO from Vault (${VAULT_REF}) into the
+            # per-DEVICE k8s Secret device-ssh-${DEVICE_ID} (key dial_private_key) and mounted
+            # READ-ONLY. The builder seeds the matching PUBLIC key into the image's
             # authorized_keys and READS the private key ONLY from this mount — it is never
             # written to an artifact, never returned to the BFF, never logged.
             - { name: dial-key, mountPath: /secrets/dial, readOnly: true }
@@ -117,7 +133,11 @@ spec:
           configMap:
             name: hugmesh-image-spec-${BUILD_ID}
             optional: true
+        # Keyed by DEVICE id (73b=B): the same Secret the admin-bff later mounts at
+        # <key-mount-path>/device-ssh-<DEVICE_ID>/ to dial this device. DEVICE_ID is minted from
+        # the build id, so each build is a new device and a new Secret name.
+        # optional: absent => no SSH seed, build continues.
         - name: dial-key
           secret:
-            secretName: image-gen-dial-${BUILD_ID}   # ESO-synced from Vault; absent => no SSH seed
+            secretName: device-ssh-${DEVICE_ID}   # ESO-synced from Vault ${VAULT_REF}
             optional: true

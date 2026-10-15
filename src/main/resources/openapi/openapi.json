@@ -593,6 +593,45 @@
         }
       }
     },
+    "/bff/admin/tor/nodes/{nodeFp}/upstream" : {
+      "put" : {
+        "tags" : [ "tor-admin-controller" ],
+        "summary" : "Set node upstream",
+        "operationId" : "torSetNodeUpstream",
+        "parameters" : [ {
+          "name" : "nodeFp",
+          "in" : "path",
+          "required" : true,
+          "schema" : {
+            "maxLength" : 128,
+            "minLength" : 0,
+            "type" : "string"
+          }
+        } ],
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/TorUpstreamRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/TorNodeConfig"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/bff/admin/themes/{domain}" : {
       "get" : {
         "tags" : [ "domain-theme-admin-controller" ],
@@ -2297,6 +2336,13 @@
         "summary" : "Session out",
         "operationId" : "authSessionOut",
         "parameters" : [ {
+          "name" : "bff_session",
+          "in" : "cookie",
+          "required" : false,
+          "schema" : {
+            "type" : "string"
+          }
+        }, {
           "name" : "Authorization",
           "in" : "header",
           "required" : false,
@@ -2591,6 +2637,59 @@
             "application/json" : {
               "schema" : {
                 "$ref" : "#/components/schemas/LocalLoginRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "type" : "object",
+                  "additionalProperties" : {
+                    "type" : "object"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bff/internal/usage" : {
+      "post" : {
+        "tags" : [ "internal-account-controller" ],
+        "operationId" : "recordUsage",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/RecordUsageRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "204" : {
+            "description" : "No Content"
+          }
+        }
+      }
+    },
+    "/bff/internal/tor/onions" : {
+      "post" : {
+        "tags" : [ "tor-internal-controller" ],
+        "summary" : "Report node onions",
+        "operationId" : "torInternalReportOnions",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/TorOnionReportRequest"
               }
             }
           },
@@ -3873,6 +3972,70 @@
               "application/json" : {
                 "schema" : {
                   "$ref" : "#/components/schemas/ModerationDecisionDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bff/admin/matrix/deactivations/propose" : {
+      "post" : {
+        "tags" : [ "matrix-admin-deactivate-controller" ],
+        "summary" : "Propose a one-way Matrix account deactivate (step 1 of 2)",
+        "operationId" : "matrixDeactivatePropose",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/MatrixDeactivateProposeRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "type" : "object",
+                  "additionalProperties" : {
+                    "type" : "object"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bff/admin/matrix/deactivations/confirm" : {
+      "post" : {
+        "tags" : [ "matrix-admin-deactivate-controller" ],
+        "summary" : "Confirm a proposed Matrix account deactivate (step 2 of 2)",
+        "operationId" : "matrixDeactivateConfirm",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/MatrixDeactivateConfirmRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "type" : "object",
+                  "additionalProperties" : {
+                    "type" : "object"
+                  }
                 }
               }
             }
@@ -6958,6 +7121,57 @@
         }
       }
     },
+    "/bff/admin/tor/nodes" : {
+      "get" : {
+        "tags" : [ "tor-admin-controller" ],
+        "summary" : "List node onions",
+        "operationId" : "torListNodes",
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "type" : "array",
+                  "items" : {
+                    "$ref" : "#/components/schemas/TorNodeView"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bff/admin/tor/export" : {
+      "get" : {
+        "tags" : [ "tor-admin-controller" ],
+        "summary" : "Export",
+        "operationId" : "torExport",
+        "parameters" : [ {
+          "name" : "node",
+          "in" : "query",
+          "required" : true,
+          "schema" : {
+            "maxLength" : 128,
+            "minLength" : 0,
+            "type" : "string"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/SignedTorExport"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/bff/admin/themes" : {
       "get" : {
         "tags" : [ "domain-theme-admin-controller" ],
@@ -9293,6 +9507,41 @@
           }
         }
       },
+      "TorUpstreamRequest" : {
+        "type" : "object",
+        "properties" : {
+          "upstream" : {
+            "maxLength" : 300,
+            "minLength" : 0,
+            "type" : "string"
+          }
+        }
+      },
+      "TorNodeConfig" : {
+        "type" : "object",
+        "properties" : {
+          "machineKeyFp" : {
+            "type" : "string"
+          },
+          "upstreamManaged" : {
+            "type" : "boolean"
+          },
+          "upstream" : {
+            "type" : "string"
+          },
+          "configGeneration" : {
+            "type" : "integer",
+            "format" : "int64"
+          },
+          "updatedBy" : {
+            "type" : "string"
+          },
+          "updatedAt" : {
+            "type" : "string",
+            "format" : "date-time"
+          }
+        }
+      },
       "DomainThemeRequest" : {
         "required" : [ "preset" ],
         "type" : "object",
@@ -9503,6 +9752,11 @@
           },
           "enabled" : {
             "type" : "boolean"
+          },
+          "idp" : {
+            "maxLength" : 16,
+            "minLength" : 0,
+            "type" : "string"
           }
         }
       },
@@ -9556,6 +9810,15 @@
           "lastReconciledGeneration" : {
             "type" : "integer",
             "format" : "int64"
+          },
+          "idp" : {
+            "type" : "string"
+          },
+          "selinuxLevel" : {
+            "type" : "string"
+          },
+          "selinuxLevelPg" : {
+            "type" : "string"
           }
         }
       },
@@ -10541,6 +10804,50 @@
           }
         }
       },
+      "RecordUsageRequest" : {
+        "required" : [ "action", "handle" ],
+        "type" : "object",
+        "properties" : {
+          "handle" : {
+            "maxLength" : 400,
+            "minLength" : 0,
+            "type" : "string"
+          },
+          "roles" : {
+            "type" : "array",
+            "items" : {
+              "type" : "string"
+            }
+          },
+          "action" : {
+            "maxLength" : 128,
+            "minLength" : 0,
+            "type" : "string"
+          }
+        }
+      },
+      "TorOnionReportRequest" : {
+        "required" : [ "machineKeyFp" ],
+        "type" : "object",
+        "properties" : {
+          "machineKeyFp" : {
+            "maxLength" : 128,
+            "minLength" : 0,
+            "type" : "string"
+          },
+          "primary" : {
+            "maxLength" : 62,
+            "minLength" : 0,
+            "type" : "string"
+          },
+          "domains" : {
+            "type" : "object",
+            "additionalProperties" : {
+              "type" : "string"
+            }
+          }
+        }
+      },
       "CreateSessionRequest" : {
         "required" : [ "accountId" ],
         "type" : "object",
@@ -10676,11 +10983,6 @@
           },
           "vaultRef" : {
             "maxLength" : 512,
-            "minLength" : 0,
-            "type" : "string"
-          },
-          "k8sSecretName" : {
-            "maxLength" : 253,
             "minLength" : 0,
             "type" : "string"
           },
@@ -11345,6 +11647,33 @@
           }
         }
       },
+      "MatrixDeactivateProposeRequest" : {
+        "required" : [ "mxid" ],
+        "type" : "object",
+        "properties" : {
+          "mxid" : {
+            "maxLength" : 255,
+            "minLength" : 0,
+            "type" : "string"
+          }
+        }
+      },
+      "MatrixDeactivateConfirmRequest" : {
+        "required" : [ "mxid" ],
+        "type" : "object",
+        "properties" : {
+          "mxid" : {
+            "maxLength" : 255,
+            "minLength" : 0,
+            "type" : "string"
+          },
+          "token" : {
+            "maxLength" : 128,
+            "minLength" : 0,
+            "type" : "string"
+          }
+        }
+      },
       "TriggerImageBuildRequest" : {
         "required" : [ "imageType", "targetUser" ],
         "type" : "object",
@@ -11707,6 +12036,11 @@
           },
           "enabled" : {
             "type" : "boolean"
+          },
+          "idp" : {
+            "maxLength" : 16,
+            "minLength" : 0,
+            "type" : "string"
           }
         }
       },
@@ -12756,6 +13090,97 @@
           }
         }
       },
+      "TorNodeView" : {
+        "type" : "object",
+        "properties" : {
+          "node" : {
+            "type" : "string"
+          },
+          "hostname" : {
+            "type" : "string"
+          },
+          "residencyDomain" : {
+            "type" : "string"
+          },
+          "registered" : {
+            "type" : "boolean"
+          },
+          "primary" : {
+            "type" : "string"
+          },
+          "domains" : {
+            "type" : "object",
+            "additionalProperties" : {
+              "type" : "string"
+            }
+          },
+          "upstreamManaged" : {
+            "type" : "boolean"
+          },
+          "upstream" : {
+            "type" : "string"
+          },
+          "configGeneration" : {
+            "type" : "integer",
+            "format" : "int64"
+          },
+          "lastReportedAt" : {
+            "type" : "string",
+            "format" : "date-time"
+          },
+          "reportCount" : {
+            "type" : "integer",
+            "format" : "int64"
+          }
+        }
+      },
+      "SignedTorExport" : {
+        "type" : "object",
+        "properties" : {
+          "body" : {
+            "$ref" : "#/components/schemas/TorExportBody"
+          },
+          "contentHash" : {
+            "type" : "string"
+          },
+          "signature" : {
+            "type" : "string"
+          },
+          "publicKey" : {
+            "type" : "string"
+          },
+          "signed" : {
+            "type" : "boolean"
+          }
+        }
+      },
+      "TorExportBody" : {
+        "type" : "object",
+        "properties" : {
+          "node" : {
+            "type" : "string"
+          },
+          "generation" : {
+            "type" : "integer",
+            "format" : "int64"
+          },
+          "upstreamManaged" : {
+            "type" : "boolean"
+          },
+          "upstream" : {
+            "type" : "string"
+          },
+          "domainsManaged" : {
+            "type" : "boolean"
+          },
+          "domains" : {
+            "type" : "array",
+            "items" : {
+              "type" : "string"
+            }
+          }
+        }
+      },
       "TestRun" : {
         "type" : "object",
         "properties" : {
@@ -13153,6 +13578,15 @@
           "generation" : {
             "type" : "integer",
             "format" : "int64"
+          },
+          "idp" : {
+            "type" : "string"
+          },
+          "selinuxLevel" : {
+            "type" : "string"
+          },
+          "selinuxLevelPg" : {
+            "type" : "string"
           }
         }
       },

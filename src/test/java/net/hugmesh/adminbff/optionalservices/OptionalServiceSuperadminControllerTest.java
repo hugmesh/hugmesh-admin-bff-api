@@ -10,6 +10,7 @@ import org.springframework.http.MediaType;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.oauth2.jwt.ReactiveJwtDecoder;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.web.reactive.server.WebTestClient;
 import net.hugmesh.adminbff.config.SecurityConfig;
 import net.hugmesh.adminbff.web.ApiExceptionHandler;
@@ -22,6 +23,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -41,15 +43,22 @@ import static org.springframework.security.test.web.reactive.server.SecurityMock
  * is only unit-tested below the controller proves nothing about what a superadmin's HTTP call
  * does — so it is asserted here, at the wire.
  *
+ * <p>The registry is a {@link MockitoSpyBean}: every test sees the REAL registry unless it
+ * stubs one call. Two tests do, because since #106 no real slug reaches their branch — no
+ * managed slug lacks its apps/16 pointer (so nothing carries the selfHeal warning) and no slug
+ * is {@code NOT_IN_CRD_ENUM}. Both branches are still live code the next upstream slug can
+ * land in, so each is driven through the wire with a stubbed registry answer, and says so.
+ *
  * <ul>
  *   <li><b>authz</b> — SUPERADMIN allowed; ADMIN / MOD / USER 403 on BOTH verbs and NEVER reach
  *       the cluster seam; anonymous 401.</li>
  *   <li><b>catalogue</b> — lists managed AND not-toggleable slugs, each with its named reason;
- *       {@code character-forge} appears as TOGGLEABLE (the fixed defect) carrying its
- *       partial-actuation warning.</li>
- *   <li><b>refusal</b> — {@code meshbridge} (not in the CRD enum) and {@code workloadConsole}
- *       (no 13a element) are 422 with the named reason and NO write attempted; an unknown slug
- *       is 404 with no write; a dark reconciler is 503 {@code dark:true} with no write.</li>
+ *       {@code character-forge} and {@code meshbridge} (the two silently-inert toggles this
+ *       surface was built against) appear as TOGGLEABLE with NO warnings.</li>
+ *   <li><b>refusal</b> — {@code workloadConsole} (no 13a element) and a stubbed
+ *       {@code NOT_IN_CRD_ENUM} slug are 422 with the named reason and NO write attempted; an
+ *       unknown slug is 404 with no write; a dark reconciler is 503 {@code dark:true} with no
+ *       write.</li>
  * </ul>
  */
 @WebFluxTest(controllers = OptionalServiceSuperadminController.class)
@@ -65,6 +74,7 @@ class OptionalServiceSuperadminControllerTest {
 
     @MockitoBean OptionalServiceClient client;
     @MockitoBean ReactiveJwtDecoder jwtDecoder;
+    @MockitoSpyBean OptionalServiceRegistry registry;
 
     WebTestClient web;
 
@@ -148,12 +158,19 @@ class OptionalServiceSuperadminControllerTest {
         asSuperadmin().get().uri(PATH).exchange()
                 .expectStatus().isOk()
                 .expectBody()
-                // the fixed defect: character-forge is listed AND actually toggleable
+                // the fixed defect: character-forge is listed AND actually toggleable, and
+                // (#106) no longer warns about a selfHeal revert apps/16 now prevents
                 .jsonPath("$.services[?(@.slug=='character-forge')].toggleable").isEqualTo(true)
-                // meshbridge has a 13a element + a ConfigMap key but no CRD enum value
-                .jsonPath("$.services[?(@.slug=='meshbridge')].toggleable").isEqualTo(false)
+                .jsonPath("$.services[?(@.slug=='character-forge')].warnings[0]").doesNotExist()
+                // #106: meshbridge was refused as NOT_IN_CRD_ENUM while the CRD enum carried
+                // it; it is managed now, with a real Application name and no refusal reason
+                .jsonPath("$.services[?(@.slug=='meshbridge')].toggleable").isEqualTo(true)
+                // (a filter yields a one-element list, so "null" reads as [null])
                 .jsonPath("$.services[?(@.slug=='meshbridge')].notToggleableReason")
-                .isEqualTo("NOT_IN_CRD_ENUM")
+                .value(org.hamcrest.Matchers.contains(org.hamcrest.Matchers.nullValue()))
+                .jsonPath("$.services[?(@.slug=='meshbridge')].applicationName")
+                .isEqualTo("optional-meshbridge")
+                .jsonPath("$.services[?(@.slug=='meshbridge')].warnings[0]").doesNotExist()
                 // workloadConsole has the ConfigMap boolean but no ApplicationSet element
                 .jsonPath("$.services[?(@.slug=='workloadConsole')].toggleable").isEqualTo(false)
                 .jsonPath("$.services[?(@.slug=='workloadConsole')].notToggleableReason")
@@ -211,8 +228,36 @@ class OptionalServiceSuperadminControllerTest {
         verify(client).setEnabled("akkoma", true, "operator asked for it", SUBJECT);
     }
 
+    /**
+     * #106, half 1: meshbridge used to be answered 422 NOT_IN_CRD_ENUM although the CRD enum
+     * carried it. It must now reach the CR write like any managed slug. (The reconciler side —
+     * that the CR is actuated and status-written — is pinned by
+     * {@code OptionalServiceRegistryParityTest#reconciler_actuatesAndStatusWrites_everyManagedSlug}.)
+     */
     @Test
-    void setEnabled_characterForge_succeeds_butCarriesThePartialActuationWarning() {
+    void setEnabled_meshbridge_writesTheCr_insteadOfRefusing() {
+        when(client.setEnabled(eq("meshbridge"), eq(true), anyString(), eq(SUBJECT)))
+                .thenReturn(cr("meshbridge", true));
+
+        asSuperadmin().put().uri(PATH + "/meshbridge")
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(ON)
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.slug").isEqualTo("meshbridge")
+                .jsonPath("$.enabled").isEqualTo(true)
+                .jsonPath("$.applicationName").isEqualTo("optional-meshbridge")
+                .jsonPath("$.warnings").isEmpty();
+
+        verify(client).setEnabled("meshbridge", true, "operator asked for it", SUBJECT);
+    }
+
+    /**
+     * #106, half 2: generator apps/16 carries {@code /data/character-forge}, so the toggle
+     * response must NOT warn about a selfHeal revert — that warning was a false alarm.
+     */
+    @Test
+    void setEnabled_characterForge_succeeds_withNoFalseSelfHealWarning() {
         when(client.setEnabled(eq("character-forge"), eq(true), any(), eq(SUBJECT)))
                 .thenReturn(cr("character-forge", true));
 
@@ -222,6 +267,29 @@ class OptionalServiceSuperadminControllerTest {
                 .expectStatus().isOk()
                 .expectBody()
                 .jsonPath("$.slug").isEqualTo("character-forge")
+                .jsonPath("$.warnings").isEmpty();
+    }
+
+    /**
+     * The partial-actuation warning is still live code, but no real managed slug reaches it
+     * since #106 (the parity test pins that set as empty). So the registry answer is STUBBED
+     * for one slug — a managed entry apps/16 does not protect — and the wire response must
+     * report the gap rather than swallow it. This is a hypothetical registry state, not a
+     * claim about akkoma.
+     */
+    @Test
+    void setEnabled_managedSlugWithoutApps16Pointer_carriesThePartialActuationWarning() {
+        doReturn(new OptionalServiceRegistry.Entry("akkoma", "hugmesh-backend", "/social/mastodon",
+                "Akkoma (Mastodon)", false)).when(registry).entry("akkoma");
+        when(client.setEnabled(eq("akkoma"), eq(true), any(), eq(SUBJECT)))
+                .thenReturn(cr("akkoma", true));
+
+        asSuperadmin().put().uri(PATH + "/akkoma")
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(ON)
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.slug").isEqualTo("akkoma")
                 // the apps/16 gap is REPORTED, not swallowed — the whole point of this surface
                 .jsonPath("$.warnings[0]")
                 .value(org.hamcrest.Matchers.containsString("apps/16"))
@@ -231,9 +299,18 @@ class OptionalServiceSuperadminControllerTest {
 
     // ── the refusal ladder: nothing silently succeeds ───────────────────────────────
 
+    /**
+     * No real slug is {@code NOT_IN_CRD_ENUM} since #106 (meshbridge was, falsely), so a
+     * hypothetical slug is stubbed into the not-toggleable half with that reason: the next slug
+     * that gains a 13a element before its CRD enum value must still be refused by name.
+     */
     @Test
     void setEnabled_slugNotInCrdEnum_is422_withTheNamedReason_andNoWrite() {
-        asSuperadmin().put().uri(PATH + "/meshbridge")
+        doReturn(true).when(registry).isPlatformKnown("next-optional-slug");
+        doReturn(OptionalServiceRegistry.NotToggleable.NOT_IN_CRD_ENUM)
+                .when(registry).notToggleableReason("next-optional-slug");
+
+        asSuperadmin().put().uri(PATH + "/next-optional-slug")
                 .contentType(MediaType.APPLICATION_JSON).bodyValue(ON)
                 .exchange()
                 .expectStatus().isEqualTo(422)

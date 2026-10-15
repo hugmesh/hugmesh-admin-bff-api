@@ -1,5 +1,6 @@
 package net.hugmesh.adminbff.cloudbackup;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.fabric8.kubernetes.api.model.GenericKubernetesResource;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.dsl.base.ResourceDefinitionContext;
@@ -39,6 +40,8 @@ import reactor.core.scheduler.Schedulers;
  * {@link #startBackup}/{@link #startRestore} is ever called. The brand-isolation SELECTORS the
  * factory bakes into the CR are defence-in-depth on TOP of that.
  */
+@SuppressFBWarnings(value = "EI_EXPOSE_REP2",
+        justification = "Spring constructor injection: the container owns this singleton collaborator and it is never mutated by this class after construction; a defensive copy of a bean is meaningless (not caller-owned mutable data).")
 public class VeleroBackupEffector implements BackupEffector {
 
     private static final Logger log = LoggerFactory.getLogger(VeleroBackupEffector.class);

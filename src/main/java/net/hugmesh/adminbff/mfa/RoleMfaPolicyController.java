@@ -7,6 +7,8 @@ import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
+import java.util.ArrayList;
+import java.util.Collections;
 import net.hugmesh.commons.security.DomainRegistry;
 import net.hugmesh.commons.security.PrincipalDomain;
 import net.hugmesh.commons.web.ApiException;
@@ -55,7 +57,11 @@ public class RoleMfaPolicyController {
     }
 
     /** Response envelope for the listing. */
-    public record RoleMfaPolicyList(String domain, List<RoleMfaPolicy> policies) {}
+    public record RoleMfaPolicyList(String domain, List<RoleMfaPolicy> policies) {
+
+        public RoleMfaPolicyList {
+            policies = policies == null ? null : Collections.unmodifiableList(new ArrayList<>(policies));
+        }}
 
     /**
      * Request body for setting one role's policy.
@@ -68,7 +74,11 @@ public class RoleMfaPolicyController {
             boolean required,
             @Size(max = 3, message = "at most 3 methods")
             List<@NotBlank @Size(max = 16) String> methods,
-            @Min(0) @Max(RoleMfaPolicyService.MAX_GRACE_SECONDS) long graceSeconds) {}
+            @Min(0) @Max(RoleMfaPolicyService.MAX_GRACE_SECONDS) long graceSeconds) {
+
+        public SetRoleMfaPolicyRequest {
+            methods = methods == null ? null : Collections.unmodifiableList(new ArrayList<>(methods));
+        }}
 
     /** The effective policy for every canonical role (plus any extra role with a row) in the acting admin's domain. */
     @PreAuthorize("hasRole('ADMIN')")
