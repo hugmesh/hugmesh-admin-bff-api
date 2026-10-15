@@ -31,9 +31,10 @@ import java.util.List;
  * changeSet 150) — the first slice of the "per-role MFA defaults" leg of
  * hugmesh-admin-bff-api#3.
  *
- * <p>Read/write only: nothing here (or anywhere yet) enforces the policy on a request. An
- * admin can see the effective posture for their brand and set the relaxable rows before the
- * consumer wave wires {@link RoleMfaPolicyService#requiredForAny} into the session seams.
+ * <p>Read/write only: nothing in this controller enforces the policy. An admin can see the
+ * effective posture for their brand and set the relaxable rows; the consumer is
+ * {@link RoleMfaPolicyEnforcementFilter}, which is absent unless
+ * {@value RoleMfaPolicyEnforcementFilter#FLAG} is {@code true}.
  *
  * <p>Security, in layers exactly as {@code /bff/admin/oidc-providers}: the gateway
  * {@code /bff/admin/**} route-access row, the {@code SecurityConfig} path gate

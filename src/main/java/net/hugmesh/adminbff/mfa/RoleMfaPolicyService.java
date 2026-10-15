@@ -20,15 +20,13 @@ import java.util.regex.Pattern;
  * The {@code role_mfa_policy} CONSUMER the 150 changelog deferred to "a later wave": resolves
  * the effective per-(domain, role) MFA requirement and owns the only write path.
  *
- * <p><b>What this wave does and does not do.</b> This service is a READ MODEL plus an admin
- * write path. Nothing in the request pipeline consults it yet — {@code /bff/login},
- * {@code /bff/session}, {@code /bff/internal/session/introspect} and the step-up gates all
- * behave exactly as before this class existed, and the gateway's route-level
- * {@code mfa_required} enforcement stays behind {@code app.mfa.enabled} in the gateway chart.
- * Wiring {@link #requiredForAny} into those seams is the next numbered slice on
- * hugmesh-admin-bff-api#3 and carries its own flag; landing the resolver first lets an
- * operator SEE and SET the per-role posture (and lets the skeptic pin the floor semantics)
- * before any request is ever denied by it.
+ * <p><b>What consults it.</b> This service is a READ MODEL plus an admin write path. Its one
+ * caller of {@link #requiredForAny} is {@link RoleMfaPolicyEnforcementFilter}, which exists only
+ * when {@value RoleMfaPolicyEnforcementFilter#FLAG} is {@code true} (default off) and denies on
+ * {@code /bff/admin/**} and {@code /bff/superadmin/**} only. {@code /bff/login},
+ * {@code /bff/session}, {@code /bff/internal/session/introspect} and the step-up gates behave
+ * exactly as before, and the gateway's route-level {@code mfa_required} enforcement stays behind
+ * {@code app.mfa.enabled} in the gateway chart.
  *
  * <p><b>Built-in defaults</b> (the issue's stated per-role defaults — "superadmin/admin
  * required, mod relaxable, user optional"): {@code superadmin=true}, {@code admin=true},
@@ -108,7 +106,7 @@ public class RoleMfaPolicyService {
 
     /**
      * {@code true} iff MFA is required for ANY of the principal's roles in the domain — the
-     * OR the future login / session / introspect consumers will ask. Roles are normalised
+     * OR {@link RoleMfaPolicyEnforcementFilter} asks. Roles are normalised
      * ({@code ROLE_ADMIN} → {@code admin}); an empty role set resolves {@code false} (the
      * bare {@code user} default), never an error.
      */

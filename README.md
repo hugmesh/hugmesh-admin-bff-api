@@ -1298,16 +1298,21 @@ them as shipped.
   gates (#115), the enrollment/challenge leg (auth-core `MfaEnrollmentController`,
   `/bff/mfa/**` — TOTP + WebAuthn + recovery), and the **per-role policy consumer** the 150
   band deferred to "a later wave": `RoleMfaPolicyService` + `/bff/admin/mfa/role-policy`
-  (#3). That consumer is READ/WRITE ONLY — it resolves the effective per-(domain, role)
-  requirement and pins the non-relaxable superadmin/admin floor, but nothing in the request
-  pipeline consults it yet. Both DEPLOY targets already override `APP_CASDOOR_MFA_ENABLED=true`
-  (generator `specs/cluster/manifests/admin-bff-api/deployment.yaml:563`,
-  `tests/stack/compose.local.yaml:837`), so it is only the application default that is dark.
+  (#3). It resolves the effective per-(domain, role) requirement and pins the non-relaxable
+  superadmin/admin floor. Its first CALLER is `RoleMfaPolicyEnforcementFilter` (#80): it 403s a
+  policy-required principal on `/bff/admin/**` and `/bff/superadmin/**` until the request carries
+  fresh MFA evidence (the `MFA_SATISFIED` authority or a fresh `bff_session` stamp). It exists
+  ONLY when the NEW key `app.casdoor.mfa.role-policy.enforce` (`APP_CASDOOR_MFA_ROLE_POLICY_ENFORCE`)
+  is `true`; no manifest sets it, and it needs `app.casdoor.mfa.enabled=true` as a precondition.
+  It deliberately does NOT ride `app.casdoor.mfa.enabled`, because both DEPLOY targets already
+  override that to `true` (generator `specs/cluster/manifests/admin-bff-api/deployment.yaml:690`,
+  `tests/stack/compose.local.yaml:872`), so only the application default of THAT flag is dark.
   What remains roadmap is (a) ROUTE-LEVEL enforcement — the shared gateway chart still ships
   `mfa.enabled: false` (`specs/cluster/charts/hugmesh-gateway/values.yaml:236`) and no
   Application overrides it, so the seeded `gateway_route_access.mfa_required` rows are inert —
-  and (b) wiring `RoleMfaPolicyService.requiredForAny` into the login/session/introspect seams
-  behind its own flag. Both are gated on enrolling every privileged operator FIRST (generator
+  and (b) the remaining `requiredForAny` seams: login/session/introspect are deliberately NOT
+  denied (the MFA stamp lives on the session, so refusing one makes the challenge unreachable),
+  and `methods` / `graceSeconds` are still not honoured. Both are gated on enrolling every privileged operator FIRST (generator
   `docs/MFA-ROLLOUT.md` §2) — flipping before enrollment locks the operator out.
 - 🚧 **Notification external channels** — Matrix DM / Akkoma feed / phpBB / email
   adapters on top of the shipped in-app outbox MVP; per-channel `enabled()` gates,
