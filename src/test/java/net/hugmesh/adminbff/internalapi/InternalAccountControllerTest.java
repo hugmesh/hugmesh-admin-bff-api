@@ -452,6 +452,37 @@ class InternalAccountControllerTest {
     }
 
     @Test
+    void restartOnboarding_resetsRegistrationComplete_andReadsBackTheLocalpart() {
+        // The persisted localpart is READ (localpartsOf), never re-resolved: restart-onboarding is
+        // the mirror of complete(), not an account-creation call site.
+        when(localparts.localpartsOf("google:a@x.com")).thenReturn(Mono.just(
+                new AccountLocalpartService.ResolvedLocalparts("alice", "alice_m")));
+        when(accounts.account("google:a@x.com")).thenReturn(Mono.just(acct(true)));
+        when(accounts.restartOnboarding(any())).thenReturn(Mono.just(acct(false)));
+
+        StepVerifier.create(controller.restartOnboarding("google:a@x.com"))
+                .assertNext(a -> {
+                    assertThat(a.id()).isEqualTo("google:a@x.com");
+                    assertThat(a.registrationComplete()).isFalse();
+                    assertThat(a.localpart()).isEqualTo("alice");
+                    assertThat(a.mastodonLocalpart()).isEqualTo("alice_m");
+                })
+                .verifyComplete();
+
+        verify(accounts).restartOnboarding(acct(true));
+        verify(accounts, never()).markComplete(any());
+        verify(localparts, never()).resolveAndPersist(any(), any());
+    }
+
+    @Test
+    void restartOnboarding_unknownAccount_is404_andNothingIsWritten() {
+        when(accounts.account("missing")).thenReturn(Mono.empty());
+        StepVerifier.create(controller.restartOnboarding("missing"))
+                .verifyErrorSatisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode()).isEqualTo(HttpStatusCode.valueOf(404)));
+        verify(accounts, never()).restartOnboarding(any());
+    }
+
+    @Test
     void allowlist_perProvider_andUnknown() {
         // No domain supplied -> the resolver's fallback, which on this untenanted wiring is
         // AccountStore.DEFAULT_DOMAIN. The gate is the DOMAIN-SCOPED overload either way.
