@@ -45,7 +45,7 @@ import java.util.regex.Pattern;
  * <p>NOT covered by any test: a timeout, and a malformed or non-JSON body. A 2xx reply to
  * the post is trusted by its status alone: a body that does not parse is ignored, so a 200
  * with a non-JSON body (a captive portal page, say) is returned as {@link ChannelOutcome#SENT}.
- * The token is never logged.
+ * No test captures the log output, so nothing here proves what is or is not logged.
  *
  * <p><b>Verification status.</b> The Mastodon-API shapes used here are the standard ones, and
  * the fake server in the tests encodes them, but no Akkoma instance was available to run

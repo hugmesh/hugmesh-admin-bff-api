@@ -31,7 +31,9 @@ import java.util.concurrent.atomic.AtomicInteger;
  *       exist;</li>
  *   <li>the same txn id sent twice into a room yields the SAME event id and ONE event;</li>
  *   <li>{@code m.direct} account data is 404 {@code M_NOT_FOUND} until first written;</li>
- *   <li>an unknown access token is 401 {@code M_UNKNOWN_TOKEN} on every endpoint.</li>
+ *   <li>an unknown access token is 401 {@code M_UNKNOWN_TOKEN} (only the {@code whoami} reply
+ *       is checked by a test; the other endpoints answer it the same way in this fake, which
+ *       was not measured on the real server).</li>
  * </ul>
  * Because it is a real server the client under test uses its real {@code WebClient} and
  * socket path, not a mocked exchange function. It records every request and offers fault
