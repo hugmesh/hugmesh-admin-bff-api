@@ -68,10 +68,16 @@ public class WorkloadAuthorizationFilter implements WebFilter {
 
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, WebFilterChain chain) {
-        String path = exchange.getRequest().getPath().value();
-        if (!WorkloadPathClassifier.isConsolePath(path)) {
+        // Classify the path the way the ROUTER sees it (decoded once, ;params stripped, per
+        // segment) — never the raw string, which an encoded spelling such as
+        // /bff/admin/%77orkloads/... walks straight past while routing to the same controller.
+        List<String> segs = WorkloadPathClassifier.segmentsOf(
+                exchange.getRequest().getPath().pathWithinApplication());
+        if (!WorkloadPathClassifier.isConsolePath(segs)) {
             return chain.filter(exchange);
         }
+        // For logs/audit only: the raw (still percent-encoded, so control-character safe) form.
+        String path = exchange.getRequest().getPath().value();
 
         WorkloadConsoleProperties props = propsProvider.getIfAvailable();
         WorkloadAuthorizationService authz = authzProvider.getIfAvailable();
@@ -80,9 +86,15 @@ public class WorkloadAuthorizationFilter implements WebFilter {
             return deny(exchange, HttpStatus.NOT_FOUND);
         }
 
-        DangerTier tier = WorkloadPathClassifier.tierOf(path, exchange.getRequest().getMethod());
-        boolean logPath = WorkloadPathClassifier.isLogPath(path);
-        String ns = WorkloadPathClassifier.namespaceOf(path);
+        // "." / ".." are matched literally by the router but resolved by a normalising hop:
+        // ambiguous, so refused (fail closed) instead of classified.
+        if (WorkloadPathClassifier.hasDotSegment(segs)) {
+            return deny(exchange, HttpStatus.BAD_REQUEST);
+        }
+
+        DangerTier tier = WorkloadPathClassifier.tierOf(segs, exchange.getRequest().getMethod());
+        boolean logPath = WorkloadPathClassifier.isLogPath(segs);
+        String ns = WorkloadPathClassifier.namespaceOf(segs);
         boolean namespaceOk = ns == null || props.namespaceAllowed(ns);
         String stepUpToken = exchange.getRequest().getHeaders().getFirst("X-Workload-StepUp");
 
