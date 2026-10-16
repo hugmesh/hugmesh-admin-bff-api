@@ -432,7 +432,8 @@ public class AdminController {
         Long ttlSeconds = body == null ? null : body.ttlSeconds();
         String reason = body == null ? null : str(body.reason());
         PrincipalDomain scope = scope(auth);
-        return suspensions.suspend(role, user, ttlSeconds, reason, actor(auth), scope)
+        List<String> notifyChannels = body == null ? null : body.notifyChannels();
+        return suspensions.suspend(role, user, ttlSeconds, reason, actor(auth), scope, notifyChannels)
                 .flatMap(s -> {
                     usage.record(actor(auth), List.of(RoleName.ADMIN.value()), "admin.access-suspend").subscribe();
                     return suspensions.listActive(scope).collectList().map(active -> {

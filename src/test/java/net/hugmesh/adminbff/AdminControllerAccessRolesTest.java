@@ -107,7 +107,7 @@ class AdminControllerAccessRolesTest {
     @Test
     void suspend_asAdmin_writesDesiredStateAndReturnsList() {
         when(usage.record(anyString(), any(), anyString())).thenReturn(Mono.empty());
-        when(suspensions.suspend(eq("ROLE_MATRIX"), eq("alice"), any(), any(), anyString(), any(PrincipalDomain.class)))
+        when(suspensions.suspend(eq("ROLE_MATRIX"), eq("alice"), any(), any(), anyString(), any(PrincipalDomain.class), any()))
                 .thenReturn(Mono.just(sample()));
         when(suspensions.listActive(any(PrincipalDomain.class))).thenReturn(Flux.just(sample()));
 
@@ -119,13 +119,13 @@ class AdminControllerAccessRolesTest {
                 .jsonPath("$.suspended.role").isEqualTo("ROLE_MATRIX")
                 .jsonPath("$.suspensions[0].localpart").isEqualTo("alice");
 
-        verify(suspensions).suspend(eq("ROLE_MATRIX"), eq("alice"), eq(3600L), eq("abuse"), anyString(), any(PrincipalDomain.class));
+        verify(suspensions).suspend(eq("ROLE_MATRIX"), eq("alice"), eq(3600L), eq("abuse"), anyString(), any(PrincipalDomain.class), any());
     }
 
     @Test
     void suspend_permanent_noBody_passesNullTtl() {
         when(usage.record(anyString(), any(), anyString())).thenReturn(Mono.empty());
-        when(suspensions.suspend(eq("ROLE_MASTODON"), eq("bob"), any(), any(), anyString(), any(PrincipalDomain.class)))
+        when(suspensions.suspend(eq("ROLE_MASTODON"), eq("bob"), any(), any(), anyString(), any(PrincipalDomain.class), any()))
                 .thenReturn(Mono.just(sample()));
         when(suspensions.listActive(any(PrincipalDomain.class))).thenReturn(Flux.just(sample()));
 
@@ -133,7 +133,52 @@ class AdminControllerAccessRolesTest {
                 .exchange().expectStatus().isOk();
 
         // No body → permanent suspension (null ttl).
-        verify(suspensions).suspend(eq("ROLE_MASTODON"), eq("bob"), eq(null), any(), anyString(), any(PrincipalDomain.class));
+        verify(suspensions).suspend(eq("ROLE_MASTODON"), eq("bob"), eq(null), any(), anyString(), any(PrincipalDomain.class), any());
+    }
+
+    @Test
+    void suspend_notifyChannelsInBody_reachTheService() {
+        when(usage.record(anyString(), any(), anyString())).thenReturn(Mono.empty());
+        when(suspensions.suspend(eq("ROLE_MATRIX"), eq("alice"), any(), any(), anyString(), any(PrincipalDomain.class), any()))
+                .thenReturn(Mono.just(sample()));
+        when(suspensions.listActive(any(PrincipalDomain.class))).thenReturn(Flux.just(sample()));
+
+        asAdmin().post().uri("/bff/admin/access-roles/ROLE_MATRIX/alice")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("{\"reason\":\"abuse\",\"notifyChannels\":[\"email\",\"in-app\"],\"notifyEmailOnly\":true}")
+                .exchange().expectStatus().isOk();
+
+        verify(suspensions).suspend(eq("ROLE_MATRIX"), eq("alice"), eq(null), eq("abuse"), anyString(),
+                any(PrincipalDomain.class), eq(java.util.List.of("email", "in-app")));
+    }
+
+    @Test
+    void suspend_noNotifyChannels_passesNullDirective() {
+        when(usage.record(anyString(), any(), anyString())).thenReturn(Mono.empty());
+        when(suspensions.suspend(eq("ROLE_MATRIX"), eq("alice"), any(), any(), anyString(), any(PrincipalDomain.class), any()))
+                .thenReturn(Mono.just(sample()));
+        when(suspensions.listActive(any(PrincipalDomain.class))).thenReturn(Flux.just(sample()));
+
+        asAdmin().post().uri("/bff/admin/access-roles/ROLE_MATRIX/alice")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("{\"reason\":\"abuse\"}")
+                .exchange().expectStatus().isOk();
+
+        verify(suspensions).suspend(eq("ROLE_MATRIX"), eq("alice"), eq(null), eq("abuse"), anyString(),
+                any(PrincipalDomain.class), eq(null));
+    }
+
+    @Test
+    void suspend_malformedOrTooManyNotifyChannels_isBadRequest_andNeverWrites() {
+        asAdmin().post().uri("/bff/admin/access-roles/ROLE_MATRIX/alice")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("{\"notifyChannels\":[\"Bad Name!\"]}")
+                .exchange().expectStatus().isBadRequest();
+        asAdmin().post().uri("/bff/admin/access-roles/ROLE_MATRIX/alice")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("{\"notifyChannels\":[\"a\",\"b\",\"c\",\"d\",\"e\",\"f\",\"g\",\"h\",\"i\"]}")
+                .exchange().expectStatus().isBadRequest();
+        verify(suspensions, never()).suspend(anyString(), anyString(), any(), any(), anyString(), any(PrincipalDomain.class), any());
     }
 
     @Test
@@ -157,7 +202,7 @@ class AdminControllerAccessRolesTest {
     void suspend_asUser_isForbidden_andNeverWrites() {
         asUser().post().uri("/bff/admin/access-roles/ROLE_MATRIX/alice")
                 .exchange().expectStatus().isForbidden();
-        verify(suspensions, never()).suspend(anyString(), anyString(), any(), any(), anyString(), any(PrincipalDomain.class));
+        verify(suspensions, never()).suspend(anyString(), anyString(), any(), any(), anyString(), any(PrincipalDomain.class), any());
     }
 
     @Test
@@ -168,7 +213,7 @@ class AdminControllerAccessRolesTest {
         // row, a TTL and a restore path instead of an operator hand-stripping the Casdoor
         // role. Before the widening this path variable was a 400.
         when(usage.record(anyString(), any(), anyString())).thenReturn(Mono.empty());
-        when(suspensions.suspend(eq("ROLE_MESH"), eq("mallory"), any(), any(), anyString(), any(PrincipalDomain.class)))
+        when(suspensions.suspend(eq("ROLE_MESH"), eq("mallory"), any(), any(), anyString(), any(PrincipalDomain.class), any()))
                 .thenReturn(Mono.just(meshSample()));
         when(suspensions.listActive(any(PrincipalDomain.class))).thenReturn(Flux.just(meshSample()));
 
@@ -183,7 +228,7 @@ class AdminControllerAccessRolesTest {
         // A TEMP ban (the case that was previously impossible for mesh at all) — the TTL
         // reaches the service, which is what arms the expiry action's auto-restore.
         verify(suspensions).suspend(eq("ROLE_MESH"), eq("mallory"), eq(86400L), eq("mesh-abuse"),
-                anyString(), any(PrincipalDomain.class));
+                anyString(), any(PrincipalDomain.class), any());
     }
 
     @Test
@@ -204,7 +249,7 @@ class AdminControllerAccessRolesTest {
     void suspend_invalidRolePathVar_isBadRequest() {
         asAdmin().post().uri("/bff/admin/access-roles/ROLE_BOGUS/alice")
                 .exchange().expectStatus().isBadRequest();
-        verify(suspensions, never()).suspend(anyString(), anyString(), any(), any(), anyString(), any(PrincipalDomain.class));
+        verify(suspensions, never()).suspend(anyString(), anyString(), any(), any(), anyString(), any(PrincipalDomain.class), any());
     }
 
     @Test
@@ -214,7 +259,7 @@ class AdminControllerAccessRolesTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue("{\"ttlSeconds\":-5}")
                 .exchange().expectStatus().isBadRequest();
-        verify(suspensions, never()).suspend(anyString(), anyString(), any(), any(), anyString(), any(PrincipalDomain.class));
+        verify(suspensions, never()).suspend(anyString(), anyString(), any(), any(), anyString(), any(PrincipalDomain.class), any());
     }
 
     @Test
