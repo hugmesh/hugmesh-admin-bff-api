@@ -23,5 +23,6 @@ secret-scan from reading the long `VAR=/deep/path` run as an opaque token.)
 The overlay applies exactly one anchored edit (the CI include org/group ->
 `{{GENERATOR_ORG_GROUP}}`); everything else — sync loop, nginx serving, deploy/
 (base-owned), the `${ENV}`-driven manifest/Casdoor seams — rides through
-unchanged. See docs/FEDERATION-EXAMPLES.md, "remote-fragment runtime bundles",
-for how the fragment serves remotes this mesh does not build.
+unchanged. See docs/FEDERATION-EXAMPLES.md in hugmesh-generator, section 1 ("The example
+trio (+ remote-fragment)"), for how the fragment serves remotes this mesh does not
+build.
