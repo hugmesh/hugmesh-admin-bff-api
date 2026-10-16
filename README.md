@@ -1441,7 +1441,7 @@ as shipped.
   > governance (SSO sudo + curated Plasma Discover) are **not** roadmap. Both are on
   > `main` (`cloudbackup.*` / `desktop.*`), each dark behind its own default-off flag
   > (`app.backups.effector.enabled`, `app.device-terminal.enabled` +
-  > `app.device-terminal.dial.enabled`). See
+  > `app.device-terminal.dial.enabled`, `app.desktop.remote-install.enabled`). See
   > [Desktop app governance, cloud-backup v2, image-build, SSH surfaces](#desktop-app-governance-cloud-backup-v2-image-build-ssh-surfaces--shipped-ships-dark)
   > above, including the host-key-pinned `SshjDeviceSshChannelFactory` SSH dial and the
   > security re-review it still needs before it can be enabled by default.
