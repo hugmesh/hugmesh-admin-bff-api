@@ -114,10 +114,10 @@ class RoleMfaPolicyEnforcementFilterTest {
     void requiredRole_withAStaleOrAbsentBffSession_isDenied() {
         when(service.requiredForAny(anyString(), any())).thenReturn(Mono.just(true));
 
-        // a cookie whose stamp is NOT fresh (isFresh -> false)
+        // a cookie whose stamp is NOT fresh (isFresh -> false), and no session at all
         admin().get().uri(GUARDED).cookie("bff_session", "bff_stale").exchange()
                 .expectStatus().isForbidden();
-        verify(mfaStepUp).isFresh("bff_stale");
+        admin().get().uri(GUARDED).exchange().expectStatus().isForbidden();
         verify(service, never()).listEffective(anyString());
     }
 
@@ -241,14 +241,22 @@ class RoleMfaPolicyEnforcementFilterTest {
         verify(service).listEffective("brandx");
     }
 
+    /**
+     * A JWT principal plus a freshly stamped {@code bff_session} cookie: the cookie is not the
+     * principal's session, so its stamp is not evidence. (Deployed, the session-cookie bridge
+     * would have made the cookie the principal; the pass for a fresh session lives in
+     * {@link RoleMfaPolicyEnforcementEvidenceBindingTest}, which runs that bridge.)
+     */
     @Test
-    void requiredRole_withAFreshBffSessionCookie_isLetThrough() {
+    void requiredRole_withAFreshCookieThatIsNotThePrincipalsSession_isDenied() {
         when(service.requiredForAny(anyString(), any())).thenReturn(Mono.just(true));
         when(mfaStepUp.isFresh("bff_fresh")).thenReturn(Mono.just(true));
 
-        admin().get().uri(GUARDED).cookie("bff_session", "bff_fresh").exchange().expectStatus().isOk();
+        admin().get().uri(GUARDED).cookie("bff_session", "bff_fresh").exchange()
+                .expectStatus().isForbidden();
 
-        verify(service).listEffective("brandx");
+        verify(mfaStepUp, never()).isFresh(any());
+        verify(service, never()).listEffective(anyString());
     }
 
     @Test

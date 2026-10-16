@@ -1,17 +1,17 @@
 package net.hugmesh.adminbff.mfa;
 
+import net.hugmesh.authcore.account.Account;
+import net.hugmesh.authcore.account.AccountStore;
 import net.hugmesh.authcore.casdoor.MfaStepUpService;
-import net.hugmesh.authcore.config.SessionCookieWebFilter;
 import net.hugmesh.commons.security.DomainRegistry;
 import net.hugmesh.commons.security.PrincipalDomain;
 import net.hugmesh.commons.security.Roles;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.core.annotation.Order;
 import org.springframework.core.io.buffer.DataBuffer;
-import org.springframework.http.HttpCookie;
-import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.server.PathContainer;
@@ -20,6 +20,7 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.context.ReactiveSecurityContextHolder;
 import org.springframework.security.core.context.SecurityContext;
+import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
 import org.springframework.stereotype.Component;
 import org.springframework.web.server.ServerWebExchange;
 import org.springframework.web.server.WebFilter;
@@ -65,18 +66,24 @@ import java.util.Set;
  * <h2>What counts as fresh MFA</h2>
  * Either of two pieces of evidence, whichever carrier the request arrived on:
  * <ul>
- *   <li>the {@code MFA_SATISFIED} authority — present only when {@code app.mfa.enabled} is on
- *       AND the JWT carries a fresh BFF-written {@code mfa_satisfied_at} claim (a JWT carrier);</li>
- *   <li>a fresh {@code bff_session} MFA stamp ({@link MfaStepUpService#isFresh}), read from the
- *       {@code bff_session} cookie or a {@code Bearer bff_...} header — the same lookup the
- *       step-up controllers perform. This is read-only: it never CONSUMES the stamp (the
+ *   <li>the {@code MFA_SATISFIED} authority on a JWT principal — present only when
+ *       {@code app.mfa.enabled} is on AND the JWT carries a fresh BFF-written
+ *       {@code mfa_satisfied_at} claim. On a {@code bff_} session principal the same authority
+ *       is granted from the raw {@code mfa_satisfied} flag with no freshness window, so there it
+ *       is ignored and only the session check below counts;</li>
+ *   <li>a fresh MFA stamp on the principal's OWN {@code bff_session}
+ *       ({@link MfaStepUpService#isFresh}): the token is the {@code Bearer bff_...} the
+ *       principal was built from (a cookie-only request reaches this filter with the cookie
+ *       already bridged into that header), never a {@code bff_session} cookie sent alongside a
+ *       different Bearer, and the session must resolve to the account the principal names
+ *       (see {@link #sessionEvidence}). This is read-only: it never CONSUMES the stamp (the
  *       single-use consume belongs to the step-up gates, which still run on top).</li>
  * </ul>
- * <b>Carrier caveat.</b> A request that arrives as a custody JWT with {@code app.mfa.enabled}
- * off and no {@code bff_session} cookie carries neither piece of evidence, so it is denied for
- * a policy-required principal. Whoever turns this flag on must also have {@code app.mfa.enabled}
- * on (or have the cookie reach this service); that is an operator rollout step, not something
- * this class can decide.
+ * <b>Carrier caveat.</b> A principal authenticated by a custody JWT never has session evidence
+ * here (a {@code bff_session} cookie sent with it replaces the JWT as the principal before this
+ * filter runs), so it passes only with the {@code MFA_SATISFIED} authority. Whoever turns this
+ * flag on must also have {@code app.mfa.enabled} on for JWT callers; that is an operator
+ * rollout step, not something this class can decide.
  *
  * <h2>Domain</h2>
  * Taken from the validated issuer through {@link PrincipalDomain}, never from the request. A
@@ -119,12 +126,15 @@ public class RoleMfaPolicyEnforcementFilter implements WebFilter {
     private final RoleMfaPolicyService policies;
     private final MfaStepUpService mfaStepUp;
     private final DomainRegistry domainRegistry;
+    private final ObjectProvider<AccountStore> accounts;
 
     public RoleMfaPolicyEnforcementFilter(RoleMfaPolicyService policies, MfaStepUpService mfaStepUp,
-                                          DomainRegistry domainRegistry) {
+                                          DomainRegistry domainRegistry,
+                                          ObjectProvider<AccountStore> accounts) {
         this.policies = policies;
         this.mfaStepUp = mfaStepUp;
         this.domainRegistry = domainRegistry;
+        this.accounts = accounts;
         if (!mfaStepUp.enabled()) {
             log.warn("{}=true but app.casdoor.mfa.enabled=false: no session can carry an MFA stamp,"
                     + " so role-policy enforcement is INACTIVE (it would lock every privileged"
@@ -225,7 +235,11 @@ public class RoleMfaPolicyEnforcementFilter implements WebFilter {
             }
         }
         String domain = PrincipalDomain.of(auth, domainRegistry).domain();
-        boolean carriedEvidence = mfaAuthority;
+        // The authority is FRESH evidence only on a JWT principal (the JWT converter grants it
+        // from a freshness-checked claim). The bff_ session principal filter grants the same
+        // authority from the raw mfa_satisfied flag with no freshness window, so for any other
+        // principal it proves nothing here and the bound session check below decides.
+        boolean carriedEvidence = mfaAuthority && auth instanceof JwtAuthenticationToken;
         return policies.requiredForAny(domain, roles)
                 // A lookup that yields nothing is an unknown answer: it must not read as "allow".
                 .defaultIfEmpty(Boolean.TRUE)
@@ -233,18 +247,35 @@ public class RoleMfaPolicyEnforcementFilter implements WebFilter {
                     if (!required || carriedEvidence) {
                         return Mono.just(Boolean.TRUE);
                     }
-                    String token = sessionToken(exchange);
-                    return token == null
-                            ? Mono.just(Boolean.FALSE)
-                            : mfaStepUp.isFresh(token).map(fresh -> Boolean.TRUE.equals(fresh))
-                                    .defaultIfEmpty(Boolean.FALSE);
+                    return sessionEvidence(exchange, auth);
                 });
     }
 
-    private static String sessionToken(ServerWebExchange exchange) {
-        HttpCookie cookie = exchange.getRequest().getCookies().getFirst(SessionCookieWebFilter.SESSION_COOKIE);
-        return SessionCookieWebFilter.bffTokenFrom(cookie == null ? null : cookie.getValue(),
-                exchange.getRequest().getHeaders().getFirst(HttpHeaders.AUTHORIZATION));
+    /**
+     * Fresh MFA on the principal's OWN session, or {@code false}. Two independent bindings, so
+     * neither carrier precedence (decided in another library) nor a second session riding on
+     * the request can lend a stamp:
+     * <ol>
+     *   <li>the token is read from the {@code Authorization} header the principal was built
+     *       from (see {@link PrincipalSessionToken}), never from the {@code bff_session} cookie;</li>
+     *   <li>that session must resolve to the account the principal names
+     *       ({@link Authentication#getName()}); an unknown session, a different account or a
+     *       missing account store is a denial.</li>
+     * </ol>
+     */
+    private Mono<Boolean> sessionEvidence(ServerWebExchange exchange, Authentication auth) {
+        String token = PrincipalSessionToken.fromAuthorization(exchange.getRequest().getHeaders());
+        AccountStore store = accounts.getIfAvailable();
+        String principal = auth.getName();
+        if (token == null || store == null || principal == null) {
+            return Mono.just(Boolean.FALSE);
+        }
+        return store.sessionOfToken(token)
+                .map(Account::id)
+                .filter(principal::equals)
+                .flatMap(sameAccount -> mfaStepUp.isFresh(token))
+                .map(Boolean.TRUE::equals)
+                .defaultIfEmpty(Boolean.FALSE);
     }
 
     private static Mono<Void> deny(ServerWebExchange exchange) {

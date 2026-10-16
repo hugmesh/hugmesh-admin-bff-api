@@ -1,5 +1,6 @@
 package net.hugmesh.adminbff.golive;
 
+import net.hugmesh.adminbff.mfa.PrincipalSessionToken;
 import io.swagger.v3.oas.annotations.Operation;
 
 import jakarta.validation.Valid;
@@ -146,7 +147,7 @@ public class GoLiveController {
         }
         // The caller's opaque bff_ session (cookie OR synthesised-from-bearer), derived exactly
         // as ImageBuildController / AdminSshKeyIssuanceController do — NEVER a body field.
-        String sessionToken = SessionCookieWebFilter.bffTokenFrom(sessionCookie, authHeader);
+        String sessionToken = PrincipalSessionToken.of(sessionCookie, authHeader);
         // Check step-up, consume the MFA single-use, then record the intent.
         return mfaStepUp.isFresh(sessionToken)
                 .flatMap(mfaFresh -> recordIfStepUpSatisfied(mfaFresh, actor, stepUpToken,
@@ -167,7 +168,7 @@ public class GoLiveController {
         if (actor == null || actor.isBlank()) {
             return Mono.error(ApiException.unauthorized("no subject on token"));
         }
-        String sessionToken = SessionCookieWebFilter.bffTokenFrom(sessionCookie, authHeader);
+        String sessionToken = PrincipalSessionToken.of(sessionCookie, authHeader);
         // Check step-up, consume the MFA single-use, then CAS-withdraw the intent row.
         return mfaStepUp.isFresh(sessionToken)
                 .flatMap(mfaFresh -> withdrawIfStepUpSatisfied(mfaFresh, actor, stepUpToken,

@@ -1,5 +1,6 @@
 package net.hugmesh.adminbff.sshissue;
 
+import net.hugmesh.adminbff.mfa.PrincipalSessionToken;
 import io.swagger.v3.oas.annotations.Operation;
 
 import jakarta.validation.constraints.NotBlank;
@@ -114,7 +115,7 @@ public class AdminSshKeyIssuanceController {
         if (actor == null || actor.isBlank()) {
             return Mono.error(ApiException.unauthorized("no subject on token"));
         }
-        String sessionToken = SessionCookieWebFilter.bffTokenFrom(sessionCookie, authHeader);
+        String sessionToken = PrincipalSessionToken.of(sessionCookie, authHeader);
         // A5 UNIFIED step-up: the workload step-up token OR a FRESH Casdoor-MFA stamp (co-equal,
         // license-INDEPENDENT). Issuance is a DEVICE op — the MFA leg satisfies ONLY the step-up
         // re-confirmation; the own-domain wall + device_ssh_license registration stay a SEPARATE
@@ -139,7 +140,7 @@ public class AdminSshKeyIssuanceController {
         if (actor == null || actor.isBlank()) {
             return Mono.error(ApiException.unauthorized("no subject on token"));
         }
-        String sessionToken = SessionCookieWebFilter.bffTokenFrom(sessionCookie, authHeader);
+        String sessionToken = PrincipalSessionToken.of(sessionCookie, authHeader);
         // Check step-up, consume MFA single-use, then stream the private key bytes.
         return mfaStepUp.isFresh(sessionToken)
                 .flatMap(mfaFresh -> downloadKeyIfStepUpSatisfied(mfaFresh, actor, stepUpToken,
@@ -160,7 +161,7 @@ public class AdminSshKeyIssuanceController {
         if (actor == null || actor.isBlank()) {
             return Mono.error(ApiException.unauthorized("no subject on token"));
         }
-        String sessionToken = SessionCookieWebFilter.bffTokenFrom(sessionCookie, authHeader);
+        String sessionToken = PrincipalSessionToken.of(sessionCookie, authHeader);
         // Check step-up, consume MFA single-use, then revoke the key record.
         return mfaStepUp.isFresh(sessionToken)
                 .flatMap(mfaFresh -> revokeIfStepUpSatisfied(mfaFresh, actor, stepUpToken,

@@ -1,5 +1,6 @@
 package net.hugmesh.adminbff.phone;
 
+import net.hugmesh.adminbff.mfa.PrincipalSessionToken;
 import io.swagger.v3.oas.annotations.Operation;
 
 import jakarta.validation.Valid;
@@ -162,7 +163,7 @@ public class PhoneManagementSuperadminController {
             return Mono.error(ApiException.unauthorized("no subject on token"));
         }
         PrincipalDomain scope = scope(auth);
-        String sessionToken = SessionCookieWebFilter.bffTokenFrom(sessionCookie, authHeader);
+        String sessionToken = PrincipalSessionToken.of(sessionCookie, authHeader);
         // UNIFIED step-up: the workload step-up token OR a FRESH Casdoor-MFA stamp (co-equal,
         // flag-gated + fail-closed). Check step-up, consume the MFA stamp single-use, then mutate.
         return mfaStepUp.isFresh(sessionToken)
