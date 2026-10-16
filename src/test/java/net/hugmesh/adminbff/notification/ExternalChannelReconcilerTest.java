@@ -245,4 +245,254 @@ class ExternalChannelReconcilerTest {
         assertThat(cursor.find("ext:matrix").block()).isEqualTo(outboxId);
         assertThat(cursor.find("ext:email").block()).isEqualTo(outboxId);
     }
+
+    // ── notify_channels directive (issue #93): narrow-only ────────────────────
+
+    private String seedWithDirective(String domain, String userSubject, List<String> directive) {
+        String sourceId = UUID.randomUUID().toString();
+        String payload = AccountRestrictionPayload.build(userSubject, "PROFILE", 3600L, "abuse", directive);
+        outbox.insert(domain, NotificationOutbox.SOURCE_ACCESS_SUSPENSION, sourceId,
+                NotificationOutbox.CATEGORY_ACCOUNT_RESTRICTION, payload).block();
+        return outbox.findBySource(NotificationOutbox.SOURCE_ACCESS_SUSPENSION, sourceId,
+                NotificationOutbox.CATEGORY_ACCOUNT_RESTRICTION).block().id();
+    }
+
+    private FakeChannel up(String name) {
+        FakeChannel c = new FakeChannel(name);
+        c.availableDomains = Set.of("brandx");
+        return c;
+    }
+
+    @Test
+    void directiveSubset_sendsOnlyOnNamedChannel_andExcludedChannelRecordsTerminalSkip() {
+        FakeChannel matrix = up("matrix");
+        FakeChannel email = up("email");
+        String id = seedWithDirective("brandx", "subject-sub", List.of("email"));
+
+        reconciler(matrix, email).runOnce().block();
+
+        assertThat(email.sent).hasSize(1);
+        assertThat(matrix.sent).isEmpty();
+        assertThat(deliveries.status(id, "email").block()).isEqualTo(NotificationDeliveryRepository.STATUS_SENT);
+        // Excluded: a terminal skip, so its OWN cursor moved past the row (not re-scanned forever).
+        assertThat(deliveries.status(id, "matrix").block()).isEqualTo(NotificationDeliveryRepository.STATUS_SKIPPED);
+        assertThat(cursor.find("ext:matrix").block()).isEqualTo(id);
+    }
+
+    @Test
+    void excludedChannel_laterRowsStillAdvanceItsCursor() {
+        FakeChannel matrix = up("matrix");
+        FakeChannel email = up("email");
+        seedWithDirective("brandx", "subject-1", List.of("email"));
+        String second = seed("brandx", "subject-2");   // no directive: both channels
+
+        reconciler(matrix, email).runOnce().block();
+
+        assertThat(matrix.sent).hasSize(1);   // only the second row
+        assertThat(cursor.find("ext:matrix").block()).isEqualTo(second);
+    }
+
+    @Test
+    void absentDirective_isTheDefaultFanOut() {
+        FakeChannel matrix = up("matrix");
+        FakeChannel email = up("email");
+        seed("brandx", "subject-none");
+
+        reconciler(matrix, email).runOnce().block();
+
+        assertThat(matrix.sent).hasSize(1);
+        assertThat(email.sent).hasSize(1);
+    }
+
+    @Test
+    void emptyDirective_isTheDefaultFanOut() {
+        FakeChannel matrix = up("matrix");
+        FakeChannel email = up("email");
+        seedWithDirective("brandx", "subject-empty", List.of());
+
+        reconciler(matrix, email).runOnce().block();
+
+        assertThat(matrix.sent).hasSize(1);
+        assertThat(email.sent).hasSize(1);
+    }
+
+    @Test
+    void unknownNameOnlyDirective_isIgnored_defaultFanOut() {
+        FakeChannel matrix = up("matrix");
+        FakeChannel email = up("email");
+        // Written straight to the outbox: even a payload that bypassed ingress normalisation is ignored.
+        String sourceId = UUID.randomUUID().toString();
+        outbox.insert("brandx", NotificationOutbox.SOURCE_ACCESS_SUSPENSION, sourceId,
+                NotificationOutbox.CATEGORY_ACCOUNT_RESTRICTION,
+                "{\"target\":\"subject-unk\",\"role\":\"PROFILE\",\"notify_channels\":[\"carrier-pigeon\"]}").block();
+
+        reconciler(matrix, email).runOnce().block();
+
+        assertThat(matrix.sent).hasSize(1);
+        assertThat(email.sent).hasSize(1);
+    }
+
+    @Test
+    void inAppOnlyDirective_isNotAnExternalNarrowing_defaultFanOut() {
+        FakeChannel matrix = up("matrix");
+        FakeChannel email = up("email");
+        seedWithDirective("brandx", "subject-inapp", List.of("in-app"));
+
+        reconciler(matrix, email).runOnce().block();
+
+        assertThat(matrix.sent).hasSize(1);
+        assertThat(email.sent).hasSize(1);
+    }
+
+    @Test
+    void directiveCannotEnableADisabledChannel() {
+        FakeChannel matrix = up("matrix");
+        FakeChannel email = up("email");
+        email.enabled = false;
+        String id = seedWithDirective("brandx", "subject-dis", List.of("matrix", "email"));
+
+        reconciler(matrix, email).runOnce().block();
+
+        assertThat(email.sent).isEmpty();                       // still gated off
+        assertThat(deliveries.status(id, "email").block()).isNull();
+        assertThat(matrix.sent).hasSize(1);
+    }
+
+    @Test
+    void directiveCannotOverrideAnUnavailableChannel() {
+        FakeChannel matrix = up("matrix");
+        matrix.availableDomains = Set.of();                     // named but not available
+        FakeChannel email = up("email");
+        String id = seedWithDirective("brandx", "subject-unav", List.of("matrix", "email"));
+
+        reconciler(matrix, email).runOnce().block();
+
+        assertThat(matrix.sent).isEmpty();                      // the availability gate still wins
+        assertThat(deliveries.status(id, "matrix").block()).isNull();
+        assertThat(email.sent).hasSize(1);
+    }
+
+    @Test
+    void directiveNamingOnlyADisabledChannel_isTreatedAsAbsent_widensToDefaultFanOut() {
+        FakeChannel matrix = up("matrix");
+        FakeChannel email = up("email");
+        email.enabled = false;
+        // The mod asked for email only (the low-noise choice), but email is off: the directive is
+        // treated as absent, so this WIDENS to the default fan-out (matrix) rather than narrowing.
+        // Pinned on purpose; see NotifyChannelDirective javadoc.
+        seedWithDirective("brandx", "subject-forced", List.of("email"));
+
+        reconciler(matrix, email).runOnce().block();
+
+        assertThat(matrix.sent).hasSize(1);
+    }
+
+    @Test
+    void mastodonName_mapsToTheAkkomaChannel() {
+        FakeChannel akkoma = up("akkoma");
+        FakeChannel email = up("email");
+        seedWithDirective("brandx", "subject-masto", List.of("mastodon"));
+
+        reconciler(akkoma, email).runOnce().block();
+
+        assertThat(akkoma.sent).hasSize(1);
+        assertThat(email.sent).isEmpty();
+    }
+
+    // ── No external guarantee: only in-app is a floor ─────────────────────────
+
+    @Test
+    void directiveNamingAnEnabledButUnavailableChannel_sendsNothingExternal_andSkipIsTerminal() {
+        FakeChannel matrix = up("matrix");
+        FakeChannel email = up("email");
+        email.availableDomains = Set.of();                      // enabled, named, but unavailable
+        String id = seedWithDirective("brandx", "subject-zero-b", List.of("email"));
+        ExternalChannelReconciler r = reconciler(matrix, email);
+
+        r.runOnce().block();
+
+        assertThat(matrix.sent).isEmpty();                      // excluded
+        assertThat(email.sent).isEmpty();                       // named but unavailable
+        assertThat(deliveries.status(id, "matrix").block()).isEqualTo(NotificationDeliveryRepository.STATUS_SKIPPED);
+
+        email.availableDomains = Set.of("brandx");              // the named channel recovers
+        r.runOnce().block();
+        assertThat(email.sent).hasSize(1);
+        assertThat(matrix.sent).isEmpty();                      // the excluded skip is never retried
+    }
+
+    @Test
+    void directiveNamingEmail_whenEmailSkipsTheRow_noExternalChannelDelivers() {
+        FakeChannel matrix = up("matrix");
+        FakeChannel email = up("email");
+        email.outcome = ChannelOutcome.SKIPPED;                 // e.g. no resolvable address
+        String id = seedWithDirective("brandx", "subject-zero-a", List.of("in-app", "email"));
+
+        reconciler(matrix, email).runOnce().block();
+
+        assertThat(matrix.sent).isEmpty();
+        assertThat(deliveries.status(id, "matrix").block()).isEqualTo(NotificationDeliveryRepository.STATUS_SKIPPED);
+        assertThat(deliveries.status(id, "email").block()).isEqualTo(NotificationDeliveryRepository.STATUS_SKIPPED);
+    }
+
+    // ── one failing directive-skip record must not abort the rest of the batch ──
+
+    /** A delivery repository whose first matrix record() fails, either as an error signal
+     *  or as a synchronous throw; every later call goes to the real repository. */
+    private NotificationDeliveryRepository failingFirstMatrixRecord(boolean synchronous) {
+        java.util.concurrent.atomic.AtomicInteger calls = new java.util.concurrent.atomic.AtomicInteger();
+        return new NotificationDeliveryRepository(net.hugmesh.adminbff.testutil.R2dbcRepos.of(db,
+                net.hugmesh.adminbff.notification.NotificationDeliveryR2dbcRepository.class)) {
+            @Override
+            public Mono<Long> record(String outboxId, String channel, String status) {
+                if ("matrix".equals(channel) && calls.incrementAndGet() == 1) {
+                    if (synchronous) {
+                        throw new IllegalStateException("record blew up synchronously");
+                    }
+                    return Mono.error(new IllegalStateException("record failed"));
+                }
+                return super.record(outboxId, channel, status);
+            }
+        };
+    }
+
+    private long matrixSkips(String... ids) {
+        return java.util.Arrays.stream(ids)
+                .filter(id -> NotificationDeliveryRepository.STATUS_SKIPPED.equals(deliveries.status(id, "matrix").block()))
+                .count();
+    }
+
+    private void assertBadDirectiveSkipDoesNotAbortBatch(boolean synchronous) {
+        FakeChannel matrix = up("matrix");
+        FakeChannel email = up("email");
+        String a = seedWithDirective("brandx", "subject-a", List.of("email"));
+        String b = seedWithDirective("brandx", "subject-b", List.of("email"));
+        ExternalChannelReconciler r = new ExternalChannelReconciler(failingFirstMatrixRecord(synchronous),
+                cursor, List.of(matrix, email), new AlwaysLeader(), meters, 100, 3);
+
+        r.runOnce().block();
+
+        // Exactly the failed row stays unrecorded; the other row was still processed.
+        assertThat(matrixSkips(a, b)).isEqualTo(1);
+        assertThat(meters.counter("notification.external.row_errors", "channel", "matrix").count()).isEqualTo(1.0);
+        assertThat(meters.find("notification.external.channel_errors").counter()).isNull();
+        // The failed row broke the contiguous prefix, so the matrix cursor does not move past it.
+        assertThat(cursor.find("ext:matrix").block()).isNull();
+        // Email is independent and delivered both rows.
+        assertThat(email.sent).hasSize(2);
+
+        // The next tick retries only the unrecorded row.
+        r.runOnce().block();
+        assertThat(matrixSkips(a, b)).isEqualTo(2);
+    }
+
+    @Test
+    void directiveSkip_recordFailure_doesNotAbortTheBatch_otherRowsStillProcessed() {
+        assertBadDirectiveSkipDoesNotAbortBatch(false);
+    }
+
+    @Test
+    void directiveSkip_recordThrowingSynchronously_doesNotAbortTheBatch() {
+        assertBadDirectiveSkipDoesNotAbortBatch(true);
+    }
 }
