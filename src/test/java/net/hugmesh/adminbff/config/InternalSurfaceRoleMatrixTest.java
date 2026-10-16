@@ -108,6 +108,7 @@ class InternalSurfaceRoleMatrixTest {
                 arguments(HttpMethod.POST, "/bff/internal/accounts/ensure"),
                 arguments(HttpMethod.GET, "/bff/internal/accounts/acct-1"),
                 arguments(HttpMethod.POST, "/bff/internal/accounts/acct-1/complete"),
+                arguments(HttpMethod.POST, "/bff/internal/accounts/acct-1/restart-onboarding"),
                 arguments(HttpMethod.GET, "/bff/internal/accounts/acct-1/namespaces"),
                 arguments(HttpMethod.GET, "/bff/internal/allowlist/google/alice"),
                 arguments(HttpMethod.POST, "/bff/internal/sessions"),
