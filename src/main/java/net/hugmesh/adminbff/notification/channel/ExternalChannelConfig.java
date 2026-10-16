@@ -114,16 +114,35 @@ public class ExternalChannelConfig {
     }
 
     /**
-     * The phpBB forum channel (Notifications PR7) — a visible STUBBED seam. {@code
-     * notify.forum.seam-wired} defaults false until the forum-bff send seam (pinned to the
-     * hugmesh/forum-api phpBB extension) is wired, so the channel is visibly unavailable
-     * (the admin UI greys it) rather than a silent gap.
+     * The phpBB forum channel (Notifications PR7). Without {@code notify.forum.pm.wired} it is
+     * the visible STUBBED seam: {@code notify.forum.seam-wired} defaults false, so the channel
+     * is visibly unavailable (the admin UI greys it) rather than a silent gap. With it, the
+     * channel sends through the {@link ForumSystemPmClient}.
      */
     @Bean
     public ForumChannel forumNotificationChannel(
+            ObjectProvider<ForumSystemPmClient> pmProvider,
             @Value("${notify.forum.enabled:false}") boolean enabled,
             @Value("${notify.forum.seam-wired:false}") boolean forumSeamWired,
             @Value("${notification.system-account.channel.forum.token:}") String forumToken) {
-        return new ForumChannel(enabled, forumSeamWired, forumToken != null && !forumToken.isBlank());
+        return new ForumChannel(enabled, forumSeamWired, forumToken != null && !forumToken.isBlank(),
+                pmProvider.getIfAvailable());
+    }
+
+    /**
+     * The phpBB {@code @system} private-message transport. Exists ONLY when
+     * {@code notify.forum.pm.wired=true} (default false). The base URL defaults to the
+     * forum-bff service the admin console client dials ({@code external.forum.base-url}).
+     */
+    @Bean
+    @ConditionalOnProperty(name = "notify.forum.pm.wired", havingValue = "true")
+    public ForumSystemPmClient forumSystemPmClient(
+            WebClient.Builder builder,
+            SystemChannelTokens tokens,
+            @Value("${notify.forum.base-url:${external.forum.base-url:http://hugmesh-forum-bff-api.hugmesh-backend.svc.cluster.local:8080}}")
+            String baseUrl,
+            @Value("${notify.forum.timeout-ms:10000}") long timeoutMs) {
+        return new ForumSystemPmClient(builder.clone().baseUrl(baseUrl).build(), tokens,
+                Duration.ofMillis(timeoutMs));
     }
 }

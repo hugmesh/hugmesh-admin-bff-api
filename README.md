@@ -101,7 +101,8 @@ for the narrower ones):
   shipped, enforcement/cutover still roadmap** (see [Roadmap](#roadmap)).
 - Notification external channels: Matrix DM and Akkoma transports are written but gated
   off (see "Notifications" below), email only reaches recipients that are email addresses,
-  phpBB is a stub; the superadmin app-store's ArgoCD provisioning effector is dark (the
+  phpBB has a private-message transport (dark behind `notify.forum.pm.wired`) but no
+  forum-bff route to call; the superadmin app-store's ArgoCD provisioning effector is dark (the
   Kaniko in-cluster image builder is real code, but also off by default:
   `app.appstore.builder.enabled=false`).
 - Device-license Layer-A headscale enforcement needs a live control node to confirm
@@ -1175,7 +1176,7 @@ delivers them in-app to user-bff:
 > | Matrix DM | `notify.matrix.enabled` | `notify.matrix.dm.wired` | `MatrixSystemDmClient`: standard client-server API as `@system` (whoami, profile existence probe, `createRoom`, `m.direct`, `send` with a txn id from the outbox row). Contract-tested against a fake whose profile, `m.direct` and txn-id semantics were measured on tuwunel v1.7.0 (its forced 403/404/429/5xx replies were not), plus `MatrixSystemDmClientLiveTest` against a real homeserver. With `dm.wired=false` it stays on the stubbed admin seam. |
 > | Akkoma | `notify.akkoma.enabled` | `notify.akkoma.notice.wired` | `AkkomaSystemNoticeClient`: `accounts/lookup` probe + a `direct` status as `@system`, `Idempotency-Key` from the outbox row. Contract-tested against a fake built from the API docs; **not run against a real Akkoma**. |
 > | email | `notify.email.enabled` | none (SMTP is the transport) | `EmailChannel` is real. A recipient that already IS an email address is mailed as before; any other subject goes to an optional `RecipientEmailResolver` bean (empty result is `skipped`, a failed lookup is `failed` and retried, a result that is not address-shaped is `skipped`). **No resolver implementation exists**: the profile-email source needs an email getter that the auth-core `CasdoorAdminClient` (2.5.1) does not have, so with no bean a subject like `org/alice` is still `skipped`. Only an in-memory fake is used in the tests; no live SMTP send was observed. |
-> | phpBB forum | `notify.forum.enabled` | `notify.forum.seam-wired` | Still a visible stub: the forum-bff send seam (`hugmesh/forum-api` phpBB extension) is not pinned. |
+> | phpBB forum | `notify.forum.enabled` | `notify.forum.pm.wired` | `ForumSystemPmClient`: one `POST /bff/forum/system/private-messages` to the forum-bff as `@system`, `Idempotency-Key` from the outbox row; a 404 with body code `unknown_recipient` is `skipped`, any other non-2xx (a missing route included) is `failed` and retried. **No forum-bff or forum-api serves that route yet** (neither has a private-message verb), so the contract is a proposal encoded only by the test fake; it needs that forum-bff route and, behind it, a private-message verb in the `hugmesh/forum-api` phpBB extension. With `pm.wired=false` the channel stays the visible stub gated on `notify.forum.seam-wired`. |
 >
 > Flipping a flag needs the `@system` token for that channel
 > (`notification.system-account.channel.<channel>.token`, Vault via ESO, empty default) and a
@@ -1395,8 +1396,10 @@ as shipped.
     (generator `docs/MFA-ROLLOUT.md` §2); flipping before enrollment locks the operator
     out.
 - 🚧 **Notification external channels.** Matrix DM and Akkoma transports written and
-  contract-tested (flags off, not yet run on a live mesh); phpBB stubbed; email needs a
-  recipient-address lookup. On top of the shipped in-app outbox MVP: per-channel
+  contract-tested (flags off, not yet run on a live mesh); phpBB transport
+  written (dark behind `notify.forum.pm.wired`) against a proposed forum-bff route nothing
+  serves yet, so it waits on that route and the `hugmesh/forum-api` phpBB extension; email
+  needs a recipient-address lookup. On top of the shipped in-app outbox MVP: per-channel
   `enabled()` gates, a mod-bff `notify_channels` directive, minimal prefs tables,
   user-silenceable.
 - 🚧 **Superadmin app-store infra effectors.** The data layer (curation / app-profile /
