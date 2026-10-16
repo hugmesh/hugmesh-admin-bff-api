@@ -208,7 +208,7 @@ public class ExternalChannelReconciler {
             return onFailure(ch, row, advanceTo, prefixIntact, "no-recipient");
         }
         NotificationTemplate.Message msg = NotificationTemplate.render(row.category(), row.payload());
-        ChannelMessage cm = new ChannelMessage(row.category(), msg.title(), msg.body());
+        ChannelMessage cm = new ChannelMessage(row.category(), msg.title(), msg.body(), row.id());
         return ch.send(row.domain(), recipient, cm).flatMap(outcome -> switch (outcome) {
             case SENT -> onTerminal(ch, row, advanceTo, prefixIntact,
                     NotificationDeliveryRepository.STATUS_SENT, "sent");

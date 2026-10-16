@@ -67,4 +67,53 @@ class MatrixChannelTest {
         assertThat(MatrixChannel.localpartOf("org/Bob@x.y")).isEqualTo("bob");
         assertThat(MatrixChannel.localpartOf(null)).isEmpty();
     }
+
+    // ── real transport (notify.matrix.dm.wired) ──────────────────────────────
+    private static MatrixSystemDmClient dm(FakeMatrixHomeserver hs) {
+        return new MatrixSystemDmClient(WebClient.builder().baseUrl(hs.baseUrl()).build(),
+                new net.hugmesh.adminbff.notification.SystemChannelTokens(
+                        FakeMatrixHomeserver.SYSTEM_TOKEN, "", "", ""),
+                java.time.Duration.ofSeconds(5));
+    }
+
+    @Test
+    void wiredTransport_doesNotNeedTheAdminSeam_butStillNeedsGateAndToken() throws Exception {
+        try (FakeMatrixHomeserver hs = new FakeMatrixHomeserver()) {
+            MatrixSystemDmClient dm = dm(hs);
+            // homeserver.admin.enabled=false is irrelevant to a client-API DM
+            assertThat(new MatrixChannel(hs(false), true, true, dm).available("brandx").block()).isTrue();
+            assertThat(new MatrixChannel(hs(false), false, true, dm).available("brandx").block()).isFalse();
+            assertThat(new MatrixChannel(hs(false), true, false, dm).available("brandx").block()).isFalse();
+        }
+    }
+
+    @Test
+    void wiredTransport_sendsTitleAndBody_withTheRowIdAsTxn_andNeverTouchesTheStub() throws Exception {
+        try (FakeMatrixHomeserver hs = new FakeMatrixHomeserver()) {
+            HomeserverAdminClient stub = mock(HomeserverAdminClient.class);
+            MatrixChannel ch = new MatrixChannel(stub, true, true, dm(hs));
+
+            ChannelOutcome out = ch.send("brandx", "hugmesh/Alice@brandx.test",
+                    new ChannelMessage("account-restriction", "Your account access changed", "Reason: spam", "row-7"))
+                    .block();
+
+            assertThat(out).isEqualTo(ChannelOutcome.SENT);
+            assertThat(hs.events).hasSize(1);
+            assertThat(hs.events.get(0).body()).isEqualTo("Your account access changed\n\nReason: spam");
+            assertThat(hs.events.get(0).txn()).isEqualTo("hm-row-7");
+            org.mockito.Mockito.verifyNoInteractions(stub);
+        }
+    }
+
+    @Test
+    void wiredTransport_recipientWithoutAccount_isSkipped_blankIsSkipped() throws Exception {
+        try (FakeMatrixHomeserver hs = new FakeMatrixHomeserver()) {
+            MatrixChannel ch = new MatrixChannel(hs(true), true, true, dm(hs));
+            assertThat(ch.send("brandx", "org/ghost", new ChannelMessage("c", "T", "B")).block())
+                    .isEqualTo(ChannelOutcome.SKIPPED);
+            assertThat(ch.send("brandx", " ", new ChannelMessage("c", "T", "B")).block())
+                    .isEqualTo(ChannelOutcome.SKIPPED);
+            assertThat(hs.events).isEmpty();
+        }
+    }
 }
