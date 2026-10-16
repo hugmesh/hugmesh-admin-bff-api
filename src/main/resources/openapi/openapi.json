@@ -12800,6 +12800,15 @@
             "maxLength" : 1024,
             "minLength" : 0,
             "type" : "string"
+          },
+          "notifyChannels" : {
+            "maxItems" : 8,
+            "minItems" : 0,
+            "type" : "array",
+            "items" : {
+              "pattern" : "^[a-z][a-z-]{0,31}$",
+              "type" : "string"
+            }
           }
         }
       },

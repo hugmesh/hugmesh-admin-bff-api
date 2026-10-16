@@ -9,12 +9,14 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import net.hugmesh.adminbff.notification.AccountRestrictionPayload;
 import net.hugmesh.adminbff.notification.NotificationOutbox;
+import net.hugmesh.adminbff.notification.NotifyChannelDirective;
 import net.hugmesh.adminbff.notification.NotificationOutboxRepository;
 import net.hugmesh.adminbff.provision.ServiceTokenBroker;
 import net.hugmesh.commons.security.PrincipalDomain;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 
 /**
  * The desired-state API the endpoints call: write / clear an {@code access_suspension}
@@ -63,6 +65,19 @@ public class SuspensionService {
      */
     public Mono<AccessSuspension> suspend(String role, String casdoorUser, Long ttlSeconds,
                                           String reason, String setBy, PrincipalDomain scope) {
+        return suspend(role, casdoorUser, ttlSeconds, reason, setBy, scope, null);
+    }
+
+    /**
+     * As {@link #suspend(String, String, Long, String, String, PrincipalDomain)}, carrying
+     * the moderator's {@code notifyChannels} directive into the outbox row's payload (see
+     * {@link NotifyChannelDirective}). An absent or empty list is today's behaviour.
+     * If an active suspension already exists this is the idempotent no-op and the new
+     * request's directive is dropped (first request wins, as for the reason).
+     */
+    public Mono<AccessSuspension> suspend(String role, String casdoorUser, Long ttlSeconds,
+                                          String reason, String setBy, PrincipalDomain scope,
+                                          List<String> notifyChannels) {
         String localpart = ServiceTokenBroker.matrixUser(localpartSeed(casdoorUser));
         boolean permanent = ttlSeconds == null;
         Instant expiresAt = permanent ? null : Instant.now().plus(Duration.ofSeconds(ttlSeconds));
@@ -80,7 +95,7 @@ public class SuspensionService {
                 // INSERT lives ONLY in this switchIfEmpty defer.
                 .switchIfEmpty(Mono.defer(() -> insertSuspensionWithOutbox(
                         casdoorUser, localpart, role, expiresAt, restoreRole, reason, setBy,
-                        ttlSeconds, domain)))
+                        ttlSeconds, domain, notifyChannels)))
                 // Trigger a reconcile tick (best-effort; the @Scheduled loop is the
                 // backstop so a failed manual tick still converges on the next sweep).
                 // This is OUTSIDE the transaction: the tick does external Casdoor /
@@ -101,7 +116,8 @@ public class SuspensionService {
      */
     private Mono<AccessSuspension> insertSuspensionWithOutbox(
             String casdoorUser, String localpart, String role, Instant expiresAt,
-            boolean restoreRole, String reason, String setBy, Long ttlSeconds, String domain) {
+            boolean restoreRole, String reason, String setBy, Long ttlSeconds, String domain,
+            List<String> notifyChannels) {
         return repo.insertActive(casdoorUser, localpart, role, expiresAt, restoreRole, reason, setBy, domain)
                 .doOnNext(s -> log.info("[suspension] created {} for {} (id={}, ttl={}s, domain={})",
                         role, casdoorUser, s.id(), ttlSeconds, s.domain()))
@@ -111,7 +127,7 @@ public class SuspensionService {
                                 s.id(),
                                 NotificationOutbox.CATEGORY_ACCOUNT_RESTRICTION,
                                 // NOTE: no setBy / actor — neutral @system payload.
-                                AccountRestrictionPayload.build(casdoorUser, role, ttlSeconds, reason))
+                                AccountRestrictionPayload.build(casdoorUser, role, ttlSeconds, reason, notifyChannels))
                         .thenReturn(s))
                 // ── The transaction boundary: both INSERTs commit together or not at
                 // all. as(tx::transactional) enrolls the whole effect+outbox pipeline. ──

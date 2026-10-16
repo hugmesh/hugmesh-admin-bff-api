@@ -132,6 +132,26 @@ class NotificationReconcilerTest {
         assertThat(metric("notification.reconcile.delivered")).isEqualTo(1d);
     }
 
+    // ── The in-app reconciler does not read the moderator's channel directive ──
+    @Test
+    void inApp_deliversARowWhoseDirectiveNamesOnlyAnExternalChannel() {
+        when(userBff.deliverInApp(any()))
+                .thenReturn(Mono.just(UserBffNotificationClient.Outcome.DELIVERED));
+        String sourceId = UUID.randomUUID().toString();
+        outbox.insert("brandx", NotificationOutbox.SOURCE_ACCESS_SUSPENSION, sourceId,
+                NotificationOutbox.CATEGORY_ACCOUNT_RESTRICTION,
+                AccountRestrictionPayload.build("subject-dir", "PROFILE", null, "abuse",
+                        java.util.List.of("email"))).block();
+        String outboxId = outbox.findBySource(NotificationOutbox.SOURCE_ACCESS_SUSPENSION, sourceId,
+                NotificationOutbox.CATEGORY_ACCOUNT_RESTRICTION).block().id();
+
+        reconciler.runOnce().block();
+
+        verify(userBff, times(1)).deliverInApp(any());
+        assertThat(deliveries.statusInApp(outboxId).block())
+                .isEqualTo(NotificationDeliveryRepository.STATUS_SENT);
+    }
+
     // ── NEUTRAL: the composed message never carries an actor identity ───────
     @Test
     void deliveredMessage_isNeutral_neverCarriesAnActor() {
