@@ -1327,7 +1327,7 @@ them as shipped.
   behind its own flag. Both are gated on enrolling every privileged operator FIRST (generator
   `docs/MFA-ROLLOUT.md` §2) — flipping before enrollment locks the operator out.
 - 🚧 **Notification external channels** — Matrix DM and Akkoma transports written and
-  contract-tested (flags off, not yet run on a live mesh); phpBB stubbed; email needs a
+  contract-tested (flags off, not yet run on a live mesh); phpBB transport written against a proposed forum-bff route nothing serves yet; email needs a
   recipient-address lookup; per-channel `enabled()` gates,
   mod-bff `notify_channels` directive, minimal prefs tables, user-silenceable.
 - 🚧 **Superadmin app-store infra effectors** — the data layer (curation / app-profile /
