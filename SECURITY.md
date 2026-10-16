@@ -2,19 +2,29 @@
 
 ## Authentication layers
 
-This BFF is defended in depth by two independent layers:
+Two independent layers defend this BFF:
 
 1. **OAuth2 resource server (application layer).** Every request must carry a
-   valid Casdoor-issued JWT (`spring.security.oauth2.resourceserver`). It
-   independently re-validates the JWT before mutating the `gateway_route_access`
-   table (it is the only writer of that source-of-truth). This is unchanged.
+   valid Casdoor-issued JWT (`spring.security.oauth2.resourceserver`), except the
+   public paths: the health and info probes, `POST /bff/login`,
+   `POST /bff/login/local`, `/bff/register/**`, `POST /bff/sessionOut` and
+   `/bff/public/**`. `/bff/internal/**` needs a service principal instead: a Casdoor
+   client-credentials JWT, or the in-cluster `X-Internal-Token`. The BFF
+   re-validates the JWT itself before it changes the `gateway_route_access` table. It
+   is the only writer of that table, the source of truth.
 
 2. **Mutual TLS — the API-to-API trust boundary (transport layer).** In-cluster,
    the TLS handshake **requires a client certificate that chains to the cluster CA
-   truststore**. Only services that were deployed and signed by our Vault/ESO PKI
-   process hold such a certificate. A random pod, an `io`/external client, or
-   anything not issued by our PKI presents no chaining cert, so its handshake is
-   rejected before any byte of HTTP is read — it cannot read or call this API at all.
+   truststore**. Only services deployed and signed by our Vault/ESO PKI process hold
+   one. A random pod, an `io`/external client, or anything not issued by our PKI
+   presents no chaining cert, so the handshake is rejected before any byte of HTTP is
+   read. It cannot open a connection to this API.
+
+   mTLS decides who may connect. It does not say who the end user is. The
+   fe-gateway presents its own cluster-CA client cert when it proxies browser
+   traffic to this BFF, so that traffic passes the handshake. That is why
+   `/bff/internal/**` also needs the service principal above: the transport cannot
+   tell the gateway's own calls from a user's request that the gateway forwards.
 
 ## How the mTLS layer is wired
 
@@ -27,14 +37,17 @@ initContainer (the equivalent of the gateway chart's `build-keystore`) assembles
 - `keystore.p12` — this service's own mTLS **identity** (key + cert chain),
 - `truststore.p12` — the **cluster CA** trust anchor,
 
-into an in-pod tmpfs and generates the store password there (it never enters git,
-a Secret, or Vault). The deployment then sets the env below so the running pod
-enforces client-cert verification. Because every in-cluster leaf chains to the same
-cluster CA, the truststore validates them; ESO rotates the cert before expiry.
+into an in-pod tmpfs and generates the store password there. The password never
+enters git, a Secret or Vault. The initContainer writes it to
+`/stores/application.properties`, which the app loads through
+`SPRING_CONFIG_ADDITIONAL_LOCATION=file:/stores/`. The deployment sets the env below,
+so the running pod enforces client-cert verification. Every in-cluster leaf chains to
+the same cluster CA, so the truststore validates them. ESO rotates the cert before it
+expires.
 
-The gateway (`hugmesh-fe-gateway`/`hugmesh-be-gateway`) is the legitimate
-caller: it presents its own ESO-issued client cert when proxying to this BFF, so
-its handshake succeeds while everyone else's fails.
+The gateway (`hugmesh-fe-gateway`/`hugmesh-be-gateway`) is the legitimate caller. It
+presents its own ESO-issued client cert when it proxies to this BFF, so its handshake
+succeeds and everyone else's fails.
 
 ## Configuration (parameterized — safe by default)
 
@@ -46,13 +59,13 @@ its handshake succeeds while everyone else's fails.
 | `server.ssl.client-auth` | `SSL_CLIENT_AUTH` | `none` | `need` |
 | `server.ssl.key-store` | `SSL_KEY_STORE` | `/stores/keystore.p12` | mounted PKCS12 keystore |
 | `server.ssl.key-store-type` | `SSL_KEY_STORE_TYPE` | `PKCS12` | `PKCS12` |
-| `server.ssl.key-store-password` | `SSL_KEY_STORE_PASSWORD` | _(empty)_ | in-pod-generated |
+| `server.ssl.key-store-password` | `SSL_KEY_STORE_PASSWORD` | _(empty)_ | in-pod-generated, read from `/stores/application.properties` |
 | `server.ssl.trust-store` | `SSL_TRUST_STORE` | `/stores/truststore.p12` | mounted PKCS12 truststore (cluster CA) |
 | `server.ssl.trust-store-type` | `SSL_TRUST_STORE_TYPE` | `PKCS12` | `PKCS12` |
-| `server.ssl.trust-store-password` | `SSL_TRUST_STORE_PASSWORD` | _(empty)_ | in-pod-generated |
+| `server.ssl.trust-store-password` | `SSL_TRUST_STORE_PASSWORD` | _(empty)_ | in-pod-generated, read from `/stores/application.properties` |
 | `server.ssl.enabled-protocols` | `SSL_ENABLED_PROTOCOLS` | `TLSv1.3` | `TLSv1.3` |
 
-With the defaults, `server.ssl.enabled=false`, so the stores are never opened and
+With the defaults, `server.ssl.enabled=false`: the stores are never opened and
 existing tests run unchanged. `client-auth` maps to Netty's `ClientAuth`:
 `none → NONE`, `want → OPTIONAL`, `need → REQUIRE`. WebFlux/Netty reads these
 properties directly; no custom `SslContext`/`HttpServer` bean is needed.
@@ -60,25 +73,32 @@ properties directly; no custom `SslContext`/`HttpServer` bean is needed.
 ## Deployment requirement (owned by hugmesh-generator)
 
 The deployment manifest for this BFF lives in `hugmesh-generator`
-(`specs/cluster/manifests/admin-bff-api/deployment.yaml`), not in this repo. To
-turn enforcement on, that deployment must (a) add the keystore initContainer +
-`pki` (from `hugmesh-admin-bff-api-mtls`) and `stores` (tmpfs) volumes —
-exactly as `charts/hugmesh-gateway/templates/deployment.yaml` does — and (b) set:
+(`specs/cluster/manifests/admin-bff-api/deployment.yaml`), not in this repo. That
+deployment already enforces mTLS. It has the `build-keystore` initContainer, the
+`pki` (from `hugmesh-admin-bff-api-mtls`) and `stores` (tmpfs) volumes — as
+`specs/cluster/charts/hugmesh-gateway/templates/deployment.yaml` does — and sets:
 
 ```
 SSL_ENABLED=true
 SSL_CLIENT_AUTH=need
 SSL_KEY_STORE=/stores/keystore.p12
 SSL_KEY_STORE_TYPE=PKCS12
-SSL_KEY_STORE_PASSWORD=<in-pod generated>
 SSL_TRUST_STORE=/stores/truststore.p12
 SSL_TRUST_STORE_TYPE=PKCS12
-SSL_TRUST_STORE_PASSWORD=<in-pod generated>
+SPRING_CONFIG_ADDITIONAL_LOCATION=file:/stores/
 ```
 
-The readiness/liveness probes must switch to HTTPS (`scheme: HTTPS`) once
-`SSL_ENABLED=true`, and the gateway must present its client cert AND call this BFF
-over `https://` for the route to keep working.
+The store passwords are not in the pod spec. The `SSL_*_PASSWORD` variables stay
+empty, and the values come from `/stores/application.properties`. Any other
+deployment must do the same.
+
+The probes are not `httpGet`: a kubelet probe presents no client cert, and
+`client-auth=need` would reject it. They run `curl` inside the pod, with the pod's own
+cert and the cluster CA, against
+`https://hugmesh-admin-bff-api:8080/actuator/health/{readiness,liveness}`.
+The gateway must present its client cert and call this BFF over `https://`. Turn
+`client-auth=need` on only after the callers present certs. Until then, in-cluster
+traffic is rejected.
 
 ## Known gaps / open findings
 
@@ -91,10 +111,12 @@ via the exchange path, even though the introspect path (`/session/introspect`)
 correctly checked suspension.
 
 **Status: fixed.** `InternalAccountController#exchange` now runs a `suspensionGate`
-check against `SuspensionService` *before* the custody row is decrypted, returning
-403 for an active suspension — see the [Internal](README.md#internal-service-to-service-mtls-bounded)
-section of the README for the current code-level detail. This whole surface still
-**ships dark** (`app.bff.custody-key` unset by default, so `/session/exchange` 503s
-regardless), so no live traffic depended on either the bug or the fix; the fix simply
-means the seam is correct once the custody key + the gateway bff-exchange flag are
-turned on.
+check against `SuspensionService` *before* the custody row is decrypted, and returns
+403 for an active suspension. The [Internal](README.md#internal-service-to-service-mtls-bounded)
+section of the README has the code-level detail. At the application defaults this
+surface is dark (`app.bff.custody-key` unset, so `/session/exchange` 503s). On
+2026-06-25 that meant no live traffic depended on the bug: the generator deployment
+first set `APP_BFF_CUSTODY_KEY` on 2026-07-10 (generator commit `50021c55`). It is not
+dark in-cluster today: the generator deployment above sets `APP_BFF_OIDC_ENABLED`,
+`APP_BFF_CUSTODY_KEY` and `APP_BFF_EXCHANGE_ENABLED`, so the fix now protects live
+sessions.
