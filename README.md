@@ -82,9 +82,9 @@ old enum constant against a controller that correctly returns 422. **Fixed.** Th
 now assert the numeric code, and `HttpStatusAssertionStyleTest` fails the build if a
 test compares `HttpStatus` enum identity again (commit `ffa370a`). `UNPROCESSABLE_ENTITY`
 now appears in `src/test` only in that guard's own text. The 2414-test count was not
-re-measured. `src/test` holds 3225 `@Test`/`@ParameterizedTest` methods in 386 test
-classes (static count, 2026-10-07). 27 classes use Testcontainers, so a full run needs a
-Docker daemon.
+re-measured. `src/test` holds 3253 `@Test`/`@ParameterizedTest` methods in 389 test
+classes (static count, 2026-10-15). The Postgres-backed classes start Postgres through
+Testcontainers, so a full run needs a Docker daemon.
 
 **2026-07 security hardening:** a cross-cutting native-login identity-fold review found
 and fixed several real HIGH and MEDIUM authz bugs: Mastodon-localpart takeover by
@@ -244,7 +244,7 @@ flowchart TD
         BFF --> RECON["Single-writer reconcile loops<br/>(k8s Lease + resilience4j)"]
         BFF --> TENANCY["Tenancy: commons CasdoorAuthorities converter<br/>+ DomainRegistry + multi-issuer resolver"]
         BFF --> PHONE["MDM phone fleet<br/>ingest / superadmin registry / fleet-entitlements /<br/>public FLEET_ADMIN owner surface"]
-        BFF --> BACKSVC["Backing-services admin plane<br/>catalog + mode-intent (SUPERADMIN, ships dark)"]
+        BFF --> BACKSVC["Backing-services admin plane<br/>catalog + mode-intent + endpoint effector (SUPERADMIN, ships dark)"]
     end
 
     BFF --> PG[("config Postgres<br/>R2DBC + Liquibase")]
@@ -257,7 +257,6 @@ flowchart TD
         MFA["Casdoor MFA enforcement flip-on<br/>(substrate + step-up satisfiers shipped dark)"]:::planned
         EXTCH["Notification external channels<br/>Matrix / Akkoma / phpBB / email"]:::planned
         ASET["domain_registry → per-brand<br/>ArgoCD ApplicationSet (signed export shipped)"]:::planned
-        BACKEFF["Backing-services live effector<br/>(prune + managed re-point; Noop today)"]:::planned
     end
     BFF -.-> roadmap
 
@@ -929,10 +928,16 @@ step-up on the mutating verb) is the admin web-UI half of the managed/self-hoste
   with a `dark: true` descriptor and writes nothing. Reads and the SUPERADMIN + step-up
   check run for real either way.
 
-**Intent only, today.** The cluster prune and the managed-endpoint re-point are a
-build-time generator act or a future reconciler. The `BackingServiceModeReconciler`
-skeleton that would drive them is wired but calls only a `NoopBackingServiceEffector`
-(logs, no live effect). See [Roadmap](#roadmap).
+**Intent only by default.** The live effector is merged
+(`Fabric8BackingServiceEffector`, PR #70) but ships dark. At defaults
+(`app.backing-services.effector.enabled=false`, env `APP_BACKING_SERVICES_EFFECTOR_ENABLED`)
+the `NoopBackingServiceEffector` is wired (logs only, no cluster dialled) and a recorded
+mode stays durable intent. With the flag `true`, the `BackingServiceModeReconciler` (its own
+flag, `app.backing-services.reconcile.enabled`, default `false`) hands each recorded row to
+the fabric8 effector. The effector merge-patches that service's two address keys into the
+`backing-service-endpoints` ConfigMap in the service's own namespace and stamps the ledger
+generation onto that service's consumer Deployments for a targeted rolling restart. It does
+not prune the in-mesh workload (see its class Javadoc). See [Roadmap](#roadmap).
 
 ### Optional cluster services (`/bff/superadmin/optional-services`, ✅ shipped, actuation ships dark)
 
@@ -999,6 +1004,8 @@ cannot catch one.
     so `account.id` is bounded and stable across logins (changelog 181-casdoor-provider,
     #160). Other providers pass the handle through verbatim.
   - `GET /accounts/{id}`, `POST /accounts/{id}/complete`, `GET /accounts/{id}/namespaces`.
+  - `POST /accounts/{id}/restart-onboarding` resets `registrationComplete` to false, the
+    mirror of `/complete` (#84).
   - `GET /allowlist/{provider}/{handle}[?domain=…]` is the invite gate, and it is
     **domain-scoped**. The trusted in-cluster caller MAY name the brand, but only a brand
     this deployment serves: an unknown brand fails closed to `invited:false` (#47).
@@ -1097,7 +1104,18 @@ These control-plane surfaces are on `main` and were once missing from the sectio
     (`/bff/admin/device-terminal/{deviceId}`) **ships dark behind two independent flags**:
     `app.device-terminal.enabled` (default false → `StubDeviceSshTransport`) and
     `app.device-terminal.dial.enabled` (default false → no real device is dialed even with
-    the transport flag on; see `src/main/resources/application.yml:746-797`).
+    the transport flag on; see `src/main/resources/application.yml:746-786`).
+  - The remote-install exec client behind `DesktopRemoteInstallController` is a third flag
+    on the same trust path: `app.desktop.remote-install.enabled` (env
+    `DESKTOP_REMOTE_INSTALL_ENABLED`, default false → `NoopDesktopSshClient`). It now has an
+    explicit `application.yml` entry; before, it was only a `matchIfMissing` bean condition,
+    invisible to a reader and to a deployment manifest. It rides the same dial factory, so
+    it dials nothing while `app.device-terminal.dial.enabled` is false. The env names of all
+    three flags are `DEVICE_TERMINAL_ENABLED`, `DEVICE_TERMINAL_DIAL_ENABLED` and
+    `DESKTOP_REMOTE_INSTALL_ENABLED`; the generator's cluster manifest and compose stack set
+    them to false. `DesktopRemoteInstallYamlDefaultTest` pins the entries and their default.
+    Go-live preconditions (security re-review, `device_ssh_dial` rows, per-device dial-key
+    mount): hugmesh-generator `docs/CLIENT-IMAGES.md` section 7.
 - **Cloud-backup v2 / Velero** (`net.hugmesh.adminbff.cloudbackup`) — a second,
   Velero-based backup plane, separate from the Job-templating `backup` package under
   [`BackupController`](#admin-flow-hasroleadmin-base-bffadmin) above:
@@ -1269,7 +1287,7 @@ Longer documentation lives under [`docs/`](docs/README.md), which is this repo's
 ## Build & run
 
 ```bash
-./mvnw test          # unit, slice and converter tests; the Testcontainers classes need Docker
+./mvnw test          # full suite; needs a reachable Docker daemon (Testcontainers postgres:16-alpine)
 ./mvnw package       # build the executable jar
 docker build -t hugmesh-admin-bff-api .
 ```
@@ -1388,10 +1406,14 @@ as shipped.
   ship **dark** (independent flags, default off). A lock or unlock therefore records
   authoritative DB state and reports DEGRADED with the documented Headwind-console
   fallback reason. What remains is a live-cluster smoke of each leg, not new code.
-- 🔭 **Backing-services live effector.** The SUPERADMIN managed/self-hosted admin plane
-  (catalog, mode-intent recording, step-up) is shipped. The cluster prune and
-  managed-endpoint re-point are still a `NoopBackingServiceEffector` (logs only), pending
-  a generator/effector leg; today's mutation is intent-only.
+- ✅ **Backing-services live effector.** Shipped, dark: `Fabric8BackingServiceEffector`
+  (PR #70, closes #9) does the per-namespace `backing-service-endpoints` ConfigMap fan-out
+  plus a targeted rolling restart of that service's consumers, behind
+  `app.backing-services.effector.enabled` (default `false` → `NoopBackingServiceEffector`)
+  and the reconcile loop's own `app.backing-services.reconcile.enabled` (default `false`).
+  Still open: the effector does not prune the in-mesh workload, and flipping the flag on a
+  live cluster needs the generator-side ConfigMap, RBAC and consumer conversion described
+  in `application.yml` and `BackingServiceEffectorConfig`.
 - ✅🔭 **Platform roadmap (org-wide, depends on this BFF): two of three shipped, dark.**
   - ✅ **Egress VPN drop-in `.conf`.** Both halves shipped. This side: admin-bff PR #18
     (`be40e144`, on `main` as `d059af8`) added `VpnConfigSecretWriter` /
@@ -1451,9 +1473,8 @@ platform repositories.
 
 Issues and pull requests are welcome. A few things that make a change easier to review:
 
-- **Tests first.** `./mvnw test` runs the unit and slice suite (H2-backed where it can
-  be; 27 classes start Testcontainers and need Docker) — please keep it green and add
-  coverage for new behavior.
+- **Tests first.** `./mvnw test` runs the full suite against a real Postgres started by Testcontainers
+  (`postgres:16-alpine`), so it needs a reachable Docker daemon — please keep it green and add coverage for new behavior.
 - **New surfaces ship dark.** Follow the pattern used throughout this codebase: gate a
   new integration or mutation behind a default-off config flag until it's been
   reviewed, rather than defaulting it on.
