@@ -381,6 +381,28 @@ app:
       per-ip-username:
         attempts: "${APP_LOCAL_LOGIN_RATE_LIMIT_IP_USERNAME_ATTEMPTS:5}"
         window-ms: "${APP_LOCAL_LOGIN_RATE_LIMIT_IP_USERNAME_WINDOW_MS:60000}"
+  # LEGACY USER-PATH KILL SWITCH (hugmesh-admin-bff-api#86, split from #2) — SHIPS DARK, i.e. both
+  # values below are the no-op defaults: every one of the eleven legacy AuthController mappings
+  # (register/google|discord|complete, login, login/local, me, me/namespaces, session, sessionOut,
+  # provision/matrix|mastodon) keeps serving exactly as before on every lane.
+  # FLIPPING THIS IS AN OBSERVATION STEP, NOT THE RETIREMENT: nothing is deleted, no mapping moves,
+  # and LegacyUserPathRetirementGuardTest still pins all eleven. A switched-off path answers 404
+  # (the status a deleted path will answer) with an `X-Bff-Denied: legacy-path-disabled` header, and
+  # every hit logs one WARN naming the path, socket peer, claimed X-Forwarded-For and User-Agent, so
+  # the operator can read who still calls it BEFORE deleting anything. Setting it back restores the
+  # path without a code change. The three lanes disagree about who serves these paths (cluster:
+  # shadowed by user-bff routes; compose: served here; device image: called straight at :8403 with
+  # no gateway), so switch ONE path off per lane and watch it; see AuthController's audit javadoc.
+  #   enabled  false switches the WHOLE legacy surface off (env APP_AUTH_LEGACY_PATHS_ENABLED).
+  #   disabled switches only the listed paths off while enabled stays true, as "METHOD /bff/path"
+  #            entries, comma-separated in the env var, e.g.
+  #            APP_AUTH_LEGACY_PATHS_DISABLED="POST /bff/register/google,GET /bff/me/namespaces".
+  #            An entry that is not one of the eleven FAILS THE BOOT rather than switching nothing
+  #            off, because a typo would read as "no 404s, so the path is dead".
+  auth:
+    legacy-paths:
+      enabled: "${APP_AUTH_LEGACY_PATHS_ENABLED:true}"
+      disabled: "${APP_AUTH_LEGACY_PATHS_DISABLED:}"
   # App-layer DEFENCE-IN-DEPTH credential for the /bff/internal/** surface (the
   # in-cluster node-to-BFF prefix that is permitAll() and otherwise relies SOLELY on
   # mTLS). The desktop sudo ENTITLEMENT read under it leaks per-(subject,device) sudo

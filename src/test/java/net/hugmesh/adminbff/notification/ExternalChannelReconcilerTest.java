@@ -115,6 +115,9 @@ class ExternalChannelReconcilerTest {
         reconciler(matrix).runOnce().block();
 
         assertThat(matrix.sent).hasSize(1);
+        // The outbox row id rides along as the stable delivery key, so a transport with
+        // idempotent submission (the Matrix txn id) can dedupe a retry after a lost reply.
+        assertThat(matrix.sent.get(0).deliveryKey()).isEqualTo(outboxId);
         assertThat(deliveries.status(outboxId, "matrix").block())
                 .isEqualTo(NotificationDeliveryRepository.STATUS_SENT);
         // The channel's OWN cursor advanced; the in-app cursor is untouched.
