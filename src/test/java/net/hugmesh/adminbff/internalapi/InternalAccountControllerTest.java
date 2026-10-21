@@ -13,6 +13,7 @@ import net.hugmesh.adminbff.account.AccountIssuerService;
 import net.hugmesh.adminbff.account.AccountLocalpartService;
 import net.hugmesh.adminbff.account.RegistrationDomainResolver;
 import net.hugmesh.adminbff.suspension.SuspensionService;
+import net.hugmesh.adminbff.usage.UsageService;
 import net.hugmesh.authcore.account.Account;
 import net.hugmesh.authcore.account.AccountStatus;
 import net.hugmesh.authcore.account.AccountStore;
@@ -33,6 +34,7 @@ import java.util.stream.IntStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -78,10 +80,16 @@ class InternalAccountControllerTest {
     private final RegistrationDomainResolver registrationDomains =
             new RegistrationDomainResolver(new net.hugmesh.commons.security.DomainRegistry("", ""), "");
 
+    /** Decision 55 (hugmesh-admin-bff-api#85) — {@code POST /bff/internal/usage}'s sole
+     *  collaborator; a straight pass-through, so these tests assert the exact arguments
+     *  forwarded rather than any persistence side effect (that is {@code UsageServiceTest}'s
+     *  job). */
+    private final UsageService usage = mock(UsageService.class);
+
     /** The account/session API surface (custody seams null — those endpoints aren't under test here). */
     private final InternalAccountController controller =
             new InternalAccountController(accounts, suspensions, mfaStepUp, CIPHER, oidc, 60L,
-                    localparts, casdoorSubs, accountIssuers, registrationDomains);
+                    localparts, casdoorSubs, accountIssuers, registrationDomains, usage);
 
     @BeforeEach
     void setUp() {
@@ -444,6 +452,37 @@ class InternalAccountControllerTest {
     }
 
     @Test
+    void restartOnboarding_resetsRegistrationComplete_andReadsBackTheLocalpart() {
+        // The persisted localpart is READ (localpartsOf), never re-resolved: restart-onboarding is
+        // the mirror of complete(), not an account-creation call site.
+        when(localparts.localpartsOf("google:a@x.com")).thenReturn(Mono.just(
+                new AccountLocalpartService.ResolvedLocalparts("alice", "alice_m")));
+        when(accounts.account("google:a@x.com")).thenReturn(Mono.just(acct(true)));
+        when(accounts.restartOnboarding(any())).thenReturn(Mono.just(acct(false)));
+
+        StepVerifier.create(controller.restartOnboarding("google:a@x.com"))
+                .assertNext(a -> {
+                    assertThat(a.id()).isEqualTo("google:a@x.com");
+                    assertThat(a.registrationComplete()).isFalse();
+                    assertThat(a.localpart()).isEqualTo("alice");
+                    assertThat(a.mastodonLocalpart()).isEqualTo("alice_m");
+                })
+                .verifyComplete();
+
+        verify(accounts).restartOnboarding(acct(true));
+        verify(accounts, never()).markComplete(any());
+        verify(localparts, never()).resolveAndPersist(any(), any());
+    }
+
+    @Test
+    void restartOnboarding_unknownAccount_is404_andNothingIsWritten() {
+        when(accounts.account("missing")).thenReturn(Mono.empty());
+        StepVerifier.create(controller.restartOnboarding("missing"))
+                .verifyErrorSatisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode()).isEqualTo(HttpStatusCode.valueOf(404)));
+        verify(accounts, never()).restartOnboarding(any());
+    }
+
+    @Test
     void allowlist_perProvider_andUnknown() {
         // No domain supplied -> the resolver's fallback, which on this untenanted wiring is
         // AccountStore.DEFAULT_DOMAIN. The gate is the DOMAIN-SCOPED overload either way.
@@ -469,16 +508,29 @@ class InternalAccountControllerTest {
      * {@code domain} reaches the store verbatim, so brand X's invite is never consulted for a
      * brand Y lookup. Before the fix this endpoint asked "invited in ANY domain" and the
      * {@code domain} argument did not exist.
+     *
+     * <p>The controller here is wired to a TWO-BRAND deployment ({@code brand-a} +
+     * {@code brand-b}), not the class-level untenanted resolver. Since issue #47
+     * {@link RegistrationDomainResolver#forInternalCaller} only honours a brand this
+     * deployment serves and fails closed to {@code PrincipalDomain.NO_DOMAIN} on any other, so
+     * on the untenanted wiring {@code "brand-a"} would never reach the store (issue #103). The
+     * fail-closed half of that contract is pinned in {@code RegistrationDomainResolverTest}.
      */
     @Test
     void allowlist_honoursCallerSuppliedDomain() {
+        RegistrationDomainResolver twoBrands = new RegistrationDomainResolver(
+                new net.hugmesh.commons.security.DomainRegistry("",
+                        "https://id.brand-a.test=brand-a,https://id.brand-b.test=brand-b"), "");
+        InternalAccountController tenanted = new InternalAccountController(
+                accounts, suspensions, mfaStepUp, CIPHER, oidc, 60L, localparts, casdoorSubs,
+                accountIssuers, twoBrands, usage);
         when(accounts.isEmailInvited("a@x.com", "brand-a")).thenReturn(Mono.just(true));
         when(accounts.isEmailInvited("a@x.com", "brand-b")).thenReturn(Mono.just(false));
 
-        StepVerifier.create(controller.allowlist("google", "a@x.com", "brand-a"))
+        StepVerifier.create(tenanted.allowlist("google", "a@x.com", "brand-a"))
                 .assertNext(m -> assertThat(m.get("invited")).isTrue())
                 .verifyComplete();
-        StepVerifier.create(controller.allowlist("google", "a@x.com", "brand-b"))
+        StepVerifier.create(tenanted.allowlist("google", "a@x.com", "brand-b"))
                 .assertNext(m -> assertThat(m.get("invited")).isFalse())
                 .verifyComplete();
 
@@ -610,7 +662,7 @@ class InternalAccountControllerTest {
         // INERT cipher (no key) → fail-closed 503 BEFORE any store read.
         InternalAccountController inert = new InternalAccountController(
                 accounts, suspensions, mfaStepUp, INERT_CIPHER, oidc, 60L, localparts, casdoorSubs,
-                accountIssuers, registrationDomains);
+                accountIssuers, registrationDomains, usage);
         StepVerifier.create(inert.exchange(new InternalAccountController.ExchangeRequest("bff_x")))
                 .verifyErrorSatisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode())
                         .isEqualTo(HttpStatusCode.valueOf(503)));
@@ -622,7 +674,7 @@ class InternalAccountControllerTest {
         // A null cipher bean is also fail-closed 503 (the @Nullable null-guard).
         InternalAccountController noCipher = new InternalAccountController(
                 accounts, suspensions, mfaStepUp, null, oidc, 60L, localparts, casdoorSubs,
-                accountIssuers, registrationDomains);
+                accountIssuers, registrationDomains, usage);
         StepVerifier.create(noCipher.exchange(new InternalAccountController.ExchangeRequest("bff_x")))
                 .verifyErrorSatisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode())
                         .isEqualTo(HttpStatusCode.valueOf(503)));
@@ -919,5 +971,66 @@ class InternalAccountControllerTest {
         StepVerifier.create(controller.exchange(new InternalAccountController.ExchangeRequest("bff_ok")))
                 .assertNext(m -> assertThat(m.get("bearer")).isEqualTo("JWT-A"))
                 .verifyComplete();
+    }
+
+    // ──────────────────────────── Usage recording (decision 55, #85) ──────────────────────
+
+    @Test
+    void recordUsage_forwardsAllThreeArgumentsVerbatim_toUsageServiceRecord() {
+        // The straight pass-through contract: no re-derivation, no lookup — the exact
+        // (handle, roles, action) triple the caller sent reaches UsageService.record().
+        when(usage.record("bob@example.test", List.of("ROLE_USER"), "register"))
+                .thenReturn(Mono.empty());
+
+        StepVerifier.create(controller.recordUsage(new InternalAccountController.RecordUsageRequest(
+                        "bob@example.test", List.of("ROLE_USER"), "register")))
+                .verifyComplete();
+
+        verify(usage).record("bob@example.test", List.of("ROLE_USER"), "register");
+    }
+
+    @Test
+    void recordUsage_nullRoles_forwardedAsEmptyList_notNull() {
+        // UsageService.record already null-safes roles internally, but the controller pins
+        // this explicitly so a future UsageService change cannot silently start NPEing a
+        // caller that (legitimately) knows no roles at record time.
+        when(usage.record(eq("carol@example.test"), eq(List.of()), eq("login")))
+                .thenReturn(Mono.empty());
+
+        StepVerifier.create(controller.recordUsage(new InternalAccountController.RecordUsageRequest(
+                        "carol@example.test", null, "login")))
+                .verifyComplete();
+
+        verify(usage).record("carol@example.test", List.of(), "login");
+    }
+
+    @Test
+    void recordUsage_anyAction_notOnlyRegister_isForwarded() {
+        // Decision 55's contract is UsageService.record's own three-argument shape, not a
+        // register-only special case — any action user-bff (or a future internal caller)
+        // wants recorded goes through unchanged.
+        when(usage.record("dave@example.test", List.of("ROLE_ADMIN"), "matrix.entitled"))
+                .thenReturn(Mono.empty());
+
+        StepVerifier.create(controller.recordUsage(new InternalAccountController.RecordUsageRequest(
+                        "dave@example.test", List.of("ROLE_ADMIN"), "matrix.entitled")))
+                .verifyComplete();
+
+        verify(usage).record("dave@example.test", List.of("ROLE_ADMIN"), "matrix.entitled");
+    }
+
+    @Test
+    void recordUsage_neverTouchesAccountStore_noExistenceCheck() {
+        // Deliberate: this endpoint trusts the caller and performs no AccountStore read,
+        // matching AuthController's own emitAndSession/complete call sites (see the
+        // controller's javadoc "No account lookup" section).
+        when(usage.record(anyString(), any(), anyString())).thenReturn(Mono.empty());
+
+        StepVerifier.create(controller.recordUsage(new InternalAccountController.RecordUsageRequest(
+                        "erin@example.test", List.of(), "complete")))
+                .verifyComplete();
+
+        verify(accounts, never()).account(any());
+        verify(accounts, never()).ensureAccount(any(), any());
     }
 }

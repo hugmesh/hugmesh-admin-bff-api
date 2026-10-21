@@ -1,5 +1,7 @@
 package net.hugmesh.adminbff.domainregistry;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 /**
@@ -37,6 +39,15 @@ public final class DomainExportModels {
      * needs to materialise the per-brand namespaces / CA / Casdoor org / mesh and to gate the
      * "registered but not yet provisioned" state.
      *
+     * <p><b>The three DECISION-29 fields ({@code idp} + the MCS pair) ride OUTSIDE the
+     * signature.</b> See {@link DomainRegistryExportService#canonicalBytes}: the consumer half
+     * (hugmesh-generator {@code specs/usr/lib/hugmesh/domain-verify.sh}) reconstructs the
+     * canonical bytes from exactly the TEN v1 fields, byte for byte, and fails CLOSED on any
+     * divergence — so adding a field to the SIGNED bytes is a lockstep two-repo change (the
+     * consumer must accept v1 AND v2 before the producer moves). That is deliberately NOT done
+     * here. The residual cost: something that gets past the export's mTLS could flip
+     * {@code idp} or an MCS category without breaking the signature.
+     *
      * @param clusterDomain   the brand's base domain (the UNIQUE natural key)
      * @param brand           the short slug used in names
      * @param org             the brand's organisation/owner label
@@ -54,6 +65,20 @@ public final class DomainExportModels {
      * @param generation      the per-domain monotonic generation (the row's
      *                        {@code last_reconciled_generation}) the agent's rollback guard
      *                        reads at the row grain
+     * @param idp             the domain's identity-provider choice, {@code own} or
+     *                        {@code superdomain} (operator DECISION 29b). The generator's
+     *                        {@code hugmesh-domain-reconcile} ALREADY reads it
+     *                        ({@code .body.entries[i].idp}) and validates it as a closed enum;
+     *                        until this field existed it read absent, so every exported domain
+     *                        reconciled as {@code superdomain} and no per-domain Casdoor was
+     *                        ever provisioned
+     * @param selinuxLevel    the MCS category allocated to the domain's Casdoor pod
+     *                        ({@code s0:cNN}, DECISION 29c) — the element field
+     *                        {@code selinuxLevel} in the 05b ApplicationSet; {@code null} on a
+     *                        row registered before the allocator existed, which the consumer
+     *                        must treat as NOT provisionable rather than substituting a default
+     * @param selinuxLevelPg  the MCS category allocated to the domain's Postgres pod
+     *                        ({@code s0:cNN}, DECISION 29c) — always the ODD half of the pair
      */
     public record DomainEntry(
             String clusterDomain,
@@ -65,7 +90,10 @@ public final class DomainExportModels {
             String meshTag,
             boolean caProvisioned,
             boolean appsetRegistered,
-            long generation) {
+            long generation,
+            String idp,
+            String selinuxLevel,
+            String selinuxLevelPg) {
     }
 
     /**
@@ -81,6 +109,10 @@ public final class DomainExportModels {
             String node,
             long generation,
             List<DomainEntry> entries) {
+
+        public DomainExportBody {
+            entries = entries == null ? null : Collections.unmodifiableList(new ArrayList<>(entries));
+        }
     }
 
     /**

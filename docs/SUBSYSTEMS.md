@@ -3,10 +3,9 @@
 The top-level [`README.md`](../README.md) documents the core control-plane surfaces
 (allowlist/namespaces/route-access/routes/suspension/domain-lock, the SUPERADMIN
 control plane, announcements, notifications, the `/bff/internal` account/session API).
-This page covers real, shipped `main` subsystems that grew the codebase since that
-README's endpoint catalogue was last written and are not yet described there. Every
-item below is verified against current source (package, controller/service class,
-gating flag, and test coverage) — none of it is speculative.
+This page covers subsystems that are on `main` and grew the codebase after that
+README's endpoint catalogue was written, so the README does not describe them. Each
+item names its package, controller or service class, gating flag and tests.
 
 All state markers follow the top-level README's convention: **✅ shipped** (merged to
 `main`), **🚧 in-flight**, **🔭 planned**.
@@ -16,45 +15,45 @@ All state markers follow the top-level README's convention: **✅ shipped** (mer
 ## Passwordless local login (`net.hugmesh.adminbff.locallogin`) — ✅ shipped, dark by default
 
 `POST /bff/login/local` (in `AuthController`, wired through this package) is a
-**sibling** of the legacy `POST /bff/login` for a Casdoor-native deployment that wants
-a direct username/password login without the OIDC PKCE round-trip. `LocalSecretVerifier`
+**sibling** of the legacy `POST /bff/login`. A Casdoor-native deployment uses it for a
+direct username/password login without the OIDC PKCE round-trip. `LocalSecretVerifier`
 performs a real resource-owner-password-credentials grant against Casdoor's
-`/api/login/oauth/access_token`; `LocalLoginRateLimiter` throttles per-IP **and**
-per-(IP, username) *before* Casdoor is ever called (closing a credential-stuffing /
-Casdoor-hammering vector).
+`/api/login/oauth/access_token`. `LocalLoginRateLimiter` throttles per IP **and** per
+(IP, username) *before* Casdoor is called, which closes a credential-stuffing and
+Casdoor-hammering vector.
 
 - **Ships dark**: gated by `app.local-login.enabled` (default `false`). With the bean
   absent, `AuthController` injects a `@Nullable LocalSecretVerifier = null` and the
-  endpoint **401s fail-closed** — there is no local-login trust surface until an
-  operator explicitly opts in.
-- Reuses the existing `casdoor.admin.*` client-id/secret/base-url config so a
-  deployment that already configured the Casdoor admin write client only needs to flip
-  one env var.
+  endpoint **401s fail-closed**. There is no local-login trust surface until an
+  operator opts in.
+- It reuses the `casdoor.admin.*` client-id, secret and base-url config. A deployment
+  that already configured the Casdoor admin write client flips one env var.
 - Tests: `AuthControllerLocalLoginWebFluxTest`, `AuthControllerLocalLoginDisabledWebFluxTest`,
   `AuthControllerLocalLoginRateLimitWebFluxTest`, `LocalLoginRateLimiterTest`.
 
 ## Superadmin go-live wizard (`net.hugmesh.adminbff.golive`) — ✅ shipped, dark by default
 
 `GoLiveController` (`/bff/admin/go-live`, `hasRole('SUPERADMIN')`) lets a superadmin
-**record intent** to take a brand's domain public (DNS/registrar provider + desired
-target) without this BFF ever touching DNS itself:
+**record intent** to take a brand's domain public (DNS/registrar provider and desired
+target). This BFF never touches DNS itself:
 
 - `GET /bff/admin/go-live` — current intents for the caller's domain.
 - `GET /bff/admin/go-live/providers` — the supported DNS/registrar provider catalogue
-  (`GoLiveProviderCatalog`; the `byo-domain` key is the current name — **renamed** from
-  the original `generic-registrar`, which the catalogue still accepts as a legacy alias
-  so pre-rename exported/stored rows keep resolving).
+  (`GoLiveProviderCatalog`). `byo-domain` is the current key. It was **renamed** from
+  `generic-registrar`, which the catalogue still accepts as a legacy alias, so rows
+  exported or stored before the rename keep resolving.
 - `POST /bff/admin/go-live/intents` — record a new signed intent.
 - `DELETE /bff/admin/go-live/intents/{id}` — withdraw one.
 - `GET /bff/admin/go-live/export` — the **signed** export a host-side go-live agent
-  polls and verifies before ever touching `/etc/hugmesh/go-live` on the host (this
-  BFF runs in-cluster and can never write that file itself).
-- `POST /bff/internal/go-live/{intentId}/applied-ack` (`GoLiveInternalController`, mTLS
-  boundary, no JWT) — the host agent's write-back once it has verified + applied an
-  intent, so `status='recorded'` can advance to `'applied'` and the wizard UI stops
-  lying about `applied:true`. CAS-guarded by id + status + generation; idempotent (a
-  host agent polling on a loop calling this repeatedly for an already-applied /
-  withdrawn / superseded intent is normal, not an error).
+  polls, and verifies before it touches `/etc/hugmesh/go-live` on the host. This BFF
+  runs in-cluster and can never write that file itself.
+- `POST /bff/internal/go-live/{intentId}/applied-ack` (`GoLiveInternalController`,
+  `/bff/internal/**` service principal: `X-Internal-Token` or a SERVICE JWT, no human
+  JWT) — the host agent's write-back once it has verified and applied an intent. It
+  advances `status='recorded'` to `'applied'`, so the wizard UI stops reporting
+  `applied:true` falsely. CAS-guarded by id, status and generation, and idempotent: a
+  host agent that polls in a loop and calls it again for an already-applied, withdrawn
+  or superseded intent is normal, not an error.
 - Step-up gated (`GoLiveStepUpGate`, mirrors the image-gen / SSH-issue / terminal-dial
   step-up shape described in the top-level README's security section).
 - Tests: `GoLiveControllerTest`, `GoLiveInternalControllerTest`, `GoLiveServiceTest`,
@@ -62,45 +61,45 @@ target) without this BFF ever touching DNS itself:
 
 ## Account-ban appeals (`net.hugmesh.adminbff.appeal`) — ✅ shipped
 
-The top-level README only documents the **public** `AppealContactController`
-(`GET /bff/public/appeal-contact`). The actual appeal submit/decide flow is a separate,
-fuller surface:
+The top-level README documents only the **public** `AppealContactController`
+(`GET /bff/public/appeal-contact`). The submit and decide flow is a separate, larger
+surface:
 
 - `POST /bff/me/appeal` / `GET /bff/me/appeal` (`AccountAppealUserController`,
-  authenticated) — a suspended/banned user's self-service appeal submission + their own
+  authenticated) — a suspended or banned user submits an appeal and reads their own
   appeal history.
 - `GET /bff/admin/account-appeals` / `POST /bff/admin/account-appeals/{id}/decide`
   (`AccountAppealAdminController`, `hasAnyRole('ADMIN','SUPERADMIN')` — **deliberately
-  not MOD**, since approving an appeal indirectly restores access that only the
-  ADMIN-gated `/bff/admin/access-roles/**` suspension surface can grant/lift; letting
-  MOD decide appeals would be a privilege-escalation path around that gate). Decide is
+  not MOD**. Approving an appeal indirectly restores access, and only the ADMIN-gated
+  `/bff/admin/access-roles/**` suspension surface can grant or lift it. If MOD could
+  decide appeals, that would be a privilege-escalation path around the gate). Decide is
   a single-winner CAS `PENDING -> APPROVED/DENIED`, brand-scoped via `PrincipalDomain`
-  (SUPERADMIN unscoped); an APPROVE that fails to actually lift the underlying
-  suspension propagates as an error rather than a dishonest 200.
+  (SUPERADMIN unscoped). An APPROVE that fails to lift the underlying suspension
+  returns an error, not a false 200.
 - Backed by `AccountAppealService` / `AccountAppealRepository` / the `account_appeal`
   table (`AccountAppealRow`).
 
 ## Mastodon-UI appearance defaults (`net.hugmesh.adminbff.appearance`) — ✅ shipped
 
-Lets an admin configure a **platform-wide, per-brand default** for
-hugmesh-mastodon-ui's `PreferencesService` appearance settings, inherited by any
-user who hasn't customised their own look:
+Lets an admin set a **platform-wide, per-brand default** for hugmesh-mastodon-ui's
+`PreferencesService` appearance settings. Any user who has not customised their own
+look inherits it:
 
 - `PUT /bff/admin/mastodon/appearance-default` (`MastodonAppearanceDefaultAdminController`,
   `hasRole('ADMIN')`) — upsert one or more `AppearancePreferences` fields for the
-  caller's own brand; every key/value is validated against the known vocabulary before
-  it reaches the durable row (bad value → clean 400, never a silent no-op).
+  caller's own brand. Every key and value is validated against the known vocabulary
+  before it reaches the durable row; a bad value is a clean 400, never a silent no-op.
 - `GET /bff/mastodon/appearance-default` (`MastodonAppearanceDefaultSurfaceController`,
   any authenticated caller) — read the caller's own brand's currently configured
   default; an empty object means no admin default has been set (the client's built-in
   default applies).
-- Domain-scoped both ways via `PrincipalDomain` — an admin can only set, and a user can
-  only read, their own brand's row; never another brand's.
+- Domain-scoped both ways via `PrincipalDomain`: an admin can set, and a user can read,
+  only their own brand's row.
 
 ## Character/sticker moderation activation reconciler (`net.hugmesh.adminbff.charactermoderation`) — ✅ shipped, dark by default
 
-The final leg that closes the character-part / sticker moderation loop this platform's
-sticker/character-ban design introduced: `FindingActivationReconciler` is a
+The last leg of the character-part and sticker moderation loop that the platform's
+sticker/character-ban design introduced. `FindingActivationReconciler` is a
 `@Scheduled` single-writer loop (`LeaderElection`-gated, mirrors the
 `NotificationReconciler` idiom) that:
 
@@ -114,7 +113,7 @@ sticker/character-ban design introduced: `FindingActivationReconciler` is a
    mid-page push failure never skips an un-delivered outcome on the next tick.
 
 Gated by `character-moderation.reconciler.enabled` (default `false`). Best-effort:
-every error is metered (Micrometer `Counter`) and swallowed so the scheduler thread
+every error is metered (Micrometer `Counter`) and swallowed, so the scheduler thread
 never dies. Tests: `CharacterModerationClientsTest`.
 
 ```mermaid
@@ -167,17 +166,29 @@ Both writers are `Noop*` by default (inert) with a `Fabric8*` real implementatio
 behind the same flag. Tests: `OptionalServiceReconcilerTest`,
 `Fabric8OptionalServiceApplicationSetPatcherTest`.
 
-> **Known gaps, recorded not papered over.** (1) `app.optional-services.reconcile.enabled`
-> has no supported switch: it appears only as the `:false` default in `application.yml`, and
-> `specs/cluster/apps/31-admin-bff-api.yaml` carries `automated:{prune,selfHeal}` with no
-> `ignoreDifferences`, so a manual `kubectl set env` is reverted on the next selfHeal pass.
-> Until that changes the toggle surface is honest but inert, and answers 503.
-> (2) `apps/16` is missing `/data/character-forge`, `/data/headwind`,
-> `/data/attestation-server` and `/data/meshbridge` pointers, so those greying mirrors are
-> selfHealed back to git; `character-forge` is the one of the four that is a MANAGED slug, and
-> the catalogue/toggle responses carry an explicit `warnings` entry for it.
-> (3) `meshbridge` has a 13a element and a ConfigMap key but no CRD enum value or seed CR, so
-> it is un-toggleable from the CR API at all (it at least fails loud, at the API server).
+> **Known gaps.** (1) `app.optional-services.reconcile.enabled`
+> has one supported switch, and it is off. The generator's
+> `specs/cluster/manifests/admin-bff-api/deployment.yaml` sets
+> `APP_OPTIONAL_SERVICES_RECONCILE_ENABLED` to `"false"`; a reviewed commit that flips
+> it to `"true"` is the lever. `specs/cluster/apps/31-admin-bff-api.yaml` carries
+> `automated:{prune,selfHeal}` with no `ignoreDifferences`, so a manual `kubectl set env`
+> is reverted on the next selfHeal pass. The flag stays `false` until the hardcoded
+> akkoma/tuwunel/phpbb Applications are cut over (generator `docs/OPTIONAL-SERVICES.md`
+> §10); lit earlier, the first tick would create ApplicationSet elements that
+> double-manage manifests those Applications already own. Until then the toggle surface
+> is honest but inert, and answers 503.
+> (2) CLOSED (#106) — this used to say `apps/16` lacked `/data/character-forge` and
+> `/data/meshbridge` and that `meshbridge` had no CRD enum value or seed CR. The generator had
+> fixed all of that while the registry and this repo's vendored fixtures still described the
+> old state, so `meshbridge` was refused as `NOT_IN_CRD_ENUM` (and its seeded CR ignored by
+> the reconciler) and `character-forge` carried a false selfHeal warning. Both are corrected
+> and the fixtures refreshed. `apps/16` still deliberately omits `/data/headwind` and
+> `/data/attestation-server`: those slugs are not-toggleable here, so nothing writes their keys.
+> (3) The risk that hid (2) is still open: the parity test cannot see a stale vendored
+> fixture, and `OptionalServiceManifestDriftTest` skips in this repo's CI. The generator's
+> slug-closure gate (`tests/scripts/test-optional-service-slug-closure.sh`), which parses
+> `OptionalServiceRegistry.java` against the live manifests, is what catches the resulting
+> registry drift. It does not compare the fixtures themselves.
 > (4) The `installed-services` ConfigMap (`hugmesh-policy` ns) that
 > `Fabric8InstalledServicesConfigMapWriter` writes is WRITE-ONLY: no Deployment mounts it, no
 > `configMapKeyRef` names it, and the user-facing greying reads `federation_modules` in
@@ -201,12 +212,14 @@ principal, not a service identity:
 - `SessionExchangeService` — exchanges the caller's `bff_` custody for a real Casdoor
   JWT via a **loopback call to this BFF's own** `/bff/internal/session/exchange` (the
   same custody-exchange endpoint documented in the top-level README's Internal section),
-  cached (`SessionExchangeCache`) with a short TTL. **Soft-degrades on every failure**
-  (deliberately different from the gateway's own `BffJwtExchangeWebFilter`, which
-  hard-fails 401): federation-api and the other downstreams each already have their own
-  independent, fail-closed JWT/role gate, so forwarding without a bearer here doesn't
-  bypass anything — it just reproduces today's pre-feature behaviour for a native-login
-  caller instead of inventing a new outage mode.
+  optionally cached (`SessionExchangeCache`; `app.bff-exchange.cache-ttl-ms`
+  defaults to `0`, which turns the cache off, and a positive value is clamped to 60 s).
+  **Soft-degrades on every failure**
+  (deliberately unlike the gateway's own `BffJwtExchangeWebFilter`, which hard-fails
+  401). federation-api and the other downstreams each have their own independent,
+  fail-closed JWT and role gate, so forwarding without a bearer bypasses nothing. A
+  native-login caller gets the behaviour it had before this feature, not a new outage
+  mode.
 - Gated by `app.bff-exchange.enabled` (default `false`, `APP_BFF_EXCHANGE_ENABLED`).
   `FederationOverrideClearClient` / `SuspensionExpiryFederationClearWireTest` cover the
   federation-side clear-on-restore wiring for domain-lock/suspension expiry.
@@ -228,8 +241,8 @@ for the detached Ed25519 signature + monotonic generation).
 - Tests: `RadioDeviceControllerTest`, `NodeRadioServiceTest` (ownership matrix,
   idempotency/CAS, per-transport shape validation, tenant isolation),
   `NodeRadioExportServiceTest` (confidentiality + signing), `NodeRadioChangelogTest` —
-  **55 tests, re-run 2026-07-17 offline (`./mvnw -o test`): 55/55 green**, despite the
-  merging PR's own description flagging the run as unconfirmed at merge time.
+  55 test methods across the four classes (counted in source on 2026-10-07). The
+  2026-07-17 run that reported 55/55 green was not repeated for this review.
 
 > **Known gap — the export has no live consumer yet.** The companion meshbridge daemon
 > (`hugmesh-generator` PR #374, merged the same day as this feature) reads a
@@ -240,7 +253,7 @@ for the detached Ed25519 signature + monotonic generation).
 > rows + signed per-node export + on-node reconcile writing this ConfigMap...) is the
 > planned follow-up; this ConfigMap is the operator surface until then." So today an
 > admin can manage radio rows through this API and admin-ui (PR #79) and the meshbridge
-> pod will never see them until that reconcile agent is built — a real, currently-open,
+> pod will never see them until that reconcile agent is built. This is an open
 > cross-repo integration gap, not a documentation lag.
 
 ## Edge-AI infra triage (`net.hugmesh.adminbff.inference`) — ✅ shipped, dark by default
@@ -257,7 +270,8 @@ Idempotent: the per-admin outbox natural key is derived from the caller-supplied
 **The caller** is `AioTriageIngestController` — `POST /bff/internal/aio-triage/ingest`,
 the in-cluster collector's entry point (`{domain, adminSubjects[], eventKey, signals}` →
 `{accepted, alerted}`). It sits on the same `/bff/internal/**` trust boundary as the other
-node/Job ingests (`ROLE_SERVICE`, satisfied by mTLS + `X-Internal-Token`, **no JWT**) and
+node/Job ingests (`ROLE_SERVICE`, satisfied by `X-Internal-Token` or a SERVICE JWT, no
+human JWT) and
 performs no cross-tenant check of its own — tenancy is the caller's concern at this hop,
 exactly as `DomainCapabilityInternalController` states; it only *bounds* the batch so a
 malformed or runaway post is a clean 400 instead of an `IllegalArgumentException` or an
@@ -267,9 +281,9 @@ sentinel and emits nothing (`alerted:0`).
 
 > **Still open — the collector itself.** The node-level DaemonSet that tails
 > Snort/Suricata + AIDE + k8s events and posts to this endpoint lives outside this repo
-> and is not built yet, so the endpoint has no *production* caller. That is now an
-> ordinary "the agent on the other side isn't written" gap, not the previous
-> "the service has no caller at all, in any repo, by any route" one.
+> and is not built yet, so the endpoint has no *production* caller. The gap is now
+> only that the agent on the other side is not written. Before, the service had no
+> caller in any repo.
 
 > **Why the per-admin outbox key is derived, not concatenated.** `notification_outbox.source_id`
 > is `varchar(36)` (changeset 062). The original `eventKey + ":" + admin` composition overflows
@@ -298,3 +312,38 @@ aria-label, collected by login-ui at registration time) to two places, independe
 Both legs are best-effort and fail-**open**: a transport/parse error is logged and
 swallowed, never fails registration (the account + session are already durable by the
 time this runs).
+
+## Moderator channel directive (`notifyChannels`)
+
+mod-bff sends the moderator's per-action channel choice as `notifyChannels` in the body of
+`POST /bff/admin/access-roles/{role}/{user}`. `SuspensionRequest.notifyChannels` accepts it,
+`SuspensionService.suspend(..., notifyChannels)` hands it to `AccountRestrictionPayload`, and
+it is stored on the `notification_outbox` row as the `notify_channels` array (no schema
+change: the payload is already a JSON string). `ExternalChannelReconciler` reads it per row.
+
+- **Names.** Canonicalised by `NotifyChannelDirective.normalize` (the HTTP pattern already
+  rejects capitals and spaces, so trimming and lower-casing only matter to direct callers):
+  trimmed, lower-cased, de-duplicated; `mastodon` (mod-bff's platform name) maps to the `akkoma` channel. A
+  well-formed name outside `in-app`, `email`, `matrix`, `akkoma`, `mastodon`, `forum` is
+  **ignored with a warning**, not rejected; a malformed token or more than 8 names is a 400.
+- **Absent or empty** (or nothing left after normalising): the payload is byte-for-byte what it
+  was before, and the default fan-out applies.
+- **Never enables a channel.** A channel the directive does not name records a terminal `skipped` delivery
+  (no send, its cursor moves on). A named channel still has to pass its own `enabled()` and
+  `available()` gates, so a directive never turns a channel on.
+- **In-app and the default.** The in-app reconciler does not read the directive, so it never
+  changes whether the in-app row is attempted (that reconciler keeps its own retry,
+  dead-letter and suppression outcomes). A directive that names no *enabled* external channel (only `in-app`, only unknown
+  names, only disabled channels) is treated as absent, so e.g. "email only" with email disabled
+  widens to the full default external fan-out rather than narrowing it.
+- **No external guarantee.** A directive that names an enabled channel is not checked against
+  that channel's `available()` or recipient resolution. If the named channel is unavailable (stub
+  transport, no SMTP, unwired seam) or skips the row (email with no resolvable address), the
+  excluded channels have already recorded a terminal `skipped`, so no external channel delivers
+  that row and the skip is not retried when the named channel recovers.
+- **Open decision (operator).** Whether "email only" with email disabled should keep widening to
+  the default fan-out (today, pinned by tests) or deliver nothing external.
+- **First request wins.** If an active suspension already exists, `suspend` returns it and a
+  new request's `notifyChannels` is dropped, as the reason is.
+- Not consumed: mod-bff's redundant `notifyEmailOnly` flag (its channel list already carries
+  `email` + `in-app` in that case), and the lift path (mod-bff sends no directive there).

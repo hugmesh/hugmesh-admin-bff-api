@@ -1,11 +1,10 @@
 # admin-bff-api docs index
 
-This directory is this repo's "wiki" (the HugMesh platform does not use GitHub's
-built-in wiki feature — each repo's `docs/` tree is the canonical place for
-longer-form, code-adjacent documentation). Start with the top-level
-[`README.md`](../README.md) for the architecture overview, endpoint catalogue, and
-security model; the pages here go deeper on specific subsystems that don't fit that
-file, or that are still open design questions.
+This directory is this repo's "wiki". The HugMesh platform does not use GitHub's
+built-in wiki: each repo's `docs/` tree holds the longer documentation that sits next
+to the code. Start with the top-level [`README.md`](../README.md) for the architecture
+overview, endpoint catalogue and security model. The pages here go deeper on
+subsystems that do not fit that file, or that are still open design questions.
 
 | Page | What it covers | Status |
 |---|---|---|
@@ -14,13 +13,12 @@ file, or that are still open design questions.
 
 ## Conventions
 
-- **Freshness.** Every page here should describe what is actually on `main` as of its
-  own text — if you find a claim here that no longer matches `src/main/java`, treat the
-  code as ground truth and fix (or delete) the page, not the other way around.
+- **Freshness.** Every page here should describe what is on `main`. If a claim no
+  longer matches `src/main/java`, the code is right: fix or delete the page.
 - **State markers.** Pages use the same convention as the top-level README: **✅
   shipped** (merged to `main`), **🚧 in-flight** (open branch/PR), **🔭 planned**
   (design only, no code).
-- Cross-repo docs referenced from here (e.g. the platform reactive-BFF contract in
-  `catalyst-scripts/tests/stack/mock-bff.mjs`, or the generator's device-provisioning
-  scripts) live in their own repos — this index only covers pages physically in this
-  repo's `docs/`.
+- Cross-repo docs referenced from here (for example the platform reactive-BFF contract
+  in `hugmesh-generator/tests/stack/mock-bff.mjs`, or the generator's
+  device-provisioning scripts) live in their own repos. This index covers only the
+  pages in this repo's `docs/`.

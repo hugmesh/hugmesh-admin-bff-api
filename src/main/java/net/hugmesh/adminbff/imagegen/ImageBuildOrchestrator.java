@@ -1,5 +1,6 @@
 package net.hugmesh.adminbff.imagegen;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -34,6 +35,8 @@ import java.util.concurrent.ConcurrentHashMap;
  * mount, never the manifest); {@code imageRef} / {@code keysRef} are non-secret pointers.
  */
 @Component
+@SuppressFBWarnings(value = "EI_EXPOSE_REP2",
+        justification = "Spring constructor injection: the container owns this singleton collaborator and it is never mutated by this class after construction; a defensive copy of a bean is meaningless (not caller-owned mutable data).")
 public class ImageBuildOrchestrator {
 
     private static final Logger log = LoggerFactory.getLogger(ImageBuildOrchestrator.class);
@@ -175,7 +178,17 @@ public class ImageBuildOrchestrator {
         // worker treats as a last-wins overlay it overwrites). A client tenancy domain is never honoured.
         String spec = build.imageSpecJson();
         boolean hasSpec = spec != null && !spec.isBlank();
+        // Decisions 73b/73c (hugmesh-admin-bff-api#53): the BFF is the source of the device's
+        // stable id and of the Vault path of its dial key. Both are SERVER-derived from the build
+        // id (DeviceDialIdentity — the same helpers seedDial checks the Job's report against), the
+        // Job receives them as DEVICE_ID / VAULT_REF, and the dial-key volume mounts the
+        // per-device Secret device-ssh-<DEVICE_ID>. yamlSafe is belt-and-braces: the values are
+        // [a-z0-9-/] by construction.
+        String deviceId = yamlSafe("deviceId", DeviceDialIdentity.mintDeviceId(build.id()));
+        String vaultRef = yamlSafe("vaultRef", DeviceDialIdentity.vaultRefFor(deviceId));
         String jobDoc = template
+                .replace("${DEVICE_ID}", deviceId)
+                .replace("${VAULT_REF}", vaultRef)
                 .replace("${BUILD_ID}", build.id())
                 .replace("${TARGET_USER}", yamlSafe("targetUser", nz(build.targetUser())))
                 .replace("${DOMAIN}", nz(build.domain()))

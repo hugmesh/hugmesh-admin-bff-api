@@ -6,6 +6,8 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
+import java.util.ArrayList;
+import java.util.Collections;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.validation.annotation.Validated;
@@ -102,7 +104,11 @@ public class OidcProviderRolesController {
     public record SetRolesRequest(
             @Size(max = 20, message = "at most 20 roles per provider")
             List<@NotBlank @Size(max = 64) @Pattern(regexp = "[a-z0-9_-]+",
-                    message = "role names must be lowercase alphanumeric") String> roles) {}
+                    message = "role names must be lowercase alphanumeric") String> roles) {
+
+        public SetRolesRequest {
+            roles = roles == null ? null : Collections.unmodifiableList(new ArrayList<>(roles));
+        }}
 
     /**
      * Replace the default role set for a specific OIDC provider.

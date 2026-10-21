@@ -1,5 +1,6 @@
 package net.hugmesh.adminbff.testreports;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -34,6 +35,8 @@ import java.util.concurrent.ConcurrentHashMap;
  * a restarted pod) still sees full state from the DB.
  */
 @Component
+@SuppressFBWarnings(value = "EI_EXPOSE_REP2",
+        justification = "Spring constructor injection: the container owns this singleton collaborator and it is never mutated by this class after construction; a defensive copy of a bean is meaningless (not caller-owned mutable data).")
 public class TestRunOrchestrator {
 
     private static final Logger log = LoggerFactory.getLogger(TestRunOrchestrator.class);

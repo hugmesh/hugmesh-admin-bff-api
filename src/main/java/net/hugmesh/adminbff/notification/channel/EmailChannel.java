@@ -1,5 +1,7 @@
 package net.hugmesh.adminbff.notification.channel;
 
+import edu.umd.cs.findbugs.annotations.Nullable;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.mail.SimpleMailMessage;
@@ -28,9 +30,15 @@ import reactor.core.scheduler.Schedulers;
  *
  * <h3>Recipient resolution</h3>
  * The recipient is resolved from the outbox {@code target} subject: a subject that is an
- * email address is used directly; anything else has no email on file and is terminally
- * {@link ChannelOutcome#SKIPPED} (a richer profile-email lookup is a PR7 follow-up).
+ * email address is used directly (the resolver is not consulted). Anything else is handed to
+ * the optional {@link RecipientEmailResolver}; with no resolver, or when it finds no
+ * (well-formed) address, the row is terminally {@link ChannelOutcome#SKIPPED}, and when the
+ * lookup itself fails it is {@link ChannelOutcome#FAILED} (retry). No resolver implementation
+ * exists in this repo yet (see {@link RecipientEmailResolver}), so today only a subject that
+ * is already an address is mailed.
  */
+@SuppressFBWarnings(value = "EI_EXPOSE_REP2",
+        justification = "Spring constructor injection: the container owns these singleton collaborators and they are never mutated by this class after construction; a defensive copy of a bean is meaningless (not caller-owned mutable data).")
 public class EmailChannel implements NotificationChannel {
 
     private static final Logger log = LoggerFactory.getLogger(EmailChannel.class);
@@ -40,6 +48,8 @@ public class EmailChannel implements NotificationChannel {
     private final JavaMailSender mailSender;
     private final boolean enabled;
     private final boolean smtpConfigured;
+    @Nullable
+    private final RecipientEmailResolver resolver;
 
     /**
      * @param mailSender     the Spring mail sender (over the MAIL_PROVIDER SMTP secret)
@@ -47,9 +57,19 @@ public class EmailChannel implements NotificationChannel {
      * @param smtpConfigured whether {@code spring.mail.host} is set (false ⇒ unavailable)
      */
     public EmailChannel(JavaMailSender mailSender, boolean enabled, boolean smtpConfigured) {
+        this(mailSender, enabled, smtpConfigured, null);
+    }
+
+    /**
+     * @param resolver maps a non-address subject to an address, or null to mail only subjects
+     *                 that already are addresses
+     */
+    public EmailChannel(JavaMailSender mailSender, boolean enabled, boolean smtpConfigured,
+                        @Nullable RecipientEmailResolver resolver) {
         this.mailSender = mailSender;
         this.enabled = enabled;
         this.smtpConfigured = smtpConfigured;
+        this.resolver = resolver;
     }
 
     @Override
@@ -69,12 +89,33 @@ public class EmailChannel implements NotificationChannel {
 
     @Override
     public Mono<ChannelOutcome> send(String domain, String recipientSubject, ChannelMessage message) {
-        String to = recipientEmail(recipientSubject);
-        if (to == null) {
-            // No email on file for this recipient — terminal skip (never retry forever).
-            log.debug("[notify-email] no resolvable email for recipient '{}'; SKIPPED", recipientSubject);
-            return Mono.just(ChannelOutcome.SKIPPED);
+        return resolveRecipient(domain, recipientSubject)
+                .flatMap(to -> deliver(domain, to, message))
+                // No email on file for this recipient: terminal skip (never retry forever).
+                .defaultIfEmpty(ChannelOutcome.SKIPPED)
+                .onErrorResume(e -> {
+                    log.warn("[notify-email] recipient lookup for '{}' failed (retry next tick): {}",
+                            recipientSubject, e.toString());
+                    return Mono.just(ChannelOutcome.FAILED);
+                });
+    }
+
+    /** An address-shaped subject is used as is; otherwise the resolver (if any) is asked, and
+     *  whatever it returns must itself be address-shaped. Empty means no address. */
+    private Mono<String> resolveRecipient(String domain, String subject) {
+        String direct = recipientEmail(subject);
+        if (direct != null) {
+            return Mono.just(direct);
         }
+        if (resolver == null) {
+            log.debug("[notify-email] no resolvable email for recipient '{}'; SKIPPED", subject);
+            return Mono.empty();
+        }
+        return resolver.resolve(domain, subject)
+                .mapNotNull(EmailChannel::recipientEmail);
+    }
+
+    private Mono<ChannelOutcome> deliver(String domain, String to, ChannelMessage message) {
         String from = "system@" + domain;
         return Mono.fromCallable(() -> {
                     SimpleMailMessage mail = new SimpleMailMessage();

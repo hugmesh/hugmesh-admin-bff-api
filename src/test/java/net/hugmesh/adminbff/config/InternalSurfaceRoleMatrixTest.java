@@ -108,6 +108,7 @@ class InternalSurfaceRoleMatrixTest {
                 arguments(HttpMethod.POST, "/bff/internal/accounts/ensure"),
                 arguments(HttpMethod.GET, "/bff/internal/accounts/acct-1"),
                 arguments(HttpMethod.POST, "/bff/internal/accounts/acct-1/complete"),
+                arguments(HttpMethod.POST, "/bff/internal/accounts/acct-1/restart-onboarding"),
                 arguments(HttpMethod.GET, "/bff/internal/accounts/acct-1/namespaces"),
                 arguments(HttpMethod.GET, "/bff/internal/allowlist/google/alice"),
                 arguments(HttpMethod.POST, "/bff/internal/sessions"),
@@ -116,6 +117,7 @@ class InternalSurfaceRoleMatrixTest {
                 arguments(HttpMethod.GET, "/bff/internal/session/introspect"),
                 arguments(HttpMethod.POST, "/bff/internal/custody/stamp"),
                 arguments(HttpMethod.POST, "/bff/internal/session/exchange"),
+                arguments(HttpMethod.POST, "/bff/internal/usage"),
                 // The node / Job / host-agent / IdP legs.
                 arguments(HttpMethod.POST, "/bff/internal/device-enrollment/self-report"),
                 arguments(HttpMethod.POST, "/bff/internal/device-registry/phone-ingest"),

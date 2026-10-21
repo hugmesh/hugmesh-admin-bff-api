@@ -483,14 +483,47 @@ public class AuthController {
      * denied at the gateway). Carrier-agnostic — resolves the token from the cookie-bridged
      * {@code Authorization} header. Idempotent: an unknown/expired token returns
      * {@code {loggedOut:true}} with no row to delete.
+     *
+     * <p>hugmesh-generator#549: the fe route tables now send the browser-facing
+     * {@code POST /bff/sessionOut} to user-bff's alias instead, so a browser should never
+     * reach this copy at all.
+     *
+     * <p><b>Correction (land-lane re-review, admin-bff-api#102):</b> this method also takes a
+     * {@code @CookieValue} for the {@code bff_} session cookie and resolves via
+     * {@code bffTokenFrom(cookie, header)} rather than the prior {@code bffTokenFrom(null,
+     * header)}. The PR that added this originally claimed that closed a live "silent no-op" for
+     * a cookie-only caller — that claim does NOT hold for any request this running app actually
+     * serves. {@link SessionCookieWebFilter} is unconditionally component-scanned into this app
+     * ({@code AdminBffApplication}'s {@code scanBasePackages} includes
+     * {@code net.hugmesh.authcore}) and runs at {@code Ordered.HIGHEST_PRECEDENCE + 5} — before
+     * every controller, on every request — so a cookie-only caller's {@code bff_session} is
+     * ALREADY bridged into a synthesised {@code Authorization} header before this method is
+     * ever entered. {@code bffTokenFrom(null, header)} (the pre-#102 code) would have resolved
+     * the SAME token via that bridged header. Proven by mutation testing: reverting this
+     * parameter still leaves {@code AuthControllerSessionCookieTest
+     * #sessionOut_viaCookieOnly_deletesRow} green, because that test (correctly, matching the
+     * real app) imports the filter.
+     *
+     * <p>What DOES hold: reading the cookie directly here is still the more explicit,
+     * carrier-agnostic form, matching {@link #session(Authentication, String)} / {@code /me}
+     * above, and it is independently correct in isolation from the filter — see
+     * {@code AuthControllerSessionOutUnitTest}, a plain Mockito unit test with NO Spring context
+     * (a {@code @WebFluxTest} slice cannot isolate the filter here: it inherits
+     * {@code AdminBffApplication}'s {@code scanBasePackages} and auto-detects the filter
+     * regardless of any {@code @Import} list — see that class's javadoc for the full story).
+     * That test goes RED on the pre-#102 code. Treat this change as hardening / explicit
+     * precedence for a caller that might one day reach this method without the filter in front
+     * of it (a different composition, a future refactor) — NOT as a fix for any behavior
+     * reachable in the app as deployed today.
      */
     @Operation(summary = "Session out", operationId = "authSessionOut")
     @PostMapping("/sessionOut")
     public Mono<Map<String, Object>> sessionOut(
             Authentication auth,
+            @CookieValue(value = SessionCookieWebFilter.SESSION_COOKIE, required = false) String cookie,
             @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String header,
             ServerWebExchange exchange) {
-        String token = SessionCookieWebFilter.bffTokenFrom(null, header);
+        String token = SessionCookieWebFilter.bffTokenFrom(cookie, header);
         // Expire the cookie regardless of carrier (a Bearer-auth logout must still clear any
         // cookie the browser holds). No-op when cookie mode is disabled.
         ResponseCookie expired = cookies.expire();
@@ -563,30 +596,32 @@ public class AuthController {
         // rather than re-deriving it from me.handle() here — a fresh re-derivation would
         // skip the collision check entirely and is exactly how the bug was reachable.
         return localpartOf(me)
-                .flatMap(username -> {
-                    // Never broker a real Matrix/Mastodon account whose username is a
-                    // reserved app path/prefix (defence-in-depth: a reserved handle should
-                    // already have been blocked at registration, but the broker mints a
-                    // real homeserver localpart here, so re-check at the provision point).
-                    if (ReservedNames.isReserved(username)) {
-                        return Mono.error(ApiException.badRequest(
-                                "username '" + username + "' is reserved and cannot be provisioned"));
-                    }
-                    if (matrix) {
-                        return broker.matrixToken(username)
-                                .onErrorResume(e -> Mono.error(ApiException.badGateway(String.valueOf(e))));
-                    }
-                    // Mastodon needs BOTH: the Matrix-style username (the suspension row key the
-                    // broker guards on) AND the PERSISTED, collision-checked Mastodon localpart
-                    // (changeset 291) the homeserver account is keyed on. Resolve the latter FIRST
-                    // and OUTSIDE the badGateway wrap — a self-heal here can raise CollisionException
-                    // that must reach the outer 409 mapper, not be masked as a 502.
-                    return mastodonLocalpartOf(me).flatMap(mastodonLocalpart ->
-                            broker.mastodonToken(username, mastodonLocalpart)
-                                    .onErrorResume(e -> Mono.error(ApiException.badGateway(String.valueOf(e)))));
-                })
+                .flatMap(username -> provisionFor(me, matrix, username))
                 .onErrorMap(AccountLocalpartService.CollisionException.class,
                         e -> ApiException.conflict(e.getMessage()));
+    }
+
+    private Mono<Map<String, Object>> provisionFor(Account me, boolean matrix, String username) {
+        // Never broker a real Matrix/Mastodon account whose username is a
+        // reserved app path/prefix (defence-in-depth: a reserved handle should
+        // already have been blocked at registration, but the broker mints a
+        // real homeserver localpart here, so re-check at the provision point).
+        if (ReservedNames.isReserved(username)) {
+            return Mono.error(ApiException.badRequest(
+                    "username '" + username + "' is reserved and cannot be provisioned"));
+        }
+        if (matrix) {
+            return broker.matrixToken(username)
+                    .onErrorResume(e -> Mono.error(ApiException.badGateway(String.valueOf(e))));
+        }
+        // Mastodon needs BOTH: the Matrix-style username (the suspension row key the
+        // broker guards on) AND the PERSISTED, collision-checked Mastodon localpart
+        // (changeset 291) the homeserver account is keyed on. Resolve the latter FIRST
+        // and OUTSIDE the badGateway wrap — a self-heal here can raise CollisionException
+        // that must reach the outer 409 mapper, not be masked as a 502.
+        return mastodonLocalpartOf(me).flatMap(mastodonLocalpart ->
+                broker.mastodonToken(username, mastodonLocalpart)
+                        .onErrorResume(e -> Mono.error(ApiException.badGateway(String.valueOf(e)))));
     }
 
     /**

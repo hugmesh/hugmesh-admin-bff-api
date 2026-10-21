@@ -1,0 +1,119 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+      360 — the node Tor contract's admin-bff half (hugmesh-admin-bff-api#108).
+
+      Two tables, deliberately separate, because they have different writers and different
+      trust:
+
+        tor_node_report — TELEMETRY. What a tor-selected node says it exports: its primary
+          v3 onion (/var/lib/hugmesh/tor/hostname) and one onion per Tor domain
+          (/var/lib/hugmesh/tor/<slug>.hostname). Written ONLY by the node over the
+          /bff/internal/** SERVICE channel (the device-enrollment self-report transport).
+          A node self-claim is spoofable by any holder of the internal credential, so this
+          table carries NO authorizing columns and nothing reads it to make a decision; it
+          is shown to operators. Mirrors device_enrollment (130).
+
+        tor_node_config — the SUPERADMIN's per-node desired state that the signed per-node
+          export (GET /bff/admin/tor/export?node=) carries to the node agent, which writes
+          /etc/hugmesh/tor/upstream from it. upstream_managed=false (or no row) means "no
+          runtime opinion": the agent keeps whatever the image baked or a person wrote.
+          upstream_managed=true with upstream NULL means "use the agent's built-in default"
+          (the agent removes the file). config_generation bumps on every write, per row.
+
+      The per-domain list (/etc/hugmesh/tor/domains) has NO column here: it is mesh-wide,
+      derived from the domain_capability 'tor-onion' gate rows (303), so it needs no table.
+
+      ── Portable DDL (mirrors 130 / 303) ──────────────────────────────────────────────
+      varchar(36) UUID id with the DB-generated DEFAULT ((gen_random_uuid())::text, the
+      changelog-200 idiom); UNIQUE(machine_key_fp) is the ON CONFLICT target of each upsert;
+      timestamptz via 'timestamp with time zone'; PG-gated GRANT (onFail/onError=MARK_RAN).
+      No DELETE grant on either table: a node row is never hard-deleted.
+
+      ── Numbering: 360 ───────────────────────────────────────────────────────────────
+      The next free band above the current max wired band (350). Appended LAST at the
+      include site in db.changelog-master.xml. Independent of every other changeSet.
+    -->
+
+    <!-- ════════════════════════ tor_node_report ═══════════════════════════════════ -->
+    <changeSet id="360-tor-node-report-table" author="hugmesh">
+        <comment>Node-reported Tor onion hostnames (telemetry; NO authorizing columns).</comment>
+        <createTable tableName="tor_node_report">
+            <column name="id" type="varchar(36)" defaultValueComputed="(gen_random_uuid())::text">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <!-- The fingerprint the NODE reports as its own (self-claimed). -->
+            <column name="machine_key_fp" type="varchar(128)">
+                <constraints nullable="false" unique="true"
+                             uniqueConstraintName="uq_tor_node_report_machine_key_fp"/>
+            </column>
+            <!-- The primary v3 onion (56 base32 chars + '.onion' = 62). NULL until minted. -->
+            <column name="primary_onion" type="varchar(62)"/>
+            <!-- One '<slug> <onion>' line per Tor domain, sorted by slug (the Go-Live
+                 domain-onions.txt spelling). Empty string when the node exports none. -->
+            <column name="domain_onions" type="text">
+                <constraints nullable="false"/>
+            </column>
+            <column name="first_reported_at" type="timestamp with time zone" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+            <column name="last_reported_at" type="timestamp with time zone" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+            <!-- DoS visibility, as device_enrollment.report_count. -->
+            <column name="report_count" type="bigint" defaultValueNumeric="1">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+    </changeSet>
+
+    <changeSet id="360-tor-node-report-grant" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>App role privileges (PG only).</comment>
+        <sql>GRANT SELECT, INSERT, UPDATE ON tor_node_report TO adminbff_app</sql>
+    </changeSet>
+
+    <!-- ════════════════════════ tor_node_config ═══════════════════════════════════ -->
+    <changeSet id="360-tor-node-config-table" author="hugmesh">
+        <comment>SUPERADMIN per-node Tor desired state carried by the signed per-node export.</comment>
+        <createTable tableName="tor_node_config">
+            <column name="id" type="varchar(36)" defaultValueComputed="(gen_random_uuid())::text">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="machine_key_fp" type="varchar(128)">
+                <constraints nullable="false" unique="true"
+                             uniqueConstraintName="uq_tor_node_config_machine_key_fp"/>
+            </column>
+            <!-- true = the export tells the agent what /etc/hugmesh/tor/upstream must hold. -->
+            <column name="upstream_managed" type="boolean" defaultValueBoolean="false">
+                <constraints nullable="false"/>
+            </column>
+            <!-- host:port (validated against the agent's _UPSTREAM_RE), or NULL = the agent's
+                 built-in default (127.0.0.1:443) when upstream_managed. -->
+            <column name="upstream" type="varchar(300)"/>
+            <column name="config_generation" type="bigint" defaultValueNumeric="0">
+                <constraints nullable="false"/>
+            </column>
+            <column name="updated_by" type="varchar(400)"/>
+            <column name="updated_at" type="timestamp with time zone" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+    </changeSet>
+
+    <changeSet id="360-tor-node-config-grant" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>App role privileges (PG only).</comment>
+        <sql>GRANT SELECT, INSERT, UPDATE ON tor_node_config TO adminbff_app</sql>
+    </changeSet>
+
+</databaseChangeLog>

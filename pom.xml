@@ -57,6 +57,18 @@
          classification they pin, so an upstream slug addition surfaces as a parity failure a
          human must resolve rather than as a silent re-vendor. -->
     <optionalservices.source.dir>${project.basedir}/../hugmesh-generator/specs/cluster</optionalservices.source.dir>
+
+    <!-- The CONSOLE checkout dir holding the OTHER half of the app-profile schema contract
+         (operator decision 37; issue #55). src/main/resources/schema/app-profile.schema.json
+         here must be BYTE-IDENTICAL to schemas/app-profile.schema.json in
+         hugmesh-superadmin-service-catalog-ui, or the console and this service validate saves
+         against different rules. AppProfileSchemaMirrorTest compares the two files directly
+         when this directory is present and SKIPS when it is not — so CI clones the console and
+         passes -Dappprofile.schema.mirror.required=true, which turns that skip into a failure.
+         Without that flag a failed clone would send the test back to its skip branch and the
+         job would be green while checking nothing, which is exactly how catalog.source.dir was
+         dark in CI for months. Default assumes the console is checked out as a sibling. -->
+    <appprofile.schema.console.dir>${project.basedir}/../hugmesh-superadmin-service-catalog-ui/schemas</appprofile.schema.console.dir>
   </properties>
 
   <dependencies>
@@ -139,8 +151,18 @@
            stamped with brand X's domain also satisfied brand Y's registration gate here.
            Bumped in lockstep with RegistrationDomainResolver + the AuthController /
            InternalAccountController call sites below, which now pass a SERVER-DERIVED
-           requesting domain. -->
-      <version>2.5.0</version>
+           requesting domain.
+           2.5.1 is what this pin now names, and it is the ONLY auth-core coordinate the
+           org's release chain (hugmesh-auth-core release-chain.yml) publishes to GitHub
+           Packages: a pin on 2.5.0 resolves from a developer's hand-installed ~/.m2 and
+           nowhere else, so the release image build died on "Could not find artifact
+           net.hugmesh:hugmesh-auth-core:jar:2.5.0". 2.5.0 -> 2.5.1 is source- and
+           binary-compatible (the deprecated overloads are kept; hugmesh-auth-core
+           RELEASING.md section 4). 2.5.1 also carries the Casdoor-platform username
+           gate, which stays OFF here until FEDERATION_USERNAME_GATE_ENABLED is set
+           together with APP_CASDOOR_PLATFORM_BASE_URL/_CLIENT_ID/_CLIENT_SECRET and
+           HUGMESH_MTLS_CLIENT_ENABLED (hugmesh-generator#376). -->
+      <version>2.5.1</version>
     </dependency>
 
     <!-- ============================================================================
@@ -272,6 +294,14 @@
       <classifier>tests</classifier>
       <scope>test</scope>
     </dependency>
+    <!-- @SuppressFBWarnings for justified EI_EXPOSE_REP2 on Spring-injected collaborators;
+         compile-time only, not shipped. -->
+    <dependency>
+      <groupId>com.github.spotbugs</groupId>
+      <artifactId>spotbugs-annotations</artifactId>
+      <version>4.9.8</version>
+      <scope>provided</scope>
+    </dependency>
   </dependencies>
 
   <build><plugins>
@@ -306,6 +336,9 @@
           <!-- Same reason: forward the optional-services manifest source dir to the FORKED test
                JVM so OptionalServiceManifestDriftTest can find a generator checkout. -->
           <optionalservices.source.dir>${optionalservices.source.dir}</optionalservices.source.dir>
+          <!-- Same reason again: forward the console checkout dir so AppProfileSchemaMirrorTest
+               can read the OTHER repo's copy of the app-profile schema and compare bytes. -->
+          <appprofile.schema.console.dir>${appprofile.schema.console.dir}</appprofile.schema.console.dir>
         </systemPropertyVariables>
       </configuration>
     </plugin>

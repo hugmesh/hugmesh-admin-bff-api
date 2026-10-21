@@ -2,6 +2,8 @@ package net.hugmesh.adminbff.backup;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 /**
@@ -19,6 +21,10 @@ public record UsbDevice(
         @JsonProperty("free_bytes") Long freeBytes,
         boolean writable,
         List<UsbBackup> backups) {
+
+    public UsbDevice {
+        backups = backups == null ? null : Collections.unmodifiableList(new ArrayList<>(backups));
+    }
 
     /** A backup blob discovered on a USB device. {@code encrypted} is inferred
      *  from the file extension / sidecar the worker writes. */

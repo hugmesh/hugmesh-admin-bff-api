@@ -3,6 +3,7 @@ package net.hugmesh.adminbff.charactermoderation;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
 
@@ -124,25 +125,7 @@ public class UserBffCharacterModerationClient {
         body.put("findingId", findingId);
         body.put("reviewer", reviewer);
         return serviceToken.get()
-                .flatMap(token -> http.post()
-                        .uri(PATH_TEMPLATE, kind, subjectRef)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        // Reused VERBATIM from the platform ROLE_SERVICE pattern:
-                        // Authorization: Bearer <Casdoor client_credentials JWT>.
-                        .headers(h -> h.setBearerAuth(token))
-                        .bodyValue(body)
-                        .retrieve()
-                        // IDEMPOTENT no-op = SUCCESS. The #87 sink flips ONLY a PENDING row and
-                        // surfaces an already-flipped / unknown id as a 404 (its
-                        // resolve{Part,Sticker} does switchIfEmpty→notFound). On a retry — after a
-                        // crash/leadership-handoff between the flips and the single cursor write —
-                        // the same rows are re-pushed; they are now ACTIVE/REJECTED, so the sink
-                        // returns 404. Treat that 404 as APPLIED (the row IS in its terminal state)
-                        // so the cursor advances instead of wedging forever at that id. Same
-                        // idiom as AnnouncementMastodonClient (delete-already-deleted = 404 = OK).
-                        .onStatus(s -> s.value() == 404, resp -> Mono.empty())
-                        // Any 2xx (flipped) or the swallowed 404 (already-flipped) is a success.
-                        .toBodilessEntity())
+                .flatMap(token -> postModeration(token, kind, subjectRef, body))
                 .timeout(CALL_TIMEOUT)
                 .map(ignored -> Outcome.APPLIED)
                 .doOnNext(o -> log.info("[char-mod-reconcile] applied moderation kind={} id={} "
@@ -154,5 +137,28 @@ public class UserBffCharacterModerationClient {
                             kind, subjectRef, findingId, e.toString());
                     return Mono.just(Outcome.FAILED);
                 });
+    }
+
+    private Mono<ResponseEntity<Void>> postModeration(String token, String kind, long subjectRef,
+                                                      Map<String, Object> body) {
+        return http.post()
+                .uri(PATH_TEMPLATE, kind, subjectRef)
+                .contentType(MediaType.APPLICATION_JSON)
+                // Reused VERBATIM from the platform ROLE_SERVICE pattern:
+                // Authorization: Bearer <Casdoor client_credentials JWT>.
+                .headers(h -> h.setBearerAuth(token))
+                .bodyValue(body)
+                .retrieve()
+                // IDEMPOTENT no-op = SUCCESS. The #87 sink flips ONLY a PENDING row and
+                // surfaces an already-flipped / unknown id as a 404 (its
+                // resolve{Part,Sticker} does switchIfEmpty→notFound). On a retry — after a
+                // crash/leadership-handoff between the flips and the single cursor write —
+                // the same rows are re-pushed; they are now ACTIVE/REJECTED, so the sink
+                // returns 404. Treat that 404 as APPLIED (the row IS in its terminal state)
+                // so the cursor advances instead of wedging forever at that id. Same
+                // idiom as AnnouncementMastodonClient (delete-already-deleted = 404 = OK).
+                .onStatus(s -> s.value() == 404, resp -> Mono.empty())
+                // Any 2xx (flipped) or the swallowed 404 (already-flipped) is a success.
+                .toBodilessEntity();
     }
 }

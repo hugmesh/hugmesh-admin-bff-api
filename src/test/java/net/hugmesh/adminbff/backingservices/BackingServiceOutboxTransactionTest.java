@@ -126,7 +126,7 @@ class BackingServiceOutboxTransactionTest {
         String actor = "superadmin-SECRET-IDENTITY";
         String endpoint = "very-secret-host.rds.amazonaws.com:5432";
         String credsRef = "hugmesh/very-secret-creds-path";
-        BackingServiceMode recorded = svc.recordMode(actor, "object-store",
+        BackingServiceMode recorded = svc.recordMode(actor, "velero-objectstore",
                 managedReq(endpoint, credsRef)).block();
 
         NotificationOutbox row = outbox.findBySource(

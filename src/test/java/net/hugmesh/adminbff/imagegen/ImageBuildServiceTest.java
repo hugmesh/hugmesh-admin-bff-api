@@ -510,7 +510,7 @@ class ImageBuildServiceTest {
                 "job", "build-b1/image.img", null, null, Instant.now(), null);
         when(builds.findById("b1")).thenReturn(Mono.just(done));
         ImageBuildIngestRequest second = new ImageBuildIngestRequest("FAILED", null, null, null,
-                null, null, null, null, null, null, null, null, null, null);
+                null, null, null, null, null, null, null, null, null);
 
         StepVerifier.create(service.ingest("b1", second))
                 .expectNext(done).verifyComplete();

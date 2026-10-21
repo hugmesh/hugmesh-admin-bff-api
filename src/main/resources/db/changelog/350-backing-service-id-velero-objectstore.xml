@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+      350 — backing_service_mode: rename the object-storage service id
+      'object-store' -> 'velero-objectstore' (hugmesh-admin-bff-api#58, operator decision 92 = A).
+
+      WHY: BackingServiceCatalog called this service 'object-store' while the generator's
+      registry (specs/cluster/backing-services.yaml) and the image builder's accepted list
+      (build-rpi5-stage4.sh _MGD_TIER12_IDS) call it 'velero-objectstore'. A recorded intent for
+      'object-store' named an id the builder dies on ("unknown backing-service id"). The catalog
+      now carries 'velero-objectstore'; a row still saying 'object-store' would name an id the
+      catalog no longer knows, so its current mode would be orphaned.
+
+      WHETHER ANY ROW EXISTS IS UNKNOWN. Nobody has read a live database. It is unlikely — the
+      feature ships dark (app.backing-services.enabled defaults false, and the endpoint refuses
+      while dark) — so this changeSet is written to be a no-op on the expected empty case and
+      correct on the unexpected one.
+
+      IDEMPOTENT: a plain UPDATE ... WHERE service_id = 'object-store'. Re-executed (or run on a
+      database that never had such a row) it matches zero rows and changes nothing. Portable
+      (no dbms precondition), so it runs on the H2 test harness as well as Postgres.
+
+      THE APPEND-ONLY LEDGER. backing_service_mode rows are never UPDATEd by the application (the
+      adminbff_app GRANT stays SELECT, INSERT — 310). This is a one-time VOCABULARY correction run
+      by Liquibase under the migration (owner) role, not an app-side edit: each row keeps its id,
+      mode, endpoint, creds_ref, actor, created_at and generation; only the spelling of the same
+      service's id changes. The unique index (service_id, generation) cannot collide: no
+      'velero-objectstore' row can pre-date this changeSet, because the catalog refused that id
+      until the same release that ships this file.
+
+      NOT rewritten: notification_outbox payloads ({"service_id":"object-store",...}) already
+      emitted for such a row. Those are delivered notification history, not state anything
+      reads back as an id.
+
+      Band 350: the next free band above the current max wired band (340 domain-theme).
+      Appended LAST at the include site.
+    -->
+
+    <changeSet id="350-backing-service-id-velero-objectstore" author="hugmesh">
+        <comment>hugmesh-admin-bff-api#58 / decision 92: rewrite any backing_service_mode row whose
+                 service_id is the retired 'object-store' to the registry id 'velero-objectstore'.
+                 Idempotent (matches zero rows on re-run or on an empty ledger).</comment>
+        <update tableName="backing_service_mode">
+            <column name="service_id" value="velero-objectstore"/>
+            <where>service_id = 'object-store'</where>
+        </update>
+        <rollback>
+            <update tableName="backing_service_mode">
+                <column name="service_id" value="object-store"/>
+                <where>service_id = 'velero-objectstore'</where>
+            </update>
+        </rollback>
+    </changeSet>
+
+</databaseChangeLog>

@@ -17,7 +17,7 @@ import java.util.Optional;
  * actuated). The set + tiers mirror the design's feasibility ranking (cloud-deploy DESIGN
  * I8-DESIGN):
  * <ul>
- *   <li><b>Tier 1</b> (trivial): {@code object-store}, {@code smtp} — already
+ *   <li><b>Tier 1</b> (trivial): {@code velero-objectstore}, {@code smtp} — already
  *       endpoint-strategy / external-submission shaped.</li>
  *   <li><b>Tier 2</b> (easy/medium): {@code kafka}, {@code clickhouse},
  *       {@code federation-bundles}, and the per-service Postgres set (the 5 core BFF DBs +
@@ -88,7 +88,13 @@ public final class BackingServiceCatalog {
     /** The closed v1 catalog, in tier order (mirrors backing-services.yaml). */
     public static final List<BackingService> SERVICES = List.of(
             // ── Tier 1 (trivial) ──────────────────────────────────────────────────────────
-            new BackingService("object-store", KIND_OBJECT_STORAGE, TIER_TRIVIAL,
+            // The id is the generator registry's (specs/cluster/backing-services.yaml) VERBATIM —
+            // hugmesh-admin-bff-api#58 / decision 92: this row said "object-store" while the
+            // registry and the builder's _MGD_TIER12_IDS said "velero-objectstore", so a recorded
+            // intent named an id the builder dies on. "object-store" is the registry's KIND for
+            // two services (this one and federation-bundles), never an id. Liquibase 350 rewrites
+            // any stored row; BackingServiceCatalogDriftTest pins the id set both ways.
+            new BackingService("velero-objectstore", KIND_OBJECT_STORAGE, TIER_TRIVIAL,
                     "Object storage (Velero / MinIO)", "S3", "Blob Storage",
                     "Velero BSL is already the aws-plugin + INI-creds shape — the easiest swap; "
                             + "Azure = the velero-plugin-for-microsoft-azure initContainer."),

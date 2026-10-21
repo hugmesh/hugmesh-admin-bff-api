@@ -1,6 +1,10 @@
 package net.hugmesh.adminbff.internalapi;
 
+import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
+import java.util.ArrayList;
+import java.util.Collections;
 import org.jspecify.annotations.Nullable;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
@@ -24,6 +28,7 @@ import net.hugmesh.adminbff.account.AccountIssuerService;
 import net.hugmesh.adminbff.account.AccountLocalpartService;
 import net.hugmesh.adminbff.account.RegistrationDomainResolver;
 import net.hugmesh.adminbff.suspension.SuspensionService;
+import net.hugmesh.adminbff.usage.UsageService;
 import net.hugmesh.authcore.account.Account;
 import net.hugmesh.authcore.account.AccountStatus;
 import net.hugmesh.authcore.account.AccountStore;
@@ -168,6 +173,14 @@ public class InternalAccountController {
     /** How long before access-token expiry the exchange leg pre-emptively refreshes. */
     private final long refreshSkewSeconds;
 
+    /**
+     * The SAME {@code @Service} {@code AuthController#emitAndSession}/{@code #complete} call
+     * for admin-bff's OWN {@code register}/{@code login}/{@code complete}/{@code
+     * matrix.entitled}/{@code mastodon.entitled} events — see {@link #recordUsage} (decision
+     * 55, hugmesh-admin-bff-api#85).
+     */
+    private final UsageService usage;
+
     public InternalAccountController(AccountStore accounts,
                                      SuspensionService suspensions,
                                      MfaStepUpService mfaStepUp,
@@ -177,7 +190,8 @@ public class InternalAccountController {
                                      AccountLocalpartService localparts,
                                      AccountCasdoorSubService casdoorSubs,
                                      AccountIssuerService accountIssuers,
-                                     RegistrationDomainResolver registrationDomains) {
+                                     RegistrationDomainResolver registrationDomains,
+                                     UsageService usage) {
         this.accounts = accounts;
         this.suspensions = suspensions;
         this.mfaStepUp = mfaStepUp;
@@ -188,6 +202,7 @@ public class InternalAccountController {
         this.casdoorSubs = casdoorSubs;
         this.accountIssuers = accountIssuers;
         this.registrationDomains = registrationDomains;
+        this.usage = usage;
     }
 
     /**
@@ -224,8 +239,20 @@ public class InternalAccountController {
             boolean mfaSatisfied,
             @Nullable String casdoorSub,
             @Nullable String issuer
-    ) {}
+    ) {
 
+        public IntrospectResponse {
+            roles = roles == null ? null : Collections.unmodifiableList(new ArrayList<>(roles));
+        }}
+
+    /**
+     * Body of {@code POST /accounts/ensure}. Like every {@code @RequestBody} record on this
+     * controller ({@link CreateSessionRequest}, {@link StampCustodyRequest}, {@link
+     * ExchangeRequest}, {@link RecordUsageRequest}) its {@code @NotBlank} constraints are
+     * ENFORCED only because the handler parameter is {@code @Valid}; the class-level
+     * {@code @Validated} does not reach a body record (hugmesh-admin-bff-api#107, pinned by
+     * {@code InternalAccountControllerBodyValidationWireTest}).
+     */
     public record EnsureAccountRequest(@NotBlank String provider, @NotBlank String handle) {
     }
 
@@ -249,6 +276,10 @@ public class InternalAccountController {
      */
     public record AccountOut(String id, String provider, String handle, boolean registrationComplete,
                              List<String> roles, String localpart, String mastodonLocalpart) {
+
+        public AccountOut {
+            roles = roles == null ? null : Collections.unmodifiableList(new ArrayList<>(roles));
+        }
         static AccountOut of(Account a, String localpart, String mastodonLocalpart) {
             return new AccountOut(a.id(), a.provider(), a.handle(), a.registrationComplete(),
                     a.roles(), localpart == null ? "" : localpart,
@@ -274,6 +305,49 @@ public class InternalAccountController {
     }
 
     /**
+     * The body for {@link #recordUsage} — the EXACT parameter list of {@link
+     * UsageService#record(String, List, String)}, so the internal caller's contract is a
+     * straight pass-through with no re-derivation on this side. {@code roles} is optional
+     * ({@code null} is treated as "no roles", identical to how {@code UsageService.record}
+     * already treats it) since a caller that only knows the handle at record time (no
+     * account object in hand) still has a valid call to make.
+     *
+     * <p>{@code handle} and {@code action} are {@link NotBlank} and the constraints are LIVE:
+     * {@link #recordUsage} takes the body {@code @Valid}, so a missing/blank value is a {@code
+     * 400 {"error":"validation failed","fields":{...}}} via {@code ValidationExceptionHandler}
+     * before {@link UsageService#record} runs (a {@code null} action would otherwise NPE inside
+     * {@code UsageService.moduleOf}). Without {@code @Valid} a record's constraints are inert —
+     * the class-level {@code @Validated} only covers path/query parameters.
+     *
+     * <p>Both are also LENGTH-capped ({@link Size}, hugmesh-admin-bff-api#105): {@code handle}
+     * at {@value #USAGE_HANDLE_MAX} characters (the {@code account.id} column width and the
+     * {@code user} cap on AdminController's routes; real handles are {@code varchar(320)}) and
+     * {@code action} at {@value #USAGE_ACTION_MAX} (every recorded action is a short dotted
+     * token such as {@code admin.forum.moderation.approve}). An over-long value is the same
+     * {@code 400 validation failed}, so a 200 KB handle is refused rather than stored in
+     * {@code UsageService}'s in-memory log.
+     *
+     * <p>Role dialect: {@code roles} are the LOWERCASE {@code Account.roles} tokens
+     * ({@code "user"}, {@code "admin"} — {@code RoleName.*.value()}), exactly what {@code
+     * AuthController} forwards from the account object. {@link UsageService#record} tags an
+     * event {@code admin} only when the list contains {@code "admin"}; a caller sending the
+     * Spring authority spelling ({@code "ROLE_ADMIN"}) gets every event tagged {@code user}.
+     */
+    public record RecordUsageRequest(@NotBlank @Size(max = USAGE_HANDLE_MAX) String handle,
+                                     @Nullable List<String> roles,
+                                     @NotBlank @Size(max = USAGE_ACTION_MAX) String action) {
+
+        public RecordUsageRequest {
+            roles = roles == null ? null : Collections.unmodifiableList(new ArrayList<>(roles));
+        }
+    }
+
+    /** {@code @Size} cap on {@link RecordUsageRequest#handle()} (hugmesh-admin-bff-api#105). */
+    static final int USAGE_HANDLE_MAX = 400;
+    /** {@code @Size} cap on {@link RecordUsageRequest#action()} (hugmesh-admin-bff-api#105). */
+    static final int USAGE_ACTION_MAX = 128;
+
+    /**
      * Get-or-create the durable account for a provider handle.
      *
      * <p><b>#112 SSO subject extraction.</b> For the native login leg, user-bff's
@@ -288,7 +362,7 @@ public class InternalAccountController {
      * a new account each login). The non-casdoor (invite) providers pass through verbatim.
      */
     @PostMapping("/accounts/ensure")
-    public Mono<AccountOut> ensureAccount(@RequestBody EnsureAccountRequest body) {
+    public Mono<AccountOut> ensureAccount(@Valid @RequestBody EnsureAccountRequest body) {
         String provider = body.provider();
         if ("casdoor".equals(provider)) {
             String handle = subjectFromIdToken(body.handle());
@@ -576,6 +650,29 @@ public class InternalAccountController {
     }
 
     /**
+     * Send an account back to the start of onboarding ({@code registrationComplete} reset to
+     * {@code false}); 404 when absent. The exact mirror of {@link #complete}: the same lookup,
+     * the same 404, the same {@link AccountOut} read-back of the already-persisted localpart.
+     *
+     * <p>This is the verb {@code AuthController#registerGoogle} / {@code #registerDiscord}
+     * apply through {@code AccountStore.restartOnboarding} on this BFF's own register path. A
+     * caller on the user-bff side has no way to reach it without this route: a re-registration
+     * of an already-complete account would otherwise report {@code registrationComplete: true}
+     * and skip onboarding (hugmesh-admin-bff-api#84).
+     *
+     * <p>Gated like every sibling on {@code /bff/internal/**}: {@code ROLE_SERVICE} or the
+     * shared {@code X-Internal-Token} (see {@code SecurityConfig}). Like {@link #complete}, it
+     * only READS the localpart; it never resolves or writes one.
+     */
+    @PostMapping("/accounts/{id}/restart-onboarding")
+    public Mono<AccountOut> restartOnboarding(@PathVariable String id) {
+        return accounts.account(id)
+                .switchIfEmpty(Mono.error(notFound("account")))
+                .flatMap(accounts::restartOnboarding)
+                .flatMap(this::readWithLocalpart);
+    }
+
+    /**
      * A pure READ of the already-resolved localpart (never resolves/writes/collision-checks —
      * that only ever happens at {@link #withLocalpart}, an account-CREATION call site). Blank
      * when unset (see {@link AccountOut}'s doc for why that can legitimately happen and how a
@@ -625,7 +722,7 @@ public class InternalAccountController {
 
     /** Mint a new opaque {@code bff_} session for an account; 404 when the account is absent. */
     @PostMapping("/sessions")
-    public Mono<Map<String, String>> createSession(@RequestBody CreateSessionRequest body) {
+    public Mono<Map<String, String>> createSession(@Valid @RequestBody CreateSessionRequest body) {
         return accounts.account(body.accountId())
                 .switchIfEmpty(Mono.error(notFound("account")))
                 .flatMap(accounts::newSession)
@@ -718,7 +815,7 @@ public class InternalAccountController {
      */
     @PostMapping("/custody/stamp")
     @org.springframework.web.bind.annotation.ResponseStatus(HttpStatus.NO_CONTENT)
-    public Mono<Void> stampCustody(@RequestBody StampCustodyRequest body) {
+    public Mono<Void> stampCustody(@Valid @RequestBody StampCustodyRequest body) {
         LocalDateTime accessExpiresAt =
                 LocalDateTime.now().plusSeconds(body.expiresInSeconds() > 0 ? body.expiresInSeconds() : 3600);
         return accounts.stampCustody(body.sessionToken(), body.encAccess(), body.encRefresh(), accessExpiresAt)
@@ -748,7 +845,7 @@ public class InternalAccountController {
      * refusing the swap for a blocked account.
      */
     @PostMapping("/session/exchange")
-    public Mono<Map<String, String>> exchange(@RequestBody ExchangeRequest body) {
+    public Mono<Map<String, String>> exchange(@Valid @RequestBody ExchangeRequest body) {
         if (custodyCipher == null || !custodyCipher.isAvailable()) {
             return Mono.error(serviceUnavailable("custody disabled"));
         }
@@ -760,6 +857,84 @@ public class InternalAccountController {
                         .switchIfEmpty(Mono.error(notFound("session")))
                         // Decrypt custody, lazily refresh if near expiry, serve the current JWT on refresh failure.
                         .flatMap(s -> exchangeSessionRow(s))));
+    }
+
+    // ──────────────────────────── Usage recording (decision 55) ───────────────────────────
+
+    /**
+     * Record one usage event on admin-bff's OWN {@link UsageService} — a registration (or
+     * any other action) performed on a DIFFERENT service (today: user-bff's {@code
+     * LegacyPathParityController} register handlers, hugmesh-user-bff-api#19 box 3) is
+     * recorded here EXACTLY as if it had been performed against this service's own {@code
+     * AuthController}, since {@code AuthController} calls the SAME {@link
+     * UsageService#record(String, List, String)} with the SAME three arguments — this
+     * endpoint is a straight pass-through, not a reinterpretation. Decision 55 (operator,
+     * 2026-09-18, "yes"): a registration performed through user-bff DOES appear in
+     * admin-bff's usage table.
+     *
+     * <h3>Why a dedicated endpoint rather than folding into restart-onboarding (#84)</h3>
+     * The parent issue (hugmesh-admin-bff-api#2, box 2) floated folding this into box 1's
+     * {@code POST /bff/internal/accounts/{id}/restart-onboarding} with an {@code action}
+     * field, since admin-bff's own register handlers call {@code restartOnboarding} and
+     * {@code usage.record(..., "register")} back-to-back on every registration — folding
+     * would save user-bff one round trip on THAT specific path. This endpoint is dedicated
+     * instead, for three reasons argued on #85: (1) #84 is a separate, not-yet-landed issue
+     * outside decision 55's scope — folding would require building #84's own account-state
+     * mutation as a side effect of this analytics leg, entangling two unrelated concerns in
+     * one request/response contract; (2) a dedicated endpoint mirrors {@link
+     * UsageService#record}'s OWN three-argument shape exactly and works for ANY action
+     * (not only {@code "register"}) — {@code "login"}, {@code "complete"}, {@code
+     * "matrix.entitled"}, {@code "mastodon.entitled"}, or a future action user-bff records
+     * on its own surface, none of which have anything to do with restart-onboarding; (3) it
+     * matches #85's own "Done when" checklist verbatim ("the internal usage leg exists with
+     * a test and a regenerated openapi.json"), which never mentions #84. The cost — one
+     * extra round trip on the register path specifically, once #84 AND
+     * hugmesh-user-bff-api#19 both land — is the SAME "S either way" cost the parent
+     * comment itself accepted for either shape.
+     *
+     * <h3>No account lookup, no existence check — deliberately</h3>
+     * {@code AuthController}'s own calls (e.g. {@code emitAndSession}) never re-verify the
+     * account before recording — they call {@code usage.record} with a handle/roles they
+     * already hold from an account object validated earlier in the SAME request. This
+     * endpoint does the same: it trusts the caller (an internal, {@code ROLE_SERVICE}-gated
+     * service that has already resolved its own account) and performs no {@link
+     * AccountStore} read. Adding one here would diverge from {@code AuthController}'s own
+     * behaviour (this service's register path never fails a registration because the
+     * FOLLOW-UP usage write couldn't find the account it just created) and would cost a
+     * database round trip {@link UsageService#record} itself does not pay.
+     *
+     * <h3>Idempotent where it can be</h3>
+     * {@link UsageService#record} is an APPEND (an analytics event), not a keyed upsert —
+     * there is no dedup key in the schema today, so calling this endpoint twice for the
+     * same registration genuinely records two rows, identical to what happens if {@code
+     * AuthController} itself is ever called twice for the same registration (it is not
+     * idempotent either — this endpoint does not invent a stronger guarantee than its own
+     * in-process equivalent already has). What IS idempotent: the endpoint has no
+     * precondition and no allocated identity to collide on, and {@link UsageService#record}
+     * degrades rather than fails on the common outages (Kafka down -> fallback insert;
+     * no Kafka -> best-effort insert, error swallowed — see its class javadoc), so a caller
+     * may retry a failed/uncertain request without risking a partial-state failure — the
+     * ONLY possible side effect of a retry is an extra usage row, never a broken one.
+     *
+     * <p><b>Responses.</b> {@code 204 No Content} on every WELL-FORMED call (the caller has
+     * nothing useful to read back). {@code 400} with the shared {@code {"error":"validation
+     * failed","fields":{...}}} body when {@code handle} or {@code action} is missing or blank,
+     * or longer than its cap ({@code handle} 400, {@code action} 128 characters, decision 105;
+     * the body is {@code @Valid}, see {@link RecordUsageRequest}); {@code 400}/{@code 415}
+     * for an unparseable body or a non-JSON content type, as on every other endpoint here.
+     * Unlike {@code AuthController}'s {@code .subscribe()} idiom this method RETURNS the
+     * {@link UsageService#record} Mono, so the 204 is sent only after the usage write has
+     * settled: with Kafka wired that is the produce (bounded by the producer's {@code
+     * max.block.ms} on a broker outage) and, if the produce fails, the fallback ClickHouse
+     * insert — a failure of THAT fallback propagates as a 500. In degraded mode (no Kafka)
+     * the direct insert swallows its own error and the call is always 204. The event is
+     * appended to the in-memory log before either write, so a retry after a 500 records a
+     * second in-memory row (see "Idempotent where it can be").
+     */
+    @PostMapping("/usage")
+    @org.springframework.web.bind.annotation.ResponseStatus(HttpStatus.NO_CONTENT)
+    public Mono<Void> recordUsage(@Valid @RequestBody RecordUsageRequest body) {
+        return usage.record(body.handle(), body.roles() == null ? List.of() : body.roles(), body.action());
     }
 
     /**

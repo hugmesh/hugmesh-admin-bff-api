@@ -1,6 +1,8 @@
 package net.hugmesh.adminbff.optionalservices;
 
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 /**
@@ -16,6 +18,10 @@ public record OptionalServiceStatus(
         String applicationName,
         Instant lastReconcileTime,
         List<Condition> conditions) {
+
+    public OptionalServiceStatus {
+        conditions = conditions == null ? null : Collections.unmodifiableList(new ArrayList<>(conditions));
+    }
 
     /** Coarse lifecycle phases (mirrors the CRD status.phase enum). */
     public static final String PHASE_PENDING = "Pending";

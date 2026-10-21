@@ -163,9 +163,29 @@ public class SessionExchangeConfig {
         return new SessionExchangeClient(adminBffLoopbackWebClient);
     }
 
+    /**
+     * Shipped default for {@code app.bff-exchange.cache-ttl-ms}: {@code 0}, i.e. the
+     * positive-swap cache is OFF and every exchange call re-consults {@code
+     * InternalAccountController}'s {@code suspensionGate()} (zero suspension-bypass
+     * window). Set on 2026-09-18 by operator Decision 60 ("extend"): the gateway's own
+     * {@code BffJwtExchangeWebFilter} cache already ships at 0 (hugmesh-gateway#30,
+     * decision 7 of hugmesh-generator#347); this extends the same zero-window posture to
+     * this service's mirrored cache rather than leaving it at the old 5s default, which
+     * previously left a front-door-only zero window while federation-api calls from a
+     * native-login admin could still ride a swap cached up to 5s earlier.
+     *
+     * <p>This constant is a PIN, not an operative default: no production code reads it
+     * (javadoc and {@code SessionExchangeConfigTest} only) — the number actually takes
+     * effect only via the {@code @Value} fallback below and the wired {@code
+     * application.yml} default, both held equal to this constant by
+     * {@code SessionExchangeConfigTest}, which goes red if either drifts back to
+     * {@code 5000} (or to any positive value) on its own.
+     */
+    static final long DEFAULT_CACHE_TTL_MS = 0L;
+
     @Bean
     SessionExchangeCache sessionExchangeCache(
-            @Value("${app.bff-exchange.cache-ttl-ms:5000}") long cacheTtlMillis,
+            @Value("${app.bff-exchange.cache-ttl-ms:0}") long cacheTtlMillis,
             @Value("${app.bff-exchange.cache-max-size:10000}") int cacheMaxSize) {
         return new SessionExchangeCache(cacheTtlMillis, cacheMaxSize);
     }

@@ -33,12 +33,19 @@
 #
 # SCOPE OF THE CLOSED SLUG SET (verified 2026-07-11 against
 # specs/cluster/optional-services.yaml + the installed-services ConfigMap + 13a):
-# the enum is the 12 CLUSTER-service slugs that have BOTH a 13a ApplicationSet
+# the enum is the CLUSTER-service slugs that have BOTH a 13a ApplicationSet
 # element AND an installed-services ConfigMap boolean (clean 1:1 with each write
-# target). DELIBERATELY EXCLUDED and documented in the PR:
-#   * workloadConsole — has a ConfigMap boolean but NO 13a element (its RBAC is
-#     the hardcoded apps/14-workload-console-rbac.yaml, not ApplicationSet-owned);
-#     toggling it here would half-actuate (greying only). Left build-determined.
+# target) — 14 as of 2026-08-26. That set is DERIVED, never eyeballed: the guard
+# tests/scripts/test-optional-service-slug-closure.sh recomputes it from 13a + the
+# ConfigMap and fails if this enum, the seed CRs, apps/16's ignoreDifferences
+# pointers or the admin-bff OptionalServiceRegistry disagree with it.
+# DELIBERATELY EXCLUDED (a ConfigMap boolean but NO 13a element — their
+# Applications are hardcoded, so the reconciler cannot actuate them):
+#   * workloadConsole — its RBAC is the hardcoded apps/14-workload-console-rbac.yaml,
+#     not ApplicationSet-owned; toggling it here would half-actuate (greying only).
+#   * headwind / attestation-server — hardcoded apps/23-headwind.yaml and
+#     apps/24-attestation-server.yaml. Same shape: build-determined, not governable
+#     here until a cut-over gives them 13a elements.
 #   * egress-vpn / tor — NODE services (OpenRC + node reconcile agents), not
 #     cluster Applications: no 13a element, no ConfigMap boolean. A separate
 #     node-reconcile track, outside this ApplicationSet/ConfigMap mechanism.
@@ -92,14 +99,17 @@ spec:
                     is the 12 cluster-service slugs; path/namespace/mountAt are NOT
                     settable here — the controller resolves them from its built-in
                     OptionalServiceRegistry so an admin cannot repoint a slug at an
-                    arbitrary manifest path.
-                  # TODO: meshbridge (#374, merged after this CRD's #326) already has a
-                  # 13a ApplicationSet element + installed-services ConfigMap key (the
-                  # same 1:1 shape this enum claims is closed at 12) but was never added
-                  # here or to seed-optionalservices.yaml -- so the live CRD-driven
-                  # add/remove path (still dark by default, app.optional-services.reconcile.enabled=false)
-                  # cannot govern it once flipped on. Needs the same enum+seed-CR
-                  # treatment #326 gave the other 12 slugs.
+                    arbitrary manifest path. The closed set is derived (13a element AND
+                    ConfigMap boolean), not hand-listed; see the header.
+                  # meshbridge (#374, merged after this CRD's #326) was for a while the
+                  # standing counter-example to the 1:1 claim above: it had a 13a
+                  # ApplicationSet element AND an installed-services ConfigMap key but
+                  # appeared in neither this enum nor seed-optionalservices.yaml, so the
+                  # API server REJECTED `spec.slug: meshbridge` outright and the runtime
+                  # add/remove path could never govern it. CLOSED 2026-08-26: the slug is
+                  # in the enum below and has a seed CR, and the closure guard
+                  # (tests/scripts/test-optional-service-slug-closure.sh) now recomputes
+                  # this enum from 13a + the ConfigMap so the next slug cannot repeat it.
                   type: string
                   enum:
                     - akkoma
@@ -110,15 +120,34 @@ spec:
                     - tube
                     - character-studio
                     # character-forge (3D maker multi-app slug, docs/XR-CHAT.md) —
-                    # added WITH its 13a element + ConfigMap boolean + seed CR in the
-                    # same wave (the 1:1 shape this enum requires), growing the
-                    # closed set 12 -> 13. NOTE (cross-repo, like the meshbridge
-                    # TODO above): the admin-bff controller's built-in
-                    # OptionalServiceRegistry must learn the slug before the
-                    # (dark-by-default) reconciler can actuate it.
+                    # added WITH its 13a element + ConfigMap boolean + seed CR.
+                    #
+                    # A slug in this enum but absent from the admin-bff
+                    # OptionalServiceRegistry is a toggle that reports success and
+                    # does nothing: the API server ACCEPTS the CR, `kubectl get
+                    # optionalservices` shows enabled:true, and the reconciler logs
+                    # "unknown slug — ignoring", writes NEITHER the 13a element NOR
+                    # the ConfigMap key, and skips that CR's /status entirely. That
+                    # is strictly WORSE than a slug missing from both.
+                    # character-forge had that shape until admin-bff b8ed324
+                    # (2026-08-26) registered it. Re-measured 2026-09-23
+                    # (hugmesh-generator #584): the registry still marks it
+                    # configMapSelfHealProtected=false although apps/16 carries
+                    # /data/character-forge (a false selfHeal warning), and
+                    # MESHBRIDGE below now has the silent shape — it is in this enum
+                    # and the seed CRs while the registry keeps it NOT_TOGGLEABLE as
+                    # NOT_IN_CRD_ENUM. Both are hugmesh-admin-bff-api#106.
+                    # tests/scripts/test-optional-service-slug-closure.sh reads the
+                    # sibling hugmesh-admin-bff-api checkout and is RED on exactly
+                    # those two facts until #106 lands.
                     - character-forge
                     - anubis
                     - coturn
+                    # meshbridge — Meshtastic LoRa <-> Matrix bridge. RUNTIME-ONLY
+                    # (no baked bootstrap Application; the 13a element + the
+                    # ConfigMap boolean are the only gate), exactly like coturn
+                    # above, and dependsOn tuwunel.
+                    - meshbridge
                     - edge-ai
                     - edge-ai-analysis
                     - edge-ai-tts

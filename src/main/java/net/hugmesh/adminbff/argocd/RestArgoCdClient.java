@@ -2,8 +2,10 @@ package net.hugmesh.adminbff.argocd;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
+import reactor.netty.http.client.HttpClient;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -37,8 +39,17 @@ public class RestArgoCdClient implements ArgoCdClient {
     private final WebClient http;
     private final String project;
 
-    public RestArgoCdClient(String baseUrl, String authToken, String project) {
+    /**
+     * Build the client on {@code httpClient} — in production the outbound client-mTLS connector
+     * from {@link net.hugmesh.adminbff.config.OutboundMtlsClient} (decisions 81a = A / 81b = B,
+     * hugmesh-admin-bff-api#62), whose trust anchors are the cluster CA only. Once
+     * hugmesh-generator issues argocd-server's certificate from the cluster CA, that truststore
+     * covers it with no ArgoCD special case; ArgoCD's own self-signed certificate is (and stays)
+     * refused, and there is no plain-http fallback.
+     */
+    public RestArgoCdClient(String baseUrl, String authToken, String project, HttpClient httpClient) {
         this(WebClient.builder()
+                        .clientConnector(new ReactorClientHttpConnector(httpClient))
                         .baseUrl(baseUrl)
                         .defaultHeader("Authorization", "Bearer " + (authToken == null ? "" : authToken))
                         .build(),

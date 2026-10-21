@@ -145,6 +145,28 @@ homeserver:
   domainlock:
     enabled: "${HOMESERVER_DOMAINLOCK_ENABLED:false}"
 
+# ADMIN-only, ONE-WAY Matrix account deactivate (hugmesh-mod-bff-api#23; decisions 83a = C,
+# 83b = B). Posts tuwunel's `!admin users deactivate <mxid>` into the admin room after a
+# propose/confirm pair (MatrixDeactivateService). DELIBERATELY SEPARATE from homeserver.admin
+# above: that block is the REVERSIBLE access-suspension seam, and arming it must never arm this
+# verb (tuwunel has no re-activate). Env names are distinct from mod-bff-api's
+# MATRIX_ADMIN_ENABLED so one variable can never arm both services. SHIPS DARK.
+matrix-admin:
+  enabled: "${MATRIX_ADMIN_DEACTIVATE_ENABLED:false}"
+  base-url: "${MATRIX_ADMIN_DEACTIVATE_BASE_URL:http://tuwunel.hugmesh-backend.svc.cluster.local:8008}"
+  # Access token of an ADMIN-ROOM MEMBER — Vault hugmesh/tuwunel-admin (property "token") via
+  # the ESO ExternalSecret 'tuwunel-admin'. Placeholder only; NEVER inline. Blank => every
+  # confirm degrades (no-admin-token), never a false success.
+  admin-token: "${MATRIX_ADMIN_DEACTIVATE_TOKEN:}"
+  # The homeserver's server_name; a bare localpart target is qualified to @localpart:<this>.
+  server-name: "${MATRIX_ADMIN_DEACTIVATE_SERVER_NAME:hugmesh.net}"
+  # tuwunel's admin room alias (admin_room_default), resolved once per process.
+  admin-room: "${MATRIX_ADMIN_DEACTIVATE_ROOM:#admins:hugmesh.net}"
+  timeout: "${MATRIX_ADMIN_DEACTIVATE_TIMEOUT:PT10S}"
+  deactivate:
+    # The propose -> confirm window. Must be > 0 and <= PT15M or the service refuses to boot.
+    confirm-ttl: "${MATRIX_ADMIN_DEACTIVATE_CONFIRM_TTL:PT2M}"
+
 # Resilience4j circuit breakers for the access_suspension reconcile + expiry loop.
 # akkoma/tuwunel guard the per-homeserver suspend seam; casdoor (reused) guards the
 # expiry role re-add. Tuning mirrors the hugmesh-actions routeAccess/casdoor
@@ -359,6 +381,28 @@ app:
       per-ip-username:
         attempts: "${APP_LOCAL_LOGIN_RATE_LIMIT_IP_USERNAME_ATTEMPTS:5}"
         window-ms: "${APP_LOCAL_LOGIN_RATE_LIMIT_IP_USERNAME_WINDOW_MS:60000}"
+  # LEGACY USER-PATH KILL SWITCH (hugmesh-admin-bff-api#86, split from #2) — SHIPS DARK, i.e. both
+  # values below are the no-op defaults: every one of the eleven legacy AuthController mappings
+  # (register/google|discord|complete, login, login/local, me, me/namespaces, session, sessionOut,
+  # provision/matrix|mastodon) keeps serving exactly as before on every lane.
+  # FLIPPING THIS IS AN OBSERVATION STEP, NOT THE RETIREMENT: nothing is deleted, no mapping moves,
+  # and LegacyUserPathRetirementGuardTest still pins all eleven. A switched-off path answers 404
+  # (the status a deleted path will answer) with an `X-Bff-Denied: legacy-path-disabled` header, and
+  # every hit logs one WARN naming the path, socket peer, claimed X-Forwarded-For and User-Agent, so
+  # the operator can read who still calls it BEFORE deleting anything. Setting it back restores the
+  # path without a code change. The three lanes disagree about who serves these paths (cluster:
+  # shadowed by user-bff routes; compose: served here; device image: called straight at :8403 with
+  # no gateway), so switch ONE path off per lane and watch it; see AuthController's audit javadoc.
+  #   enabled  false switches the WHOLE legacy surface off (env APP_AUTH_LEGACY_PATHS_ENABLED).
+  #   disabled switches only the listed paths off while enabled stays true, as "METHOD /bff/path"
+  #            entries, comma-separated in the env var, e.g.
+  #            APP_AUTH_LEGACY_PATHS_DISABLED="POST /bff/register/google,GET /bff/me/namespaces".
+  #            An entry that is not one of the eleven FAILS THE BOOT rather than switching nothing
+  #            off, because a typo would read as "no 404s, so the path is dead".
+  auth:
+    legacy-paths:
+      enabled: "${APP_AUTH_LEGACY_PATHS_ENABLED:true}"
+      disabled: "${APP_AUTH_LEGACY_PATHS_DISABLED:}"
   # App-layer DEFENCE-IN-DEPTH credential for the /bff/internal/** surface (the
   # in-cluster node-to-BFF prefix that is permitAll() and otherwise relies SOLELY on
   # mTLS). The desktop sudo ENTITLEMENT read under it leaks per-(subject,device) sudo
@@ -534,10 +578,32 @@ app:
       # single-stick) boots clean: the loop compiles + diffs every tick through the Noop client
       # and mutates NOTHING. Flip true ONLY after (1) the canonical machine_key_fp field is
       # live-confirmed (docs/CANONICAL-FP.md — same blocker the READ side carries; the compiled
-      # policy keys nodes by that fp) and (2) an API key is provisioned.
+      # policy keys nodes by that fp), (2) an API key is provisioned, and (3) the control node
+      # runs headscale with policy.mode=database and the node-side hugmesh-policy-sync agent is
+      # removed (the generator cut-over for decision 101 = B, hugmesh-generator#634, not landed
+      # yet — see policy-mode). The startup gate only checks policy-mode below, which already
+      # declares `database`, so it CANNOT catch a flip made before that cut-over.
       enabled: "${APP_REGISTRY_HEADSCALE_ACL_ENABLED:false}"
       # The headscale control-plane gRPC-gateway REST base URL (only used when enabled).
-      base-url: "${APP_REGISTRY_HEADSCALE_ACL_BASE_URL:http://headscale.headscale.svc.cluster.local:8080}"
+      # headscale is a HOST OpenRC service on the pki node fronted by a selector-less Service
+      # `headscale` in ns `hugmesh-pki` (generator specs/cluster/manifests/headscale/service.yaml
+      # + apps/07-headscale-svc.yaml). The old default named headscale.headscale.svc, a namespace
+      # this platform does not have; it survived here after the 2026-07-30 fix reached only
+      # HeadscaleAclProperties, and this file's value is the one that wins at boot.
+      base-url: "${APP_REGISTRY_HEADSCALE_ACL_BASE_URL:http://headscale.hugmesh-pki.svc.cluster.local:8080}"
+      # The policy mode the TARGET headscale runs in — an operator DECLARATION, not a knob, spelled
+      # exactly as headscale's own policy.mode value. Decision 101 = B (2026-09-23): this BFF's
+      # PUT /api/v1/policy is the ONLY writer of the tailnet policy, so headscale keeps it in its
+      # DATABASE, which headscale v0.23.0 spells `database` (NOT `db` — headscale log.Fatal's on
+      # an unknown mode). The node-side writer (generator specs/usr/sbin/gen-headscale-policy.sh,
+      # the 60 s hugmesh-policy-sync cron, file mode) is RETIRED; its removal and the
+      # config.yaml switch to mode: database are generator work still to land. enabled=true with
+      # anything but `database` here FAILS THE CONTEXT at wiring time, naming the mismatch.
+      policy-mode: "${APP_REGISTRY_HEADSCALE_ACL_POLICY_MODE:database}"
+      # The node-local privileged unix account each compiled ssh rule opens the session AS —
+      # the node side's TS_SSH_USER (provision.sh resolve_ssh_user; its own fallback is
+      # "admin"). A value that does not match the node's resolved account yields unusable edges.
+      ssh-user: "${APP_REGISTRY_HEADSCALE_ACL_SSH_USER:admin}"
       # The headscale admin API key — Vault hugmesh/headscale-admin property `api-key`
       # via ESO, injected as APP_REGISTRY_HEADSCALE_ACL_API_KEY. PLACEHOLDER-ONLY, NEVER inline
       # a real key. Blank by default → no Authorization header (a real enabled push REQUIRES it).
@@ -556,6 +622,15 @@ app:
       usage-events: "${APP_KAFKA_TOPIC_USAGE_EVENTS:usage_events}"
     consumer:
       group-id: "${APP_KAFKA_CONSUMER_GROUP_ID:hugmesh-admin-bff-api-usage}"
+  # In-memory usage log (UsageService) — the ClickHouse-down fallback for the admin Usage
+  # view. Bounded (decision 105 = A, hugmesh-admin-bff-api#105): a ring buffer of the last
+  # in-memory-capacity events, plus separate running counters that keep totalEvents and the
+  # per-module event counts EXACT for the life of the process. The fallback's distinct users
+  # per module, active users in the last hour and per-action counts are computed over the
+  # last N (= this capacity) events only. Default 10000: with handle <= 400 and action <= 128
+  # characters (the @Size caps on POST /bff/internal/usage) that is at most ~12 MB of heap.
+  usage:
+    in-memory-capacity: "${APP_USAGE_IN_MEMORY_CAPACITY:10000}"
   # Anubis proof-of-work management proxy (Anubis is its own optional-service Deployment,
   # not a sidecar of this BFF). enabled=false by default so a deployment without the
   # Anubis optional service turned on does not get 503 cascades on the admin UI.
@@ -654,7 +729,12 @@ app:
     # observability) so a cross-TIER reach is impossible. EMPTY by default (fail-closed: every
     # {ns} is out-of-allowlist -> 403). The generator emits the real app-tier list.
     namespace-allowlist: "${WORKLOAD_CONSOLE_NAMESPACE_ALLOWLIST:}"
-    # The read-only exec command allowlist (first token). EMPTY by default.
+    # The read-only exec command allowlist. EMPTY by default (nothing is exec-able). Two entry
+    # forms, comma-separated: a BARE NAME ("ls") licenses that command with ANY arguments (head
+    # token must match exactly); a PINNED ARGV, tokens joined by single spaces ("ps -e",
+    # "df -h"), licenses EXACTLY that whole argv - no prefix match ("ps -e" does not license
+    # "ps -e eww") and no head match. No entry may contain a comma.
+    # See WorkloadConsoleProperties#execReadOnlyAllowed.
     exec-read-only-commands: "${WORKLOAD_CONSOLE_EXEC_READONLY:}"
     # Curated port-forward (namespace, workload, port) triples — EXCLUDING every datastore/
     # Vault/PKI/Casdoor. EMPTY by default; the generator emits the curated list. Bind via
@@ -710,9 +790,11 @@ app:
       # device, named by that device's device_ssh_dial.k8s_secret_name. A PATH only, never bytes.
       key-mount-path: "${DEVICE_TERMINAL_DIAL_KEY_MOUNT:/var/run/secrets/device-ssh-dial}"
       # File within EACH per-device Secret mount that holds the PEM/OpenSSH private dial key.
+      # Default dial_private_key (decision 73d, hugmesh-admin-bff-api#53): the key every producer
+      # writes (the generator's device-ssh-<deviceId> ExternalSecret and the build Job's mount).
       # ONE plain file name (no separator, no `.`/`..`): a value that climbs out of the device
       # directory is refused at startup (ERROR) and on every dial, so it cannot reach a flat key.
-      key-file: "${DEVICE_TERMINAL_DIAL_KEY_FILE:id_dial}"
+      key-file: "${DEVICE_TERMINAL_DIAL_KEY_FILE:dial_private_key}"
       # The node sshd port the BFF dials.
       port: "${DEVICE_TERMINAL_DIAL_PORT:22}"
       # Socket connect timeout for the dial.
@@ -725,6 +807,24 @@ app:
       # NOT the connect timeout — a real `flatpak install` legitimately outlives a socket connect.
       # The interactive PTY dial is bounded by device-terminal.idle-timeout instead, not by this.
       exec-timeout: "${DEVICE_TERMINAL_DIAL_EXEC_TIMEOUT:5m}"
+  # DESKTOP REMOTE-INSTALL — the one-click install behind POST /bff/admin/desktop/remote-install
+  # (DesktopRemoteInstallConfig). SHIPS DARK, and until this entry existed the flag was INVISIBLE:
+  # the only place the key appeared was a @ConditionalOnProperty(matchIfMissing = true) bean
+  # condition, so nobody reading this file could tell the lever existed or what it was called, and
+  # no deployment manifest had a name to override. DEFAULT false is byte-identical to the old
+  # implicit behaviour (false → NoopDesktopSshClient; the Noop was already the matchIfMissing bean).
+  # true wires RestDesktopSshClient, which runs the install as a one-shot exec over the SAME
+  # DeviceSshChannelFactory the in-UI terminal dials through — so it is INERT while
+  # app.device-terminal.dial.enabled is false (the factory is then the fail-closed
+  # UnconfiguredDeviceSshChannelFactory) and it needs an ACTIVE device_ssh_dial row with a pinned
+  # host_key_fp per target device. Flipping dial.enabled carries the mandatory security re-review
+  # (see device-terminal.dial above); this flag adds no second trust path and needs none of its own.
+  desktop:
+    remote-install:
+      enabled: "${DESKTOP_REMOTE_INSTALL_ENABLED:false}"
+      # The command run on the device; {ref} is replaced with the (validated) Flatpak ref. This is
+      # the value RestDesktopSshClient's @Value already defaulted to — stated so it is reviewable.
+      command: "${DESKTOP_REMOTE_INSTALL_COMMAND:flatpak install -y {ref}}"
   # ADMIN SSH KEY-ISSUANCE (SSH PR-4, Option B) — MINT an Ed25519 credential for an operator to
   # SSH a licensed device by registering its SHA256 fingerprint into the backing
   # device_ssh_license (schema 011); the node's AuthorizedKeysCommand already matches the offered
@@ -765,10 +865,28 @@ app:
   # (@ConditionalOnProperty / env), never a profile-named additional-location file.
   backing-services:
     enabled: "${APP_BACKING_SERVICES_ENABLED:false}"
-    # The Lease-gated single-writer reconcile loop SKELETON. SHIPS DARK — DEFAULT false: the
-    # scheduled tick returns early, so nothing runs at defaults. When enabled it still only
-    # calls the Noop effector (v1 logs-only; the real managed-mode flip is deferred to a
-    # follow-on generator/effector leg). Reuses the SHARED LeaderElection
+    # The REAL managed-mode EFFECTOR (Fabric8BackingServiceEffector). SHIPS DARK — DEFAULT
+    # false: the dark NoopBackingServiceEffector is in force and NO cluster is dialled, so a
+    # recorded managed mode stays durable INTENT. True wires the fabric8 effector, which
+    # merge-patches that service's two address keys into the `backing-service-endpoints`
+    # ConfigMap IN THAT SERVICE'S OWN NAMESPACE (operator decision 34a, 2026-09-17: one
+    # ConfigMap PER NAMESPACE — the single shared object was recommended and DECLINED), and
+    # then stamps the ledger generation onto exactly that service's consumer Deployment pod
+    # templates so the Deployment controller performs a TARGETED ROLLING RESTART (decision
+    # 34b). Flipping postgres-wiki-bff rolls ONE Deployment, not forty — and it IS a restart:
+    # a configMapKeyRef env var is resolved once, at container creation. Never write this
+    # down as "no restart" or as a live re-dial.
+    # ⚠ Before flipping this true on a live cluster: the `backing-service-endpoints`
+    # ConfigMap must exist in the target namespace (generator apps/17-…), the
+    # backing-service-endpoints-writer Role must be bound to this pod's backups-effector SA
+    # there, and the consumer Deployments must actually READ the keys — until that conversion
+    # lands a flip rewrites a key nothing consumes and rolls a pod that re-reads its literal.
+    effector:
+      enabled: "${APP_BACKING_SERVICES_EFFECTOR_ENABLED:false}"
+    # The Lease-gated single-writer reconcile loop. SHIPS DARK — DEFAULT false: the scheduled
+    # tick returns early, so nothing runs at defaults. Enabling it alone changes nothing
+    # either: it hands each recorded row to whichever effector the flag above selected, which
+    # is the logging Noop unless that flag is also true. Reuses the SHARED LeaderElection
     # (app.access-suspension.lease), so single-replica / dev / test fall back to AlwaysLeader.
     reconcile:
       enabled: "${APP_BACKING_SERVICES_RECONCILE_ENABLED:false}"
@@ -940,7 +1058,14 @@ app:
     # skips the exchange endpoint's own suspensionGate() re-check) — hard-clamped to a 60s ceiling
     # regardless of this value; <=0 disables the cache entirely (zero suspension-bypass window, one
     # exchange call per request).
-    cache-ttl-ms: "${APP_BFF_EXCHANGE_CACHE_TTL_MS:5000}"
+    # DEFAULT 0 = CACHE OFF (Decision 60, operator, 2026-09-18, "extend"): the gateway's own
+    # bff-exchange cache already ships at 0 (hugmesh-gateway#30, decision 7); this line extends
+    # the same zero-window posture to admin-bff's mirrored cache, so a suspension is enforced on
+    # the very next federation-api call from a native-login admin too, at the cost of one
+    # self-loopback exchange call per bff_-bearing request when app.bff-exchange.enabled=true.
+    # The previous default was 5000 (matched the gateway's own former default). Pinned by
+    # SessionExchangeConfigTest — a drift back to 5000 (or any positive value) goes red.
+    cache-ttl-ms: "${APP_BFF_EXCHANGE_CACHE_TTL_MS:0}"
     cache-max-size: "${APP_BFF_EXCHANGE_CACHE_MAX_SIZE:10000}"
     # Timeout for the self-loopback exchange call. A transient failure here degrades to no
     # Authorization header (soft fail-open) — see SessionExchangeService's class javadoc for why
@@ -1008,6 +1133,26 @@ springdoc:
   # Restrict the component scan to this BFF's own controllers so the spec stays
   # the admin-BFF surface only (no stray springframework/actuator paths leak in).
   packages-to-scan: net.hugmesh.adminbff
+
+# ── API-to-API mTLS (CLIENT side / OUTBOUND) ─────────────────────────────────
+# The OTHER half of the server.ssl.* block below (decision 81a = A, hugmesh-admin-bff-api
+# #82 / #94 / #62). OutboundMtlsClient builds the reactor-netty connector the effector
+# clients (RestFederationModuleClient, RestArgoCdClient) are built on: it presents this
+# BFF's PKI client identity (keystore.p12) and trusts ONLY the cluster CA (truststore.p12).
+# Same property names as mod-/forum-/mesh-/user-bff, and it REUSES the SSL_* env the
+# server-side stores use, so one mounted /stores layout serves both directions. DEFAULT
+# OFF: local/dev/CI keeps the default connector; the in-cluster deployment sets
+# HUGMESH_MTLS_CLIENT_ENABLED=true (hugmesh-generator, admin-bff-api deployment env).
+hugmesh:
+  mtls:
+    client:
+      enabled: "${HUGMESH_MTLS_CLIENT_ENABLED:false}"
+      key-store: "${SSL_KEY_STORE:/stores/keystore.p12}"
+      key-store-type: "${SSL_KEY_STORE_TYPE:PKCS12}"
+      key-store-password: "${SSL_KEY_STORE_PASSWORD:}"
+      trust-store: "${SSL_TRUST_STORE:/stores/truststore.p12}"
+      trust-store-type: "${SSL_TRUST_STORE_TYPE:PKCS12}"
+      trust-store-password: "${SSL_TRUST_STORE_PASSWORD:}"
 
 management:
   endpoints:

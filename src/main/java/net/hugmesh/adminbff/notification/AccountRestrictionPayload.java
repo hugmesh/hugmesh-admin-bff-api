@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -39,6 +40,20 @@ public final class AccountRestrictionPayload {
      * @return a compact JSON object string (never contains the actor)
      */
     public static String build(String target, String role, Long ttlSeconds, String reason) {
+        return build(target, role, ttlSeconds, reason, null);
+    }
+
+    /**
+     * As {@link #build(String, String, Long, String)}, plus the moderator's channel
+     * directive. The list is canonicalised by {@link NotifyChannelDirective#normalize}
+     * and written as the {@code notify_channels} array ONLY when something survives; a
+     * null, empty or all-unknown list leaves the output byte-for-byte what the four-arg
+     * form produced. Like everything else here it carries no actor.
+     *
+     * @param notifyChannels the requested channel names (may be null/empty)
+     */
+    public static String build(String target, String role, Long ttlSeconds, String reason,
+                               List<String> notifyChannels) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("target", target);
         body.put("role", role);
@@ -48,6 +63,10 @@ public final class AccountRestrictionPayload {
         body.put("permanent", ttlSeconds == null);
         if (reason != null && !reason.isBlank()) {
             body.put("reason", reason);
+        }
+        List<String> directive = NotifyChannelDirective.normalize(notifyChannels);
+        if (!directive.isEmpty()) {
+            body.put(NotifyChannelDirective.KEY, directive);
         }
         try {
             return MAPPER.writeValueAsString(body);

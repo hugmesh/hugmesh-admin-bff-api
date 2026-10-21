@@ -2,6 +2,7 @@ package net.hugmesh.adminbff.notification;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -46,12 +47,26 @@ import java.util.concurrent.atomic.AtomicReference;
  * gating lives on the in-app path (user-bff prefs) and is layered on the external
  * channels by PR7's preference consult — see the PR7 follow-up.
  *
+ * <h3>Moderator channel directive</h3>
+ * An outbox row may carry the moderator's {@code notify_channels} directive (see
+ * {@link NotifyChannelDirective}). It is checked before the availability gate and only
+ * selects a subset of the default fan-out: a channel the directive does not name records a terminal {@code skipped}
+ * delivery (no send); a named channel still goes through its own {@code enabled()} /
+ * {@code available()} gates, so the directive never turns a gated channel on. A
+ * directive naming no enabled external channel is treated as absent, but one that names an
+ * enabled channel is NOT checked against that channel's availability or recipient: if the
+ * named channel is unavailable or skips the row, the others have already recorded a terminal
+ * skip and no external channel delivers it (not retried). The in-app reconciler does not
+ * read the directive.
+ *
  * <h3>Neutral sender</h3>
  * The title/body handed to each adapter come from {@link NotificationTemplate} (composed
  * from the outbox payload's reason/ttl, NEVER the actor), so the {@code @system} voice is
  * impersonal on every channel.
  */
 @Service
+@SuppressFBWarnings(value = "EI_EXPOSE_REP2",
+        justification = "Spring constructor injection: the container owns this singleton collaborator and it is never mutated by this class after construction; a defensive copy of a bean is meaningless (not caller-owned mutable data).")
 public class ExternalChannelReconciler {
 
     private static final Logger log = LoggerFactory.getLogger(ExternalChannelReconciler.class);
@@ -141,16 +156,37 @@ public class ExternalChannelReconciler {
     private Mono<Void> processRow(NotificationChannel ch, NotificationOutbox row,
                                   AtomicReference<String> advanceTo,
                                   AtomicReference<Boolean> prefixIntact) {
+        // The whole body runs under ONE per-row guard (deferred, so a synchronous throw is
+        // caught too): a failing record on the directive-skip path must not abort the drain
+        // for the rest of the batch any more than a failing send does.
+        return Mono.defer(() -> processRowUnguarded(ch, row, advanceTo, prefixIntact))
+                .onErrorResume(e -> {
+                    meters.counter("notification.external.row_errors", "channel", ch.name()).increment();
+                    log.warn("[notify-external] {} row {} errored (metered, skipped): {}",
+                            ch.name(), row.id(), e.toString());
+                    prefixIntact.set(Boolean.FALSE);
+                    return Mono.empty();
+                });
+    }
+
+    private Mono<Void> processRowUnguarded(NotificationChannel ch, NotificationOutbox row,
+                                           AtomicReference<String> advanceTo,
+                                           AtomicReference<Boolean> prefixIntact) {
+        // The moderator's channel directive comes BEFORE the availability gate: an
+        // excluded channel records a terminal skip so its cursor moves on, instead of being
+        // retried as "unavailable" forever.
+        if (!NotifyChannelDirective.allows(row.payload(), ch.name(), enabledChannelNames())) {
+            return onTerminal(ch, row, advanceTo, prefixIntact,
+                    NotificationDeliveryRepository.STATUS_SKIPPED, "directive_skipped");
+        }
         // Gate on channel availability, render and send, then record the delivery outcome.
         return ch.available(row.domain())
-                .flatMap(available -> deliverIfAvailable(available, ch, row, advanceTo, prefixIntact))
-                .onErrorResume(e -> {
-            meters.counter("notification.external.row_errors", "channel", ch.name()).increment();
-            log.warn("[notify-external] {} row {} errored (metered, skipped): {}",
-                    ch.name(), row.id(), e.toString());
-            prefixIntact.set(Boolean.FALSE);
-            return Mono.empty();
-        });
+                .flatMap(available -> deliverIfAvailable(available, ch, row, advanceTo, prefixIntact));
+    }
+
+    /** The names of the channels whose enabled() gate is on: the only channels a directive can name. */
+    private List<String> enabledChannelNames() {
+        return channels.stream().filter(NotificationChannel::enabled).map(NotificationChannel::name).toList();
     }
 
     /** Skip unavailable channels; otherwise resolve recipient + send + record outcome. */
@@ -172,7 +208,7 @@ public class ExternalChannelReconciler {
             return onFailure(ch, row, advanceTo, prefixIntact, "no-recipient");
         }
         NotificationTemplate.Message msg = NotificationTemplate.render(row.category(), row.payload());
-        ChannelMessage cm = new ChannelMessage(row.category(), msg.title(), msg.body());
+        ChannelMessage cm = new ChannelMessage(row.category(), msg.title(), msg.body(), row.id());
         return ch.send(row.domain(), recipient, cm).flatMap(outcome -> switch (outcome) {
             case SENT -> onTerminal(ch, row, advanceTo, prefixIntact,
                     NotificationDeliveryRepository.STATUS_SENT, "sent");

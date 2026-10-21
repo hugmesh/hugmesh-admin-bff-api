@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
+
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
@@ -45,5 +47,46 @@ class AccountRestrictionPayloadTest {
         assertThat(json).doesNotContain("actor");
         assertThat(json).doesNotContain("mod");
         assertThat(json).doesNotContain("admin");
+    }
+
+    // ── notify_channels directive (issue #93) ──────────────────────────────
+
+    @Test
+    void build_absentOrEmptyDirective_isByteForByteTheFourArgForm() {
+        String legacy = AccountRestrictionPayload.build("alice", "PROFILE", 3600L, "abuse");
+        assertThat(AccountRestrictionPayload.build("alice", "PROFILE", 3600L, "abuse", null)).isEqualTo(legacy);
+        assertThat(AccountRestrictionPayload.build("alice", "PROFILE", 3600L, "abuse", List.of())).isEqualTo(legacy);
+        assertThat(legacy).doesNotContain("notify_channels");
+    }
+
+    @Test
+    void build_directive_isWrittenAsCanonicalDedupedArray() throws Exception {
+        // mastodon is mod-bff's name for the akkoma channel; case/whitespace/dupes collapse.
+        String json = AccountRestrictionPayload.build("alice", "PROFILE", null, null,
+                List.of("Email", " mastodon ", "email", "in-app"));
+        JsonNode n = M.readTree(json);
+        assertThat(n.get("notify_channels").isArray()).isTrue();
+        assertThat(M.convertValue(n.get("notify_channels"), List.class))
+                .containsExactly("email", "akkoma", "in-app");
+        // the rest of the payload is untouched
+        assertThat(n.get("target").asText()).isEqualTo("alice");
+        assertThat(n.get("permanent").asBoolean()).isTrue();
+    }
+
+    @Test
+    void build_unknownChannelNames_areIgnored_notRejected() throws Exception {
+        String mixed = AccountRestrictionPayload.build("alice", "PROFILE", null, null,
+                List.of("carrier-pigeon", "matrix"));
+        assertThat(M.convertValue(M.readTree(mixed).get("notify_channels"), List.class))
+                .containsExactly("matrix");
+        // all-unknown leaves nothing: identical to no directive at all.
+        assertThat(AccountRestrictionPayload.build("alice", "PROFILE", null, null, List.of("carrier-pigeon")))
+                .isEqualTo(AccountRestrictionPayload.build("alice", "PROFILE", null, null));
+    }
+
+    @Test
+    void build_directive_stillNeverContainsActorIdentity() {
+        String json = AccountRestrictionPayload.build("victim", "ROLE_MATRIX", 60L, "spam", List.of("email"));
+        assertThat(json).doesNotContain("set_by").doesNotContain("actor");
     }
 }

@@ -23,17 +23,22 @@ import java.util.Map;
  * <ul>
  *   <li>a slug the platform has never heard of -> {@link UnknownSlugException} (404);</li>
  *   <li>a slug the platform KNOWS but the reconciler cannot action
- *       ({@code meshbridge}, {@code workloadConsole}, {@code headwind},
- *       {@code attestation-server}) -> {@link NotToggleableException} (422) carrying the
- *       registry's NAMED {@link OptionalServiceRegistry.NotToggleable} reason. The write is
- *       never attempted;</li>
+ *       ({@code workloadConsole}, {@code headwind} and {@code attestation-server} today, all
+ *       {@code NO_APPLICATIONSET_ELEMENT}; {@code meshbridge} was refused here as
+ *       {@code NOT_IN_CRD_ENUM} until #106 made it managed) -> {@link NotToggleableException}
+ *       (422) carrying the registry's NAMED {@link OptionalServiceRegistry.NotToggleable}
+ *       reason. The write is never attempted;</li>
  *   <li>the reconciler wired to no cluster ({@code app.optional-services.reconcile.enabled=false},
  *       the shipped default) -> {@link OptionalServiceWriteException.Kind#NOT_WIRED} (503,
  *       {@code dark:true}). Nothing is written and nothing claims to have been;</li>
  *   <li>a slug whose greying key is missing from {@code apps/16}'s {@code ignoreDifferences}
- *       ({@code character-forge} today) toggles for real on the ApplicationSet side but has its
- *       ConfigMap mirror selfHealed back — reported as a {@code warnings} entry on BOTH the
- *       catalogue row and the toggle response, never swallowed.</li>
+ *       toggles for real on the ApplicationSet side but has its ConfigMap mirror selfHealed
+ *       back — reported as a {@code warnings} entry on BOTH the catalogue row and the toggle
+ *       response, never swallowed. No managed slug has that gap today: {@code character-forge}
+ *       was flagged until #106, but generator apps/16 carries its pointer, and
+ *       {@code OptionalServiceRegistryParityTest} pins the (now empty) set against the vendored
+ *       apps/16. The path stays for the next slug that gains a 13a element before its
+ *       pointer.</li>
  * </ul>
  * This is the direct answer to the defect that motivated the surface: {@code character-forge}
  * was accepted by the API server, reported {@code enabled: true} by {@code kubectl}, and
