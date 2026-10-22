@@ -141,11 +141,11 @@ below were refreshed on 2026-10-07, and the known gap this section once named in
 **Ecosystem baseline.** Spring **Boot 4.0.7** / Spring Cloud **2025.1.2** on
 **Java 25 LTS**. Shared Maven artifacts:
 
-- `net.hugmesh:hugmesh-parent:2.8.0` — the metapom (child of
+- `net.hugmesh:hugmesh-parent:2.9.0-beta.1` — the metapom (child of
   `spring-boot-starter-parent:4.0.7`; manages testcontainers 2.0.5);
-- `net.hugmesh:hugmesh-commons:2.1.0` (managed by the parent BOM) — shared
+- `net.hugmesh:hugmesh-commons:2.2.0-beta.1` (managed by the parent BOM) — shared
   security/tenancy/web (`net.hugmesh.commons.*`);
-- `net.hugmesh:hugmesh-auth-core:2.5.1` (currently-pinned version — see
+- `net.hugmesh:hugmesh-auth-core:2.6.0-beta.1` (currently-pinned version — see
   `pom.xml`) — the shared account / session / MFA / Casdoor-admin infrastructure
   (the account/session/MFA/Casdoor-admin classes that used to live in this repo were
   extracted into it). It depends on `hugmesh-commons` and is
@@ -161,8 +161,9 @@ below were refreshed on 2026-10-07, and the known gap this section once named in
   groupId + package move, no behavior change, part of the HugMesh rebrand, #236);
   **2.4.2** syncs the shared `ReservedNames` to reserved-prefixes revision 9 (82
   labels; 2.4.1, which pom.xml names as the first carrier, was never published);
-  **2.5.0** adds the domain-scoped registration gate; **2.5.1**, the pin, is the only
-  coordinate the release chain publishes and adds a username gate that stays off here — see
+  **2.5.0** adds the domain-scoped registration gate; **2.5.1** adds a username gate that
+  stays off here; **2.6.0-beta.1**, the pin, is the first beta of the release chain and adds
+  the `bff_` session bridge — see
   the version-by-version changelog under
   [Shared libraries](#shared-libraries-hugmesh-parent--hugmesh-commons--hugmesh-auth-core)
   below for the full detail.
@@ -274,10 +275,10 @@ flowchart TD
 | **Tier / namespace** | backend (`hugmesh-backend`) |
 | **Framework** | Spring Boot **4.0.7** (reactive **WebFlux**), Spring Cloud **2025.1.2**, **Java 25 LTS** |
 | **AuthN** | Casdoor OAuth2 **resource server** — validates the Casdoor JWT presented at the backend tier (the gateway swaps the browser's opaque `bff_` session → the internal custody JWT before it reaches here) |
-| **Shared libs** | `hugmesh-parent:2.8.0` (metapom) → `hugmesh-commons:2.1.0` (security/tenancy/web) + `hugmesh-auth-core:2.5.1` (shared account/session/MFA/Casdoor-admin + the BFF-JWT-custody seam; consumed by user-bff + admin-bff only) |
+| **Shared libs** | `hugmesh-parent:2.9.0-beta.1` (metapom) → `hugmesh-commons:2.2.0-beta.1` (security/tenancy/web) + `hugmesh-auth-core:2.6.0-beta.1` (shared account/session/MFA/Casdoor-admin + the BFF-JWT-custody seam; consumed by user-bff + admin-bff only) |
 | **Persistence** | config Postgres over **R2DBC** (runtime, non-blocking); **Liquibase** owns schema (JDBC, migrations only) |
 | **Other stores** | **ClickHouse** (usage analytics, best-effort), **Kafka** (usage-event bus, optional), **Cassandra** (best-effort route-access mirror the gateways poll) |
-| **Image / CI** | multi-stage Dockerfile (temurin 25), `:8080`; built + pushed to the in-cluster GitLab registry by `.gitlab-ci.yml`, which also runs the platform OWASP pen-test stages (SCA + DAST + nuclei) — see [CI & pen-test stages](#ci--pen-test-stages). **CI is GitLab**; one manual GitHub Actions workflow (`.github/workflows/release.yml`) can also push to GHCR. Images carry **no** KEYS material |
+| **Image / CI** | multi-stage Dockerfile (temurin 25), `:8080`; built + pushed to the in-cluster GitLab registry by `.gitlab-ci.yml`, which also runs the platform OWASP pen-test stages (SCA + DAST + nuclei) — see [CI & pen-test stages](#ci--pen-test-stages). **CI is GitLab**; one GitHub Actions workflow (`.github/workflows/release.yml`) also pushes to GHCR (`:main` on every push to main, `:<version>` + `:beta` on a `v<version>` tag). Images carry **no** KEYS material |
 | **App id** | `net.hugmesh.adminbff` (`AdminBffApplication`) |
 
 It is the production Spring port of the verified reference contract in
@@ -433,10 +434,10 @@ per brand, so each has a distinct, cryptographically validated `iss`). It is **s
 ### Shared libraries (`hugmesh-parent` + `hugmesh-commons` + `hugmesh-auth-core`)
 
 The security, tenancy and web building blocks above come from the org's shared Maven
-artifacts (`hugmesh-parent` on `2.8.0`, `hugmesh-commons` on `2.1.0`, `hugmesh-auth-core`
-on `2.5.1`), not from per-repo copies:
+artifacts (`hugmesh-parent` on `2.9.0-beta.1`, `hugmesh-commons` on `2.2.0-beta.1`,
+`hugmesh-auth-core` on `2.6.0-beta.1`), not from per-repo copies:
 
-1. **Parent POM →** `net.hugmesh:hugmesh-parent:2.8.0`, a child of
+1. **Parent POM →** `net.hugmesh:hugmesh-parent:2.9.0-beta.1`, a child of
    `spring-boot-starter-parent:4.0.7`, so the Spring Boot dependency and plugin
    management comes with it. The parent holds the reactive-BFF `<dependencies>`
    (webflux, actuator, security, oauth2-resource-server, validation, R2DBC + Liquibase +
@@ -447,8 +448,9 @@ on `2.5.1`), not from per-repo copies:
    Cassandra `java-driver-core`, `sshj`, BouncyCastle, `webauthn4j-core`, and the (now
    version-managed) resilience4j artifacts.
 
-2. **Shared security/tenancy/web →** `net.hugmesh:hugmesh-commons:2.1.0`, version-managed
-   by the parent BOM and not pinned in this POM. It replaced the local
+2. **Shared security/tenancy/web →** `net.hugmesh:hugmesh-commons:2.2.0-beta.1`,
+   version-managed by the parent BOM and not pinned in this POM (the `tests` classifier
+   used by the test suite follows the same `${hugmesh-commons.version}` property). It replaced the local
    `security.{Roles,DomainRegistry,DomainScope}`, `config.{CasdoorAuthorities,
    TenancyResourceServerConfig}` and `web.ApiException`, which were **deleted**:
    - `commons.security.Roles` — its `Collection`/names overloads are
@@ -465,7 +467,7 @@ on `2.5.1`), not from per-repo copies:
    - `commons.config.TenancyResourceServerConfig`.
 
 3. **Shared account / session / MFA / Casdoor-admin →**
-   `net.hugmesh:hugmesh-auth-core:2.5.1` (currently pinned; **adopted** at #111). The
+   `net.hugmesh:hugmesh-auth-core:2.6.0-beta.1` (currently pinned; **adopted** at #111). The
    stateful auth core that used to live in this BFF was extracted into it: the account,
    allowlist and `bff_session` store with `AccountStore`, the `CasdoorAdminClient`, the
    full MFA subsystem, the session-cookie and internal-token filters, the username gate,
@@ -495,12 +497,16 @@ on `2.5.1`), not from per-repo copies:
    - **2.5.0** (auth-core issue #1): adds `AccountStore.isEmailInvited(email, domain)` and
      `isDiscordInvited(handle, domain)` and deprecates the unscoped overloads. That is what
      makes the registration invite gate brand-scoped (see `POST /bff/register/*` below).
-   - **2.5.1**: the pin. 2.5.0 was never published to GitHub Packages, so the release
+   - **2.5.1**: 2.5.0 was never published to GitHub Packages, so the release
      image build could not resolve it. 2.5.0 → 2.5.1 is source- and binary-compatible
      (the deprecated overloads stay). 2.5.1 also carries the Casdoor-platform username
      gate, which stays off here until `FEDERATION_USERNAME_GATE_ENABLED` is set with
      `APP_CASDOOR_PLATFORM_BASE_URL`, `_CLIENT_ID`, `_CLIENT_SECRET` and
      `HUGMESH_MTLS_CLIENT_ENABLED`.
+   - **2.6.0-beta.1**: the pin, and the first beta of the release chain (build-config
+     0.6.0-beta.1, parent 2.9.0-beta.1, commons 2.2.0-beta.1). 2.6.0 adds the `bff_`
+     session bridge. 2.5.1 was never published either, so this is the first auth-core
+     coordinate the chain is expected to publish.
 
    **Stays per-repo:** this repo's A2 cookie/CSRF `config.SecurityConfig` (route matchers
    plus CSRF/cookie/header policy), the per-repo `web.ApiExceptionHandler` and
@@ -1338,10 +1344,25 @@ the privileged x86 runner. Stages are **`test`, `security`, `pentest`, `build`**
 - **`pentest:dast`** (pentest) — authenticated **ZAP** baseline, custom probes and
   **nuclei** against the running service, `allow_failure: true`.
 
-`.github/workflows/release.yml` ("Release image") runs only on `workflow_dispatch`. It
-checks that the four private libraries are readable, builds the same `Dockerfile`, and
-pushes `ghcr.io/hugmesh/hugmesh-admin-bff-api:<tag>`. The tag defaults to the commit
-SHA; `latest` moves only on `main`.
+`.github/workflows/release.yml` ("Release image") checks that the four private
+libraries are readable, builds the same `Dockerfile`, and pushes
+`ghcr.io/hugmesh/hugmesh-admin-bff-api`. The version is the `pom.xml` `<version>`
+(beta scheme `MAJOR.MINOR.PATCH-beta.N`, today `0.3.0-beta.1`; never `-SNAPSHOT`).
+
+| Event | Image tags pushed | GitHub Release |
+|---|---|---|
+| push to `main` | `:main`, `:sha-<12>` | none |
+| push of tag `v<pom version>` | `:<version>`, `:beta`, `:sha-<12>` | prerelease, never "latest" |
+| `workflow_dispatch` on a `v*` tag | the same as the tag push | created if missing |
+| `workflow_dispatch` on `main` | the same as a push to main | none |
+
+`:latest` is never pushed for a beta. A tag that does not equal `v<pom version>`, or a
+run from any other ref, is refused by the first job. A release run refuses to overwrite
+an existing `:<version>`: publish a fix as `-beta.<N+1>`. There is no `pull_request`
+trigger. Every job runs on the runner named by the repository variable
+`RUNS_ON_PUBLISH` (a JSON array such as `["self-hosted","Linux","X64"]`) only for main
+and `v*` tags; otherwise, or when the variable is unset, it runs on hosted
+`ubuntu-latest`. Deleting `RUNS_ON_PUBLISH` sends every job back to hosted runners.
 
 The SCA and DAST job **bodies** are not defined here. They `extends:` the hidden
 `.pentest-*` jobs that this repo `include`s from `hugmesh-generator`
