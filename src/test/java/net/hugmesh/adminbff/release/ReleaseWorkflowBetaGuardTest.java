@@ -26,10 +26,13 @@ import static org.assertj.core.api.Assertions.assertThat;
  *   <li><b>Version.</b> The pom {@code <version>} is the image version and the git tag
  *       ({@code v<version>}). It must be {@code MAJOR.MINOR.PATCH-beta.N}: never a SNAPSHOT,
  *       never {@code +build} metadata (an OCI tag rejects {@code +}).</li>
- *   <li><b>Runner.</b> Every job of {@code release.yml} uses the one publish expression that
+ *   <li><b>Runner.</b> version and github-release use the one publish expression that
  *       picks {@code vars.RUNS_ON_PUBLISH} (the self-hosted runner) only for a non-PR run on
  *       main or a {@code v*} tag. A job with any other {@code runs-on} could send a run from
- *       any ref to the self-hosted runner.</li>
+ *       any ref to the self-hosted runner. The signed image job (build-and-push) and
+ *       notify-site run on literal hosted {@code ubuntu-latest} (see
+ *       {@code ReleaseSignedImageGuardTest}): a published image is never built on the
+ *       self-hosted runner.</li>
  *   <li><b>No pull request trigger.</b> The repositories go public; a pull request must never
  *       reach a workflow that can run on the self-hosted runner.</li>
  *   <li><b>Never {@code :latest}.</b> Every version today is a beta, and a beta never moves
@@ -61,10 +64,11 @@ class ReleaseWorkflowBetaGuardTest {
     }
 
     @Test
-    @DisplayName("release.yml: every job runs on the publish expression, and nothing else picks a runner")
+    @DisplayName("release.yml: version and github-release run on the publish expression, the signed jobs on hosted ubuntu-latest")
     void everyJobUsesThePublishRunnerExpression() throws IOException {
         String yaml = code(read(".github/workflows/release.yml"));
         List<String> runsOn = new ArrayList<>();
+        List<String> names = new ArrayList<>();
         int jobs = 0;
         boolean inJobs = false;
         for (String line : yaml.split("\n")) {
@@ -74,6 +78,7 @@ class ReleaseWorkflowBetaGuardTest {
             }
             if (inJobs && Pattern.matches("^  [A-Za-z0-9_-]+:\\s*$", line)) {
                 jobs++;
+                names.add(line.strip().replace(":", ""));
             }
             String t = line.strip();
             if (t.startsWith("runs-on:")) {
@@ -82,7 +87,10 @@ class ReleaseWorkflowBetaGuardTest {
         }
         assertThat(jobs).as("number of jobs").isGreaterThan(0);
         assertThat(runsOn).as("one runs-on per job").hasSize(jobs);
-        assertThat(runsOn).as("every runs-on is the publish expression").allMatch(PUBLISH_RUNS_ON::equals);
+        assertThat(names).as("jobs in order")
+                .containsExactly("version", "build-and-push", "github-release", "notify-site");
+        assertThat(runsOn).as("runs-on per job, in job order")
+                .containsExactly(PUBLISH_RUNS_ON, "ubuntu-latest", PUBLISH_RUNS_ON, "ubuntu-latest");
         assertThat(yaml.replace("vars.RUNS_ON_PUBLISH", ""))
                 .as("the PR-era RUNS_ON variable is never read")
                 .doesNotContain("RUNS_ON");
