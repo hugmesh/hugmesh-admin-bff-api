@@ -471,6 +471,14 @@ app:
       # The user-chosen freshness window for an MFA stamp to satisfy step-up. Default
       # 10m. ISO-8601 duration (e.g. PT10M, PT5M). A stale stamp no longer satisfies.
       freshness: "${APP_CASDOOR_MFA_FRESHNESS:PT10M}"
+      role-policy:
+        # DEFAULT false -> SHIPS DARK. When true, RoleMfaPolicyEnforcementFilter 403s a principal
+        # on /bff/admin/** and /bff/superadmin/** whose role the per-(domain, role) MFA policy
+        # requires MFA for, until it carries fresh MFA evidence. A NEW key on purpose: it must
+        # NOT ride app.casdoor.mfa.enabled, which the cluster Deployment already sets true.
+        # Needs app.casdoor.mfa.enabled=true as a precondition (else the filter stays inert).
+        # Enrol every privileged operator BEFORE flipping it (docs: MFA-ROLLOUT in the generator).
+        enforce: "${APP_CASDOOR_MFA_ROLE_POLICY_ENFORCE:false}"
   # Per-brand Casdoor issuers for multi-tenant mode. OPT-IN: empty = single-issuer.
   # Format: comma-separated issuerUri=domainName pairs.
   # When non-empty, TenancyResourceServerConfig activates; unknown issuers → 401.

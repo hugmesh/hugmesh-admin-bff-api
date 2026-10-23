@@ -1,5 +1,6 @@
 package net.hugmesh.adminbff.backingservices;
 
+import net.hugmesh.adminbff.mfa.PrincipalSessionToken;
 import io.swagger.v3.oas.annotations.Operation;
 
 import jakarta.validation.Valid;
@@ -125,7 +126,7 @@ public class BackingServiceController {
         }
         // The caller's opaque bff_ session (cookie OR synthesised-from-bearer), derived exactly
         // as GoLiveController / ImageBuildController do — NEVER a body field.
-        String sessionToken = SessionCookieWebFilter.bffTokenFrom(sessionCookie, authHeader);
+        String sessionToken = PrincipalSessionToken.of(sessionCookie, authHeader);
         return mfaStepUp.isFresh(sessionToken)
                 .flatMap(mfaFresh -> recordIfStepUpSatisfied(mfaFresh, actor, stepUpToken,
                         sessionToken, id, body));

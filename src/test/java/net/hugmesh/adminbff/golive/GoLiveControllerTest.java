@@ -203,6 +203,29 @@ class GoLiveControllerTest {
                         "/etc/hugmesh/go-live"));
     }
 
+    /**
+     * The MFA leg reads the session the principal came from: an explicit {@code Bearer bff_A}
+     * wins over a {@code bff_session} cookie of another session, so B's fresh stamp is neither
+     * counted for A nor consumed.
+     */
+    @Test
+    void record_bearerSessionWithoutMfa_plusAnotherSessionsFreshCookie_isRefused_andBsStampUntouched() {
+        when(mfaStepUp.isFresh("bff_A")).thenReturn(Mono.just(false));
+        when(mfaStepUp.isFresh("bff_B")).thenReturn(Mono.just(true));
+        when(service.record(any(), any())).thenReturn(Mono.just(recorded()));
+        asSuperadmin().mutateWith(org.springframework.security.test.web.reactive.server
+                        .SecurityMockServerConfigurers.csrf())
+                .post().uri("/bff/admin/go-live/intents")
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(GO_PUBLIC_BODY)
+                .header(org.springframework.http.HttpHeaders.AUTHORIZATION, "Bearer bff_A")
+                .cookie("bff_session", "bff_B")
+                .exchange().expectStatus().is4xxClientError();
+        verify(mfaStepUp).isFresh("bff_A");
+        verify(mfaStepUp, never()).isFresh("bff_B");
+        verify(mfaStepUp, never()).consume("bff_B");
+        verify(service, never()).record(any(), any());
+    }
+
     // ── ships dark -> 503 dark descriptor ────────────────────────────────────────────
     @Test
     void record_dark_503_descriptor() {

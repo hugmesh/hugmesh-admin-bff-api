@@ -1,5 +1,6 @@
 package net.hugmesh.adminbff.cloudbackup;
 
+import net.hugmesh.adminbff.mfa.PrincipalSessionToken;
 import io.swagger.v3.oas.annotations.Operation;
 
 import jakarta.validation.Valid;
@@ -159,7 +160,7 @@ public class BackupAdminController {
         // caller's opaque session. Restore is a SUPERADMIN NON-device op, so the MFA leg is
         // license-INDEPENDENT (no device_ssh_license needed). mfaStepUp.isFresh() is fail-closed
         // + flag-gated (app.casdoor.mfa.enabled=false by default -> only the token leg works).
-        String sessionToken = SessionCookieWebFilter.bffTokenFrom(sessionCookie, authHeader);
+        String sessionToken = PrincipalSessionToken.of(sessionCookie, authHeader);
         // Gate on MFA freshness then perform the step-up-gated restore.
         return mfaStepUp.isFresh(sessionToken)
                 .flatMap(mfaFresh -> executeRestore(id, subject, stepUpToken, sessionToken,

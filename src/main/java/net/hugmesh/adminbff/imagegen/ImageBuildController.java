@@ -1,5 +1,6 @@
 package net.hugmesh.adminbff.imagegen;
 
+import net.hugmesh.adminbff.mfa.PrincipalSessionToken;
 import io.swagger.v3.oas.annotations.Operation;
 
 import jakarta.validation.Valid;
@@ -101,7 +102,7 @@ public class ImageBuildController {
             Authentication auth) {
         // The caller's opaque bff_ session (cookie OR synthesised-from-bearer), derived exactly as
         // BackupAdminController/DesktopRemoteInstallController do — NEVER a body/path field.
-        String sessionToken = SessionCookieWebFilter.bffTokenFrom(sessionCookie, authHeader);
+        String sessionToken = PrincipalSessionToken.of(sessionCookie, authHeader);
         return service.trigger(auth, body, stepUpToken, sessionToken)
                 .map(b -> {
                     Map<String, Object> out = new LinkedHashMap<>();
@@ -126,7 +127,7 @@ public class ImageBuildController {
             Authentication auth) {
         // Identical session derivation to the single trigger — the opaque bff_ session (cookie OR
         // synthesised-from-bearer), NEVER a body/path field. ONE step-up authorizes the whole batch.
-        String sessionToken = SessionCookieWebFilter.bffTokenFrom(sessionCookie, authHeader);
+        String sessionToken = PrincipalSessionToken.of(sessionCookie, authHeader);
         return service.triggerBatch(auth, body, stepUpToken, sessionToken)
                 .map(ImageBuildController::batchResponse);
     }
@@ -189,7 +190,7 @@ public class ImageBuildController {
             @RequestHeader(name = HttpHeaders.AUTHORIZATION, required = false) String authHeader,
             Authentication auth) {
         // The caller's opaque bff_ session, derived the same way the wired examples do.
-        String sessionToken = SessionCookieWebFilter.bffTokenFrom(sessionCookie, authHeader);
+        String sessionToken = PrincipalSessionToken.of(sessionCookie, authHeader);
         Flux<DataBuffer> body = service.downloadKeys(auth, id, stepUpToken, sessionToken);
         HttpHeaders headers = new HttpHeaders();
         headers.setContentDisposition(ContentDisposition.attachment()

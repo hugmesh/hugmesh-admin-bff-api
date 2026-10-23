@@ -1,5 +1,6 @@
 package net.hugmesh.adminbff.desktop;
 
+import net.hugmesh.adminbff.mfa.PrincipalSessionToken;
 import io.swagger.v3.oas.annotations.Operation;
 
 import jakarta.validation.Valid;
@@ -111,7 +112,7 @@ public class DesktopRemoteInstallController {
         // DOWNSTREAM by DesktopRemoteInstallService (own-domain + active license), so a fresh
         // MFA stamp does NOT bypass the license. mfaStepUp.isFresh() is flag-gated +
         // fail-closed (app.casdoor.mfa.enabled=false by default -> only the token leg works).
-        String sessionToken = SessionCookieWebFilter.bffTokenFrom(sessionCookie, authHeader);
+        String sessionToken = PrincipalSessionToken.of(sessionCookie, authHeader);
         // Gate on MFA freshness then execute the step-up-gated remote install.
         return mfaStepUp.isFresh(sessionToken)
                 .flatMap(mfaFresh -> executeRemoteInstall(operator, b, stepUpToken,
