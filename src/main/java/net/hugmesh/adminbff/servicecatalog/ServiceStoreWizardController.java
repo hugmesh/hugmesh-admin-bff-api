@@ -1,5 +1,6 @@
 package net.hugmesh.adminbff.servicecatalog;
 
+import net.hugmesh.adminbff.mfa.PrincipalSessionToken;
 import io.swagger.v3.oas.annotations.Operation;
 
 import jakarta.validation.Valid;
@@ -124,7 +125,7 @@ public class ServiceStoreWizardController {
         if (actor == null || actor.isBlank()) {
             return Mono.error(ApiException.unauthorized("no subject on token"));
         }
-        String sessionToken = SessionCookieWebFilter.bffTokenFrom(sessionCookie, authHeader);
+        String sessionToken = PrincipalSessionToken.of(sessionCookie, authHeader);
         return mfaStepUp.isFresh(sessionToken)
                 .flatMap(mfaFresh -> createIfStepUpSatisfied(mfaFresh, actor, stepUpToken, sessionToken,
                         domain, body));
@@ -177,7 +178,7 @@ public class ServiceStoreWizardController {
         if (actor == null || actor.isBlank()) {
             return Mono.error(ApiException.unauthorized("no subject on token"));
         }
-        String sessionToken = SessionCookieWebFilter.bffTokenFrom(sessionCookie, authHeader);
+        String sessionToken = PrincipalSessionToken.of(sessionCookie, authHeader);
         return mfaStepUp.isFresh(sessionToken)
                 .flatMap(mfaFresh -> federateIfStepUpSatisfied(mfaFresh, actor, stepUpToken, sessionToken,
                         domain, id, body));

@@ -247,6 +247,83 @@ class RoleMfaPolicyControllerAuthzTest {
         verify(service, never()).upsert(anyString(), anyString(), anyBoolean(), any(), anyLong(), anyString());
     }
 
+    // ════════════════════ CROSS-DOMAIN REACH (operator decision 46) ═══════════════════
+
+    @Test
+    void list_superadminNamingAnotherKnownDomain_readsThatDomain() {
+        when(service.listEffective(anyString())).thenReturn(Flux.just(policy("brandy", "mod", false)));
+        superadminOf(BRANDX_ISS).get().uri(BASE + "?domain=brandy")
+                .exchange().expectStatus().isOk()
+                .expectBody().jsonPath("$.domain").isEqualTo("brandy");
+        verify(service).listEffective(eq("brandy"));
+        verify(service, never()).listEffective(eq("brandx"));
+    }
+
+    @Test
+    void list_superadminWithoutDomainParam_staysOnTheHomeDomain() {
+        when(service.listEffective(anyString())).thenReturn(Flux.empty());
+        superadminOf(BRANDX_ISS).get().uri(BASE).exchange().expectStatus().isOk();
+        verify(service).listEffective(eq("brandx"));
+    }
+
+    @Test
+    void list_superadminNamingAnUnknownDomain_isBadRequest_andNeverReads() {
+        superadminOf(BRANDX_ISS).get().uri(BASE + "?domain=nobody")
+                .exchange().expectStatus().isBadRequest();
+        verify(service, never()).listEffective(anyString());
+    }
+
+    @Test
+    void list_adminNamingAnotherDomain_isForbidden_andNeverReads() {
+        adminOf(BRANDX_ISS).get().uri(BASE + "?domain=brandy")
+                .exchange().expectStatus().isForbidden();
+        verify(service, never()).listEffective(anyString());
+    }
+
+    @Test
+    void list_adminNamingTheirOwnDomain_isAllowed() {
+        when(service.listEffective(anyString())).thenReturn(Flux.empty());
+        adminOf(BRANDX_ISS).get().uri(BASE + "?domain=brandx").exchange().expectStatus().isOk();
+        verify(service).listEffective(eq("brandx"));
+    }
+
+    @Test
+    void set_superadminNamingAnotherKnownDomain_writesThatDomain() {
+        when(service.upsert(anyString(), anyString(), anyBoolean(), any(), anyLong(), anyString()))
+                .thenReturn(Mono.just(policy("brandy", "mod", true)));
+        superadminOf(BRANDX_ISS).put().uri(BASE + "/mod?domain=brandy")
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(SET_MOD_REQUIRED)
+                .exchange().expectStatus().isOk();
+        verify(service).upsert(eq("brandy"), eq("mod"), eq(true), eq(List.of("webauthn")), eq(60L), eq("subj"));
+        verify(service, never()).upsert(eq("brandx"), anyString(), anyBoolean(), any(), anyLong(), anyString());
+    }
+
+    @Test
+    void set_superadminWithUnresolvableHomeIssuer_canStillNameAKnownDomain() {
+        when(service.upsert(anyString(), anyString(), anyBoolean(), any(), anyLong(), anyString()))
+                .thenReturn(Mono.just(policy("brandy", "mod", true)));
+        superadminOf(UNKNOWN_ISS).put().uri(BASE + "/mod?domain=brandy")
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(SET_MOD_REQUIRED)
+                .exchange().expectStatus().isOk();
+        verify(service).upsert(eq("brandy"), eq("mod"), anyBoolean(), any(), anyLong(), anyString());
+    }
+
+    @Test
+    void set_superadminNamingAnUnknownDomain_isBadRequest_andNeverWrites() {
+        superadminOf(BRANDX_ISS).put().uri(BASE + "/mod?domain=nobody")
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(SET_MOD_REQUIRED)
+                .exchange().expectStatus().isBadRequest();
+        verify(service, never()).upsert(anyString(), anyString(), anyBoolean(), any(), anyLong(), anyString());
+    }
+
+    @Test
+    void set_adminNamingAnotherDomain_isForbidden_andNeverWrites() {
+        adminOf(BRANDX_ISS).put().uri(BASE + "/mod?domain=brandy")
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(SET_MOD_REQUIRED)
+                .exchange().expectStatus().isForbidden();
+        verify(service, never()).upsert(anyString(), anyString(), anyBoolean(), any(), anyLong(), anyString());
+    }
+
     // ════════════════════════ VALIDATION ═════════════════════════════════════════════
 
     @Test

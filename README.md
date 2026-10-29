@@ -1395,27 +1395,36 @@ as shipped.
   a BFF-driven challenge stamps `mfa_satisfied` into the opaque `bff_session`. The shared
   MFA code lives in `hugmesh-auth-core`.
   - ✅ **Already on `main`.** The application default is still dark
-    (`app.casdoor.mfa.enabled=false`, `src/main/resources/application.yml:447-448`).
+    (`app.casdoor.mfa.enabled=false`, `src/main/resources/application.yml:469-470`).
     Shipped: the MFA factor and WebAuthn-challenge tables (bands 150–152); the
     `gateway_route_access.mfa_required` column, wired through the route-access
     entity/repo/DTO (#116); the co-equal MFA step-up satisfier (auth-core
     `MfaStepUpService`) in the **image-gen / SSH-key-issue / terminal-dial** step-up gates
     (#115); the enrollment/challenge leg (auth-core `MfaEnrollmentController`,
     `/bff/mfa/**` — TOTP + WebAuthn + recovery); and the **per-role policy consumer** the
-    150 band deferred, `RoleMfaPolicyService` + `/bff/admin/mfa/role-policy` (#3). That
-    consumer only reads and writes: it resolves the effective per-(domain, role)
-    requirement and pins the non-relaxable superadmin/admin floor, but nothing in the
-    request pipeline consults it yet.
-  - Both deploy targets already override `APP_CASDOOR_MFA_ENABLED=true` (generator
-    `specs/cluster/manifests/admin-bff-api/deployment.yaml:636`,
-    `tests/stack/compose.local.yaml:861`), so only the application default is dark.
+    150 band deferred, `RoleMfaPolicyService` + `/bff/admin/mfa/role-policy` (#3). It
+    resolves the effective per-(domain, role) requirement and pins the non-relaxable
+    superadmin/admin floor.
+  - Its first caller is `RoleMfaPolicyEnforcementFilter` (#80, dark). It 403s a
+    policy-required principal on `/bff/admin/**` and `/bff/superadmin/**` (classified on
+    the decoded, normalised path) until the request carries fresh MFA evidence: the
+    `MFA_SATISFIED` authority on a JWT principal, or a fresh stamp on the principal's OWN
+    `bff_session`. It exists ONLY when the NEW key `app.casdoor.mfa.role-policy.enforce`
+    (`APP_CASDOOR_MFA_ROLE_POLICY_ENFORCE`) is `true`; no manifest sets it, and it needs
+    `app.casdoor.mfa.enabled=true` as a precondition.
+  - It deliberately does NOT ride `app.casdoor.mfa.enabled`: both deploy targets already
+    override `APP_CASDOOR_MFA_ENABLED=true` (generator
+    `specs/cluster/manifests/admin-bff-api/deployment.yaml:747`,
+    `tests/stack/compose.local.yaml:872`), so only the application default of that flag
+    is dark.
   - Left to do: (a) route-level enforcement — the shared gateway chart still ships
-    `mfa.enabled: false` (`specs/cluster/charts/hugmesh-gateway/values.yaml:236`) and no
+    `mfa.enabled: false` (`specs/cluster/charts/hugmesh-gateway/values.yaml:252`) and no
     Application overrides it, so the seeded `gateway_route_access.mfa_required` rows are
-    inert; (b) wire `RoleMfaPolicyService.requiredForAny` into the login, session and
-    introspect seams behind its own flag. Enroll every privileged operator FIRST
-    (generator `docs/MFA-ROLLOUT.md` §2); flipping before enrollment locks the operator
-    out.
+    inert; (b) the remaining `requiredForAny` seams: login, session and introspect are
+    deliberately NOT denied (the MFA stamp lives on the session, so refusing one makes
+    the challenge unreachable), and `methods` / `graceSeconds` are stored but not
+    honoured. Enroll every privileged operator FIRST (generator `docs/MFA-ROLLOUT.md` §2);
+    flipping before enrollment locks the operator out.
 - 🚧 **Notification external channels.** Matrix DM and Akkoma transports written and
   contract-tested (flags off, not yet run on a live mesh); phpBB transport
   written (dark behind `notify.forum.pm.wired`) against a proposed forum-bff route nothing

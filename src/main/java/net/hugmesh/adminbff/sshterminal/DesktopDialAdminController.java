@@ -1,5 +1,6 @@
 package net.hugmesh.adminbff.sshterminal;
 
+import net.hugmesh.adminbff.mfa.PrincipalSessionToken;
 import io.swagger.v3.oas.annotations.Operation;
 
 import jakarta.validation.constraints.NotBlank;
@@ -127,7 +128,7 @@ public class DesktopDialAdminController {
         // the MFA leg satisfies the step-up re-confirmation same as the token leg does.
         // mfaStepUp.isFresh() is flag-gated + fail-closed (app.casdoor.mfa.enabled=false by default
         // -> only the token leg works).
-        String sessionToken = SessionCookieWebFilter.bffTokenFrom(sessionCookie, authHeader);
+        String sessionToken = PrincipalSessionToken.of(sessionCookie, authHeader);
         return mfaStepUp.isFresh(sessionToken)
                 .flatMap(mfaFresh -> executeActivate(deviceId, by, stepUpToken, sessionToken, mfaFresh));
     }
@@ -171,7 +172,7 @@ public class DesktopDialAdminController {
             Authentication auth) {
         String by = subject(auth);
         // A5 UNIFIED step-up: same co-equal token-OR-fresh-MFA leg as activate() above.
-        String sessionToken = SessionCookieWebFilter.bffTokenFrom(sessionCookie, authHeader);
+        String sessionToken = PrincipalSessionToken.of(sessionCookie, authHeader);
         return mfaStepUp.isFresh(sessionToken)
                 .flatMap(mfaFresh -> executeRevoke(deviceId, by, stepUpToken, sessionToken, mfaFresh));
     }

@@ -399,6 +399,58 @@ class DeviceSshTerminalWebSocketHandlerTest {
         verify(mfaStepUp, never()).consume(anyString());
     }
 
+    // ──────────────── MFA evidence is the PRINCIPAL's own session (#80) ────────────
+    // The handshake principal is built from the Authorization header (the session bridge keeps an
+    // explicit Bearer bff_... over the cookie), so the MFA leg must read the SAME session. A
+    // second session's cookie riding next to that Bearer must neither satisfy step-up nor have
+    // its stamp consumed.
+
+    @Test
+    void bearerSessionWithoutMfa_plusAnotherSessionsFreshCookie_closesNeverOpens_andCookieStampUntouched() {
+        when(stepUp.validate(eq(OPERATOR), any())).thenReturn(false); // token leg never satisfies
+        when(mfaStepUp.isFresh(eq("bff_other_fresh"))).thenReturn(Mono.just(true));
+        // bff_mine is not fresh (the setUp default).
+
+        run0(mockSessionWithBffCookie(OPERATOR, List.of("admin"), "bff_other_fresh", "Bearer bff_mine"),
+                BRANDX, OPERATOR, List.of("admin"));
+
+        verify(transport, never()).open(anyString(), anyString(), anyString(), anyInt(), anyInt());
+        verify(mfaStepUp, never()).consume(anyString());
+        verify(mfaStepUp).isFresh(eq("bff_mine"));
+        verify(mfaStepUp, never()).isFresh(eq("bff_other_fresh"));
+        verify(authz, never()).authorizeTerminal(anyString(), anyString(), any());
+        assertThat(closedWith).isNotNull();
+        assertThat(closedWith.getCode()).isEqualTo(CloseStatus.POLICY_VIOLATION.getCode());
+    }
+
+    @Test
+    void bearerSessionWithFreshMfa_plusAStaleForeignCookie_opens_andConsumesOnlyTheBearersStamp() {
+        when(stepUp.validate(eq(OPERATOR), any())).thenReturn(false);
+        when(mfaStepUp.isFresh(eq("bff_mine"))).thenReturn(Mono.just(true));
+        // bff_other_stale is not fresh (the setUp default).
+
+        run0(mockSessionWithBffCookie(OPERATOR, List.of("admin"), "bff_other_stale", "  bearer  bff_mine "),
+                BRANDX, OPERATOR, List.of("admin"));
+
+        verify(transport, times(1)).open(eq(DEVICE), eq("dev-1.mesh"), eq(OPERATOR), anyInt(), anyInt());
+        verify(mfaStepUp).consume(eq("bff_mine"));
+        verify(mfaStepUp, never()).consume(eq("bff_other_stale"));
+    }
+
+    @Test
+    void nonSessionBearer_fallsBackToTheCookie() {
+        // A Bearer that is not a bff_ session (a JWT) names no session, so the cookie is the only
+        // session on the handshake and its stamp is the evidence.
+        when(stepUp.validate(eq(OPERATOR), any())).thenReturn(false);
+        when(mfaStepUp.isFresh(eq("bff_sess1"))).thenReturn(Mono.just(true));
+
+        run0(mockSessionWithBffCookie(OPERATOR, List.of("admin"), "bff_sess1", "Bearer eyJhbGciOi.jwt.sig"),
+                BRANDX, OPERATOR, List.of("admin"));
+
+        verify(transport, times(1)).open(eq(DEVICE), eq("dev-1.mesh"), eq(OPERATOR), anyInt(), anyInt());
+        verify(mfaStepUp).consume(eq("bff_sess1"));
+    }
+
     // ──────────────── step-up CONTRACT: subprotocol smuggle, query path GONE ───────
 
     // The browser cannot set X-Device-Terminal-StepUp, so it smuggles the token in a
@@ -497,13 +549,23 @@ class DeviceSshTerminalWebSocketHandlerTest {
      *  channel) and NO step-up header / NO subprotocol token — so step-up can be satisfied ONLY by
      *  the co-equal Casdoor-MFA leg (mfaStepUp.isFresh). Mirrors what a real browser handshake
      *  sends when the user has a fresh MFA stamp but no minted workload step-up token. */
-    @SuppressWarnings("unchecked")
     private WebSocketSession mockSessionWithBffCookie(String subject, List<String> roles,
                                                       String bffSession) {
+        return mockSessionWithBffCookie(subject, roles, bffSession, null);
+    }
+
+    /** As above, plus an optional {@code Authorization} handshake header value. */
+    @SuppressWarnings("unchecked")
+    private WebSocketSession mockSessionWithBffCookie(String subject, List<String> roles,
+                                                      String bffSession, String authorization) {
         WebSocketSession session = mock(WebSocketSession.class);
         HandshakeInfo info = mock(HandshakeInfo.class);
         when(info.getUri()).thenReturn(URI.create("ws://bff/bff/admin/device-terminal/" + DEVICE));
-        when(info.getHeaders()).thenReturn(new HttpHeaders()); // no step-up header
+        HttpHeaders headers = new HttpHeaders(); // no step-up header
+        if (authorization != null) {
+            headers.add(HttpHeaders.AUTHORIZATION, authorization);
+        }
+        when(info.getHeaders()).thenReturn(headers);
         LinkedMultiValueMap<String, HttpCookie> cookies = new LinkedMultiValueMap<>();
         cookies.add("bff_session", new HttpCookie("bff_session", bffSession));
         when(info.getCookies()).thenReturn(cookies);
