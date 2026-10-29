@@ -14,7 +14,7 @@
   <parent>
     <groupId>net.hugmesh</groupId>
     <artifactId>hugmesh-parent</artifactId>
-    <version>2.8.0</version>
+    <version>2.9.0-beta.1</version>
     <relativePath/>
   </parent>
 
@@ -24,7 +24,10 @@
        reverse-domain coordinate while its Java packages had already moved here. -->
   <groupId>net.hugmesh</groupId>
   <artifactId>admin-bff</artifactId>
-  <version>0.1.0</version>
+  <!-- Beta scheme (2026-10-21): MAJOR.MINOR.PATCH-beta.N, never SNAPSHOT. 0.3 = in the
+       default mesh with recorded live checks. This is also the image version: the
+       release workflow refuses a v<tag> that does not equal this string. -->
+  <version>0.3.0-beta.1</version>
 
   <properties>
     <!-- java.version (25), encoding, the hugmesh-commons version, the AWS SDK
@@ -161,8 +164,11 @@
            RELEASING.md section 4). 2.5.1 also carries the Casdoor-platform username
            gate, which stays OFF here until FEDERATION_USERNAME_GATE_ENABLED is set
            together with APP_CASDOOR_PLATFORM_BASE_URL/_CLIENT_ID/_CLIENT_SECRET and
-           HUGMESH_MTLS_CLIENT_ENABLED (hugmesh-generator#376). -->
-      <version>2.5.1</version>
+           HUGMESH_MTLS_CLIENT_ENABLED (hugmesh-generator#376).
+           2.6.0-beta.1 is the first auth-core coordinate of the beta release chain
+           (build-config 0.6.0-beta.1, parent 2.9.0-beta.1, commons 2.2.0-beta.1,
+           auth-core 2.6.0-beta.1). 2.6.0 adds the bff_ session bridge. -->
+      <version>2.6.0-beta.1</version>
     </dependency>
 
     <!-- ============================================================================
@@ -290,7 +296,9 @@
     <dependency>
       <groupId>net.hugmesh</groupId>
       <artifactId>hugmesh-commons</artifactId>
-      <version>2.1.0</version>
+      <!-- Same version as the main jar, which hugmesh-parent manages, so the two can
+           never drift apart (parent 2.9.0-beta.1 sets it to 2.2.0-beta.1). -->
+      <version>${hugmesh-commons.version}</version>
       <classifier>tests</classifier>
       <scope>test</scope>
     </dependency>
