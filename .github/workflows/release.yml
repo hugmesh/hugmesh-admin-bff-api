@@ -174,8 +174,11 @@ jobs:
         run: |
           set -uo pipefail
           ref="${REGISTRY}/${IMAGE_NAME}:${VERSION}"
-          out=$(docker buildx imagetools inspect "${ref}" 2>&1)
-          rc=$?
+          # The step has no shell: key, so Actions runs it as bash -e {0}, and set -uo
+          # pipefail does not turn -e off. A bare out=$(...) that fails (the normal "not
+          # found" of a first publish) would end the step there, silently, with exit 1.
+          rc=0
+          out=$(docker buildx imagetools inspect "${ref}" 2>&1) || rc=$?
           if [ "${rc}" -eq 0 ]; then
             echo "::error::${ref} already exists. A published version is never overwritten: raise N in the pom (for example -beta.2) and tag again."
             exit 1
