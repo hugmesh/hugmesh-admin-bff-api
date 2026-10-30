@@ -1,5 +1,6 @@
 package net.hugmesh.adminbff.desktop.terminal;
 
+import net.hugmesh.adminbff.mfa.PrincipalSessionToken;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -398,9 +399,11 @@ public class DeviceSshTerminalWebSocketHandler implements WebSocketHandler {
 
     /**
      * Resolve the caller's opaque bff_ session token from the WS handshake — the SAME value the
-     * HTTP controllers obtain via {@link SessionCookieWebFilter#bffTokenFrom(String, String)}, read
-     * from SAFE channels only: the {@code bff_session} handshake COOKIE (browser) or the
-     * {@code Authorization} handshake header (CLI/non-browser). NEVER a query/path field. Returns
+     * HTTP controllers obtain via {@link PrincipalSessionToken#of(String, String)}, read
+     * from SAFE channels only: the {@code Authorization} handshake header the principal was built
+     * from (an explicit {@code Bearer bff_...}, or the cookie the session bridge copied there),
+     * else the {@code bff_session} handshake COOKIE. Never a second session's cookie riding next
+     * to a different Bearer. NEVER a query/path field. Returns
      * null when neither is present (then the Casdoor-MFA leg is simply unsatisfiable — fail-closed,
      * exactly the ships-dark behaviour). Null-guards {@code getCookies()} (it may be absent).
      */
@@ -416,7 +419,7 @@ public class DeviceSshTerminalWebSocketHandler implements WebSocketHandler {
         }
         HttpHeaders headers = info.getHeaders();
         String authHeader = headers == null ? null : headers.getFirst(HttpHeaders.AUTHORIZATION);
-        return SessionCookieWebFilter.bffTokenFrom(sessionCookie, authHeader);
+        return PrincipalSessionToken.of(sessionCookie, authHeader);
     }
 
     private static int parseInt(String v, int def) {

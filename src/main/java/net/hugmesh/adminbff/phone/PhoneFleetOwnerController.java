@@ -1,5 +1,6 @@
 package net.hugmesh.adminbff.phone;
 
+import net.hugmesh.adminbff.mfa.PrincipalSessionToken;
 import io.swagger.v3.oas.annotations.Operation;
 
 import jakarta.validation.Valid;
@@ -198,7 +199,7 @@ public class PhoneFleetOwnerController {
         if (actor == null || actor.isBlank()) {
             return Mono.error(ApiException.unauthorized("no subject on token"));
         }
-        String sessionToken = SessionCookieWebFilter.bffTokenFrom(sessionCookie, authHeader);
+        String sessionToken = PrincipalSessionToken.of(sessionCookie, authHeader);
         return mfaStepUp.isFresh(sessionToken)
                 .flatMap(mfaFresh -> {
                     if (!stepUp.isSatisfied(actor, stepUpToken, mfaFresh)) {

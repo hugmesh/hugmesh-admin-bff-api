@@ -800,6 +800,15 @@
             "pattern" : "[A-Za-z0-9_-]+",
             "type" : "string"
           }
+        }, {
+          "name" : "domain",
+          "in" : "query",
+          "required" : false,
+          "schema" : {
+            "maxLength" : 255,
+            "minLength" : 0,
+            "type" : "string"
+          }
         } ],
         "requestBody" : {
           "content" : {
@@ -7539,6 +7548,16 @@
         "tags" : [ "role-mfa-policy-controller" ],
         "summary" : "List role MFA policies",
         "operationId" : "roleMfaPolicyList",
+        "parameters" : [ {
+          "name" : "domain",
+          "in" : "query",
+          "required" : false,
+          "schema" : {
+            "maxLength" : 255,
+            "minLength" : 0,
+            "type" : "string"
+          }
+        } ],
         "responses" : {
           "200" : {
             "description" : "OK",
