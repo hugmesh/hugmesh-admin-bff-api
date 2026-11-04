@@ -20,11 +20,13 @@ import java.util.regex.Pattern;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Pins the beta release scheme (2026-10-21) for this service's image.
+ * Pins the release scheme for this service's image: the beta channel (2026-10-21) and the
+ * release channels (2026-11-04).
  *
  * <ul>
  *   <li><b>Version.</b> The pom {@code <version>} is the image version and the git tag
- *       ({@code v<version>}). It must be {@code MAJOR.MINOR.PATCH-beta.N}: never a SNAPSHOT,
+ *       ({@code v<version>}). It must be {@code MAJOR.MINOR.PATCH-beta.N} (beta, cut from main)
+ *       or a plain {@code MAJOR.MINOR.PATCH} (stable, cut from release/X.Y): never a SNAPSHOT,
  *       never {@code +build} metadata (an OCI tag rejects {@code +}).</li>
  *   <li><b>Runner.</b> version and github-release use the one publish expression that
  *       picks {@code vars.RUNS_ON_PUBLISH} (the self-hosted runner) only for a non-PR run on
@@ -35,8 +37,11 @@ import static org.assertj.core.api.Assertions.assertThat;
  *       self-hosted runner.</li>
  *   <li><b>No pull request trigger.</b> The repositories go public; a pull request must never
  *       reach a workflow that can run on the self-hosted runner.</li>
- *   <li><b>Never {@code :latest}.</b> Every version today is a beta, and a beta never moves
- *       {@code latest}.</li>
+ *   <li><b>Channels.</b> {@code scripts/release-version.sh} decides the channel from the tag and
+ *       is the only place that names the floating tags; the workflow pushes exactly its tags. A
+ *       beta never moves {@code latest} and is a prerelease; only a stable on the newest line is
+ *       marked Latest. The behaviour is executed by {@code scripts/test-release-version.sh} and
+ *       {@code scripts/test-release-workflow.py}, which the version job runs first.</li>
  * </ul>
  *
  * <p>Reads the repository files directly (surefire runs with the project basedir as the
@@ -54,13 +59,14 @@ class ReleaseWorkflowBetaGuardTest {
             + " || startsWith(github.ref, 'refs/tags/studio-v'))"
             + " && vars.RUNS_ON_PUBLISH || '\"ubuntu-latest\"') }}";
 
-    private static final Pattern BETA_VERSION = Pattern.compile("^\\d+\\.\\d+\\.\\d+-beta\\.[1-9]\\d*$");
+    /** A beta coordinate (main) or a plain stable coordinate (release/X.Y). */
+    private static final Pattern RELEASE_VERSION = Pattern.compile("^\\d+\\.\\d+\\.\\d+(-beta\\.[1-9]\\d*)?$");
 
     @Test
-    @DisplayName("pom <version> is a beta coordinate (MAJOR.MINOR.PATCH-beta.N), never a SNAPSHOT")
-    void pomVersionIsBeta() throws Exception {
+    @DisplayName("pom <version> is MAJOR.MINOR.PATCH-beta.N or a stable MAJOR.MINOR.PATCH, never a SNAPSHOT")
+    void pomVersionIsBetaOrStable() throws Exception {
         String version = projectVersion();
-        assertThat(version).as("pom.xml <project><version>").matches(BETA_VERSION);
+        assertThat(version).as("pom.xml <project><version>").matches(RELEASE_VERSION);
     }
 
     @Test
@@ -101,27 +107,45 @@ class ReleaseWorkflowBetaGuardTest {
     void noPullRequestTrigger() throws IOException {
         String yaml = code(read(".github/workflows/release.yml")).replace(PUBLISH_RUNS_ON, "");
         assertThat(yaml).as("pull_request anywhere outside the runner expression").doesNotContain("pull_request");
-        assertThat(yaml).as("publishes on main, v* tags and dispatch")
-                .contains("branches: [main]")
+        assertThat(yaml).as("publishes on main, release/X.Y branches, v* tags and dispatch")
+                .contains("branches: [main, 'release/**']")
                 .contains("tags: ['v*']")
                 .contains("workflow_dispatch");
     }
 
     @Test
-    @DisplayName("release.yml guards the tag against the pom, never pushes :latest, releases a beta as prerelease")
+    @DisplayName("release.yml runs the channel guard, pushes only its tags, marks Latest only a newest-line stable")
     void versionGuardAndTags() throws IOException {
         String yaml = code(read(".github/workflows/release.yml"));
-        assertThat(yaml)
+        String guard = code(read("scripts/release-version.sh"));
+        assertThat(guard)
                 .as("a v* tag must equal v<pom version>")
-                .contains("\"${GITHUB_REF_NAME#v}\" != \"${version}\"")
+                .contains("[ \"${tag}\" = \"v${version}\" ]")
                 .as("SNAPSHOT is refused")
                 .contains("*-SNAPSHOT)")
+                .as("a beta tag must be on main, a stable tag on release/X.Y")
+                .contains("on_branch \"${commit}\" main")
+                .contains("on_branch \"${commit}\" \"release/${xy}\"");
+        assertThat(guard.split("\\$\\{IMAGE\\}:latest", -1)).as("the guard names the latest tag in exactly one place")
+                .hasSize(2);
+        assertThat(yaml)
+                .as("the version job runs the guard and its tests")
+                .contains("run: bash scripts/test-release-version.sh")
+                .contains("run: python3 scripts/test-release-workflow.py")
+                .contains("run: bash scripts/release-version.sh")
+                .as("the image is pushed with exactly the guard's tags")
+                .contains("tags: ${{ needs.version.outputs.tags }}")
                 .as("an existing :<version> is never overwritten")
                 .contains("docker buildx imagetools inspect")
                 .as("a beta release is a prerelease and never latest")
-                .contains("--prerelease --latest=false");
-        assertThat(yaml).as("no :latest image tag and no release marked latest")
-                .doesNotContainPattern(":latest\\b|value=latest|latest=(true|auto)|--latest(?!=false)|make_latest:\\s*true");
+                .contains("beta:false:*-*) flags+=(--prerelease --latest=false) ;;")
+                .as("only a stable on the newest line is marked Latest")
+                .contains("stable:true:*) flags+=(--latest) ;;")
+                .contains("stable:false:*) flags+=(--latest=false) ;;");
+        assertThat(yaml).as("the workflow computes no image tag itself, and nothing else marks a release latest")
+                .doesNotContainPattern("\\}:latest\\b|value=latest|make_latest:\\s*(true|auto)");
+        assertThat(yaml.split("--latest(?!=false)", -1)).as("--latest appears only in the newest-line stable case")
+                .hasSize(2);
         assertThat(yaml).as("the preflight still precedes the image build")
                 .contains("Preflight, cross-repo package read");
         assertThat(yaml.indexOf("Preflight, cross-repo package read"))
