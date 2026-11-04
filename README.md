@@ -278,7 +278,7 @@ flowchart TD
 | **Shared libs** | `hugmesh-parent:2.9.0-beta.1` (metapom) → `hugmesh-commons:2.2.0-beta.1` (security/tenancy/web) + `hugmesh-auth-core:2.6.0-beta.1` (shared account/session/MFA/Casdoor-admin + the BFF-JWT-custody seam; consumed by user-bff + admin-bff only) |
 | **Persistence** | config Postgres over **R2DBC** (runtime, non-blocking); **Liquibase** owns schema (JDBC, migrations only) |
 | **Other stores** | **ClickHouse** (usage analytics, best-effort), **Kafka** (usage-event bus, optional), **Cassandra** (best-effort route-access mirror the gateways poll) |
-| **Image / CI** | multi-stage Dockerfile (temurin 25), `:8080`; built + pushed to the in-cluster GitLab registry by `.gitlab-ci.yml`, which also runs the platform OWASP pen-test stages (SCA + DAST + nuclei) — see [CI & pen-test stages](#ci--pen-test-stages). **CI is GitLab**; one GitHub Actions workflow (`.github/workflows/release.yml`) also pushes to GHCR (`:main` on every push to main, `:<version>` + `:beta` on a `v<version>` tag). Images carry **no** KEYS material |
+| **Image / CI** | multi-stage Dockerfile (temurin 25), `:8080`; built + pushed to the in-cluster GitLab registry by `.gitlab-ci.yml`, which also runs the platform OWASP pen-test stages (SCA + DAST + nuclei) — see [CI & pen-test stages](#ci--pen-test-stages). **CI is GitLab**; one GitHub Actions workflow (`.github/workflows/release.yml`) also pushes to GHCR (`:main` on every push to main; `:<version>` + `:beta` on a `vX.Y.Z-beta.N` tag cut from main; `:<version>` + `:X.Y` (+ `:latest` on the newest line) on a `vX.Y.Z` tag cut from `release/X.Y`). Images carry **no** KEYS material |
 | **App id** | `net.hugmesh.adminbff` (`AdminBffApplication`) |
 
 It is the production Spring port of the verified reference contract in
@@ -1347,22 +1347,32 @@ the privileged x86 runner. Stages are **`test`, `security`, `pentest`, `build`**
 `.github/workflows/release.yml` ("Release image") checks that the four private
 libraries are readable, builds the same `Dockerfile`, and pushes
 `ghcr.io/hugmesh/hugmesh-admin-bff-api`. The version is the `pom.xml` `<version>`
-(beta scheme `MAJOR.MINOR.PATCH-beta.N`, today `0.3.0-beta.1`; never `-SNAPSHOT`).
+(`MAJOR.MINOR.PATCH-beta.N` on main, today `0.3.0-beta.1`; a plain `MAJOR.MINOR.PATCH` on a
+`release/X.Y` branch; never `-SNAPSHOT`). The first job runs `scripts/release-version.sh`,
+which decides the channel from the tag; its tests (`scripts/test-release-version.sh`,
+`scripts/test-release-workflow.py`) run right before it.
 
 | Event | Image tags pushed | GitHub Release |
 |---|---|---|
 | push to `main` | `:main`, `:sha-<12>` | none |
-| push of tag `v<pom version>` | `:<version>`, `:beta`, `:sha-<12>` | prerelease, never "latest" |
+| push to `release/X.Y` | `:sha-<12>` | none |
+| tag `vX.Y.Z-beta.N` (beta; the commit must be on `main`) | `:X.Y.Z-beta.N`, `:sha-<12>`, `:beta` | prerelease, never "latest" |
+| tag `vX.Y.Z` (stable; the commit must be on `release/X.Y`) | `:X.Y.Z`, `:sha-<12>`, `:X.Y`, and `:latest` only when X.Y is the newest stable line | full release, marked Latest in that same case |
+| any other `v*` tag (`-rc.N`, ...) | refused | none |
 | `workflow_dispatch` on a `v*` tag | the same as the tag push | created if missing |
-| `workflow_dispatch` on `main` | the same as a push to main | none |
+| `workflow_dispatch` on a branch | the same as a push to that branch | none |
 
-`:latest` is never pushed for a beta. A tag that does not equal `v<pom version>`, or a
-run from any other ref, is refused by the first job. A release run refuses to overwrite
-an existing `:<version>`: publish a fix as `-beta.<N+1>`. There is no `pull_request`
-trigger. Every job runs on the runner named by the repository variable
-`RUNS_ON_PUBLISH` (a JSON array such as `["self-hosted","Linux","X64"]`) only for main
-and `v*` tags; otherwise, or when the variable is unset, it runs on hosted
-`ubuntu-latest`. Deleting `RUNS_ON_PUBLISH` sends every job back to hosted runners.
+`:X.Y.Z` / `:X.Y.Z-beta.N` is never overwritten: a release run refuses if it already exists
+(publish a fix as `-beta.<N+1>` on main, or the next patch on `release/X.Y`). The floating
+`:beta`, `:X.Y` and `:latest` move. A patch on an older line moves its `:X.Y` but never
+`:latest`, and a stable older than an existing patch of its line is refused. Every pushed tag
+is checked to resolve to the one digest that is signed and attested. A tag that does not
+equal `v<pom version>`, or a run from any other ref, is refused by the first job. There is no
+`pull_request` trigger. Every job runs on the runner named by the repository variable
+`RUNS_ON_PUBLISH` (a JSON array such as `["self-hosted","Linux","X64"]`) only for main and
+`v*` tags; otherwise (including `release/X.Y` pushes), or when the variable is unset, it runs
+on hosted `ubuntu-latest`. The signed image job always runs on hosted `ubuntu-latest`.
+Deleting `RUNS_ON_PUBLISH` sends every job back to hosted runners.
 
 The SCA and DAST job **bodies** are not defined here. They `extends:` the hidden
 `.pentest-*` jobs that this repo `include`s from `hugmesh-generator`
