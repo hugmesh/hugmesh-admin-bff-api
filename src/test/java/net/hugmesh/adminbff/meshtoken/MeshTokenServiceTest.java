@@ -226,7 +226,8 @@ class MeshTokenServiceTest {
             String line = e.getFormattedMessage();
             assertThat(line).doesNotContain(AUTH_KEY).doesNotContain(AUTH_KEY.substring(0, 12))
                     .doesNotContain(r.token()).doesNotContain(payloadAndSig[1]).doesNotContain(payloadAndSig[2])
-                    .doesNotContain("SSH SIGNATURE").doesNotContain("PRIVATE KEY");
+                    .doesNotContain("SSH SIGNATURE").doesNotContain("PRIVATE KEY")
+                    .doesNotContain(MeshTokenFixtures.text("test-issuer.seed.hex").trim());
         }
     }
 

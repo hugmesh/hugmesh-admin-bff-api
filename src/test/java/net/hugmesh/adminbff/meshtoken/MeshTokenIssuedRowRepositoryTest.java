@@ -53,6 +53,16 @@ class MeshTokenIssuedRowRepositoryTest {
     }
 
     @Test
+    void theApplicationRoleMayOnlySelectAndInsert() {
+        // adminbff_app is the role admin-bff connects as (never admin_bff, the gateway's). No
+        // UPDATE and no DELETE: an issued-token record cannot be edited or removed.
+        List<String> privs = db.sql("SELECT privilege_type FROM information_schema.role_table_grants "
+                        + "WHERE grantee = 'adminbff_app' AND table_name = 'mesh_token_issued'")
+                .map(r -> r.get(0, String.class)).all().collectList().block();
+        assertThat(privs).containsExactlyInAnyOrder("SELECT", "INSERT");
+    }
+
+    @Test
     void insertsAndReadsBack_newestFirst_andTheAdminReadIsConfinedToItsDomains() {
         Instant t = Instant.parse("2026-11-04T12:00:00Z");
         repo.save(row("aaaaaaaaaaaaaaa1", "hugmesh.net", "admin", true, t).toNewRow()).block();
