@@ -2,6 +2,7 @@ package net.hugmesh.adminbff.meshtoken;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -70,6 +71,7 @@ public class MeshTokenService {
     private final List<MeshTokenProperties.DomainEntry> domains;
     private final MeshTokenIssuerKey issuerKey;
 
+    @Autowired
     public MeshTokenService(MeshTokenProperties props, HeadscalePreAuthKeyClient headscale,
                             MeshTokenIssuedRowRepository issued) {
         this(props, headscale, issued, Clock.systemUTC(), null);
