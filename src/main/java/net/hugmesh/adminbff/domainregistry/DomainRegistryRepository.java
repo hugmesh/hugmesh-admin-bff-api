@@ -137,6 +137,28 @@ public class DomainRegistryRepository {
     }
 
     /**
+     * Every domain whose {@code ca_ref} is the literal {@code generate} and whose
+     * {@code ca_provisioned} is still false — the CA effector's work list.
+     */
+    public Flux<DomainRegistration> findCaPendingGenerate() {
+        return repo.findCaPending(DomainCaEffector.GENERATE).map(DomainRegistryRow::toDomain);
+    }
+
+    /**
+     * Record a provisioned per-domain CA: {@code ca_ref} becomes {@code pkiPath} and
+     * {@code ca_provisioned} becomes true, but ONLY while the row still reads
+     * {@code ca_ref = 'generate'} with {@code ca_provisioned = false} (compare-and-set). This
+     * is the provisioning-status write the CRUD {@link #update} deliberately never makes.
+     *
+     * @return {@code true} when the row was updated, {@code false} when it had changed
+     *         underneath (re-pointed by a SUPERADMIN, or provisioned by another writer)
+     */
+    public Mono<Boolean> markCaProvisioned(String id, String pkiPath) {
+        return repo.markCaProvisioned(id, DomainCaEffector.GENERATE, pkiPath, Instant.now())
+                .map(n -> n == 1L);
+    }
+
+    /**
      * Update the MUTABLE fields of an existing domain (matched by {@code cluster_domain})
      * and re-read the row. The PK ({@code id}), {@code cluster_domain}, {@code created_at}
      * and {@code created_by_subject} are IMMUTABLE — only brand/org/ca_ref/ns_prefix/

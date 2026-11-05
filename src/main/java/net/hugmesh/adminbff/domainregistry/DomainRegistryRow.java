@@ -30,7 +30,8 @@ public record DomainRegistryRow(
         @Column("created_by_subject") String createdBySubject,
         @Column("updated_at") Instant updatedAt,
         // Provisioning-status (Liquibase band 190) — DB default false/false/0; flipped ONLY
-        // by the later generator domain-reconcile effector (ships dark; see DomainRegistration).
+        // by effectors, never the CRUD: ca_provisioned (with ca_ref) by DomainCaEffector (#99,
+        // ships dark), the others by the domain-reconcile effector (see DomainRegistration).
         @Column("ca_provisioned") boolean caProvisioned,
         @Column("appset_registered") boolean appsetRegistered,
         @Column("last_reconciled_generation") long lastReconciledGeneration,
