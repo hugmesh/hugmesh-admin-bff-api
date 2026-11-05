@@ -55,7 +55,7 @@ import static org.springframework.security.test.web.reactive.server.SecurityMock
  * </ol>
  */
 @WebFluxTest(controllers = AdminController.class)
-@Import({SecurityConfig.class, DomainRegistry.class, ValidationExceptionHandler.class, ApiExceptionHandler.class})
+@Import({SecurityConfig.class, DomainRegistry.class, ValidationExceptionHandler.class, ApiExceptionHandler.class, net.hugmesh.adminbff.account.RegistrationDomainResolver.class})
 class AdminControllerModerationDecideTest {
 
     @Autowired ApplicationContext context;

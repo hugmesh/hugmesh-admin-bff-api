@@ -42,7 +42,7 @@ import static org.springframework.security.test.web.reactive.server.SecurityMock
  * resolves to null and the invite still writes the durable allowlist row.
  */
 @WebFluxTest(controllers = AdminController.class)
-@Import({SecurityConfig.class, net.hugmesh.commons.security.DomainRegistry.class, TestDatabaseConfig.class})
+@Import({SecurityConfig.class, net.hugmesh.commons.security.DomainRegistry.class, TestDatabaseConfig.class, net.hugmesh.adminbff.account.RegistrationDomainResolver.class})
 class AdminControllerAllowlistTest {
 
     @Autowired ApplicationContext context;
@@ -103,11 +103,11 @@ class AdminControllerAllowlistTest {
         // bean-creation, racing the allowlist-domain migration (#19), so it can silently
         // no-op. The seed email derives the reserved username "admin", so it must be written
         // via the store (the controller's username gate would 422 it) — exactly as
-        // seedAdmins() does. The mockJwt() slice principals carry no issuer claim, so
-        // PrincipalDomain resolves them to the NO_DOMAIN sentinel scope (Roles read JWT
-        // claims, NOT Spring authorities); invite into that same scope the admin reads from.
-        store.inviteEmail("admin@hugmesh.net",
-                net.hugmesh.commons.security.PrincipalDomain.NO_DOMAIN).block();
+        // seedAdmins() does, into AccountStore.DEFAULT_DOMAIN. The mockJwt() slice principals
+        // carry no issuer claim, so PrincipalDomain resolves them to the NO_DOMAIN sentinel;
+        // the allowlist then reads the register gate's fallback() domain instead (#111),
+        // which on this issuer-uri-only registry is "default", so the seeded row is listed.
+        store.inviteEmail("admin@hugmesh.net", AccountStore.DEFAULT_DOMAIN).block();
         asAdmin().get().uri("/bff/admin/allowlist").exchange()
                 .expectStatus().isOk()
                 .expectBody()
