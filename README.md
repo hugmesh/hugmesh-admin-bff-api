@@ -1432,9 +1432,17 @@ as shipped.
     Application overrides it, so the seeded `gateway_route_access.mfa_required` rows are
     inert; (b) the remaining `requiredForAny` seams: login, session and introspect are
     deliberately NOT denied (the MFA stamp lives on the session, so refusing one makes
-    the challenge unreachable), and `methods` / `graceSeconds` are stored but not
-    honoured. Enroll every privileged operator FIRST (generator `docs/MFA-ROLLOUT.md` §2);
-    flipping before enrollment locks the operator out.
+    the challenge unreachable). `methods` and `graceSeconds` ARE honoured by the filter
+    (#80): the merged requirement across the principal's roles (`MfaRequirement`) takes
+    the strictest positive grace and the intersection of the allowed methods; `0` grace
+    means the platform window (`app.casdoor.mfa.freshness`, 10m), and a stamp whose
+    recorded factor is not allowed, or that recorded none while methods are constrained,
+    is denied. Band 380 seeds the `default` domain's four rows (superadmin/admin required,
+    mod relaxable, user optional) so the policy is visible and editable; other domains keep
+    the built-in defaults until written. The admin-ui panel and the gateway
+    `mfa_required` route flip are separate follow-ups. Enroll every privileged operator
+    FIRST (generator `docs/MFA-ROLLOUT.md` §2); flipping before enrollment locks the
+    operator out.
 - 🚧 **Notification external channels.** Matrix DM and Akkoma transports written and
   contract-tested (flags off, not yet run on a live mesh); phpBB transport
   written (dark behind `notify.forum.pm.wired`) against a proposed forum-bff route nothing

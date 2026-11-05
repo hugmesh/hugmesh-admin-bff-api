@@ -5,6 +5,7 @@ import net.hugmesh.adminbff.web.ApiExceptionHandler;
 import net.hugmesh.adminbff.web.ValidationExceptionHandler;
 import net.hugmesh.authcore.account.Account;
 import net.hugmesh.authcore.account.AccountStore;
+import net.hugmesh.authcore.account.BffSession;
 import net.hugmesh.authcore.casdoor.MfaStepUpService;
 import net.hugmesh.authcore.config.BffCookieAuthenticationWebFilter;
 import net.hugmesh.authcore.config.SessionCookieWebFilter;
@@ -29,6 +30,7 @@ import reactor.core.publisher.Mono;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Set;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -94,24 +96,37 @@ class RoleMfaPolicyEnforcementEvidenceBindingTest {
 
     WebTestClient web;
 
-    static AccountStore.MfaState fresh() {
-        return new AccountStore.MfaState(true, LocalDateTime.now());
+    /** A live session row for {@code account} carrying an MFA stamp made at {@code at} with {@code amr}. */
+    static BffSession stamped(String token, Account account, LocalDateTime at, String amr) {
+        return new BffSession(token, account.id(), LocalDateTime.now().minusHours(1),
+                LocalDateTime.now().plusHours(1), true, at, amr, false);
     }
 
-    static AccountStore.MfaState none() {
-        return new AccountStore.MfaState(false, null);
+    /** A live session row for {@code account} that was never stamped. */
+    static BffSession unstamped(String token, Account account) {
+        return new BffSession(token, account.id(), LocalDateTime.now().minusHours(1),
+                LocalDateTime.now().plusHours(1), false, null, null, false);
+    }
+
+    /** A merged requirement: required, with the given grace (0 = platform window) and methods. */
+    static MfaRequirement requirement(long graceSeconds, String... methods) {
+        return new MfaRequirement(true, graceSeconds, graceSeconds == 0, methods.length > 0, Set.of(methods));
     }
 
     @BeforeEach
     void setUp() {
         web = WebTestClient.bindToApplicationContext(context).build();
-        when(policies.requiredForAny(anyString(), any())).thenReturn(Mono.just(true));
+        when(policies.requirementFor(anyString(), any())).thenReturn(Mono.just(MfaRequirement.UNKNOWN));
         when(accounts.sessionOfToken(anyString())).thenReturn(Mono.empty());
+        // The cookie auth filter (auth-core) reads mfaStateOf to grant the no-window MFA_SATISFIED
+        // authority on a bff_ principal; the filter under test ignores that authority and reads
+        // the row itself, so the two are stubbed independently.
         when(accounts.mfaStateOf(anyString())).thenReturn(Mono.empty());
+        when(accounts.sessionRow(anyString())).thenReturn(Mono.empty());
         when(accounts.sessionOfToken("bff_A")).thenReturn(Mono.just(ADMIN_A));
-        when(accounts.mfaStateOf("bff_A")).thenReturn(Mono.just(none()));
+        when(accounts.sessionRow("bff_A")).thenReturn(Mono.just(unstamped("bff_A", ADMIN_A)));
         when(accounts.sessionOfToken("bff_B")).thenReturn(Mono.just(USER_B));
-        when(accounts.mfaStateOf("bff_B")).thenReturn(Mono.just(fresh()));
+        when(accounts.sessionRow("bff_B")).thenReturn(Mono.just(stamped("bff_B", USER_B, LocalDateTime.now(), "otp")));
     }
 
     private void denied(WebTestClient.RequestHeadersSpec<?> request) {
@@ -173,7 +188,7 @@ class RoleMfaPolicyEnforcementEvidenceBindingTest {
     @Test
     void anotherFreshAdminsCookie_isNotEvidenceForThisAdmin() {
         when(accounts.sessionOfToken("bff_C")).thenReturn(Mono.just(ADMIN_C));
-        when(accounts.mfaStateOf("bff_C")).thenReturn(Mono.just(fresh()));
+        when(accounts.sessionRow("bff_C")).thenReturn(Mono.just(stamped("bff_C", ADMIN_C, LocalDateTime.now(), "otp")));
 
         denied(web.get().uri(PROBE)
                 .header(HttpHeaders.AUTHORIZATION, "Bearer bff_A")
@@ -194,23 +209,23 @@ class RoleMfaPolicyEnforcementEvidenceBindingTest {
      */
     @Test
     void evidenceSessionThatNoLongerNamesThePrincipalsAccount_isDenied() {
-        when(accounts.sessionOfToken("bff_A")).thenReturn(Mono.just(ADMIN_A), Mono.just(USER_B));
-        when(accounts.mfaStateOf("bff_A")).thenReturn(Mono.just(none()), Mono.just(fresh()));
+        // The principal lookup still answers A; the evidence row now names B's account.
+        when(accounts.sessionRow("bff_A")).thenReturn(Mono.just(stamped("bff_A", USER_B, LocalDateTime.now(), "otp")));
 
         denied(web.get().uri(PROBE).header(HttpHeaders.AUTHORIZATION, "Bearer bff_A"));
     }
 
     @Test
     void aStampOlderThanTheFreshnessWindow_isDenied() {
-        when(accounts.mfaStateOf("bff_A"))
-                .thenReturn(Mono.just(new AccountStore.MfaState(true, LocalDateTime.now().minusMinutes(11))));
+        when(accounts.sessionRow("bff_A"))
+                .thenReturn(Mono.just(stamped("bff_A", ADMIN_A, LocalDateTime.now().minusMinutes(11), "otp")));
 
         denied(web.get().uri(PROBE).header(HttpHeaders.AUTHORIZATION, "Bearer bff_A"));
     }
 
     @Test
     void anMfaLookupThatYieldsNothing_failsClosed() {
-        when(accounts.mfaStateOf("bff_A")).thenReturn(Mono.empty());
+        when(accounts.sessionRow("bff_A")).thenReturn(Mono.empty());
 
         denied(web.get().uri(PROBE).header(HttpHeaders.AUTHORIZATION, "Bearer bff_A"));
     }
@@ -229,7 +244,7 @@ class RoleMfaPolicyEnforcementEvidenceBindingTest {
 
     @Test
     void cookieOnly_freshlyStampedAdmin_isLetThrough_asThatAdmin() {
-        when(accounts.mfaStateOf("bff_A")).thenReturn(Mono.just(fresh()));
+        when(accounts.sessionRow("bff_A")).thenReturn(Mono.just(stamped("bff_A", ADMIN_A, LocalDateTime.now(), "otp")));
 
         web.get().uri(PROBE).cookie(SessionCookieWebFilter.SESSION_COOKIE, "bff_A").exchange()
                 .expectStatus().isOk()
@@ -238,7 +253,7 @@ class RoleMfaPolicyEnforcementEvidenceBindingTest {
 
     @Test
     void bearerOnly_freshlyStampedAdmin_isLetThrough_asThatAdmin() {
-        when(accounts.mfaStateOf("bff_A")).thenReturn(Mono.just(fresh()));
+        when(accounts.sessionRow("bff_A")).thenReturn(Mono.just(stamped("bff_A", ADMIN_A, LocalDateTime.now(), "otp")));
 
         web.get().uri(PROBE).header(HttpHeaders.AUTHORIZATION, "Bearer bff_A").exchange()
                 .expectStatus().isOk()
@@ -247,8 +262,8 @@ class RoleMfaPolicyEnforcementEvidenceBindingTest {
 
     @Test
     void freshlyStampedBearer_isNotSpoiledByAStaleCookieOfAnotherSession() {
-        when(accounts.mfaStateOf("bff_A")).thenReturn(Mono.just(fresh()));
-        when(accounts.mfaStateOf("bff_B")).thenReturn(Mono.just(none()));
+        when(accounts.sessionRow("bff_A")).thenReturn(Mono.just(stamped("bff_A", ADMIN_A, LocalDateTime.now(), "otp")));
+        when(accounts.sessionRow("bff_B")).thenReturn(Mono.just(unstamped("bff_B", USER_B)));
 
         web.get().uri(PROBE)
                 .header(HttpHeaders.AUTHORIZATION, "Bearer bff_A")
@@ -263,6 +278,154 @@ class RoleMfaPolicyEnforcementEvidenceBindingTest {
                 .header(HttpHeaders.AUTHORIZATION, "Bearer bff_A")
                 .cookie(SessionCookieWebFilter.SESSION_COOKIE, "bff_B").exchange();
 
-        verify(accounts, never()).mfaStateOf("bff_B");
+        verify(accounts, never()).sessionRow("bff_B");
+    }
+
+    // ── graceSeconds: the strictest applicable window, 0 = the platform window ─────────
+
+    @Test
+    void grace_aStampYoungerThanTheGrace_isLetThrough() {
+        when(policies.requirementFor(anyString(), any())).thenReturn(Mono.just(requirement(120)));
+        when(accounts.sessionRow("bff_A"))
+                .thenReturn(Mono.just(stamped("bff_A", ADMIN_A, LocalDateTime.now().minusSeconds(30), "otp")));
+
+        web.get().uri(PROBE).header(HttpHeaders.AUTHORIZATION, "Bearer bff_A").exchange()
+                .expectStatus().isOk()
+                .expectBody(String.class).isEqualTo("REACHED acct-a");
+    }
+
+    /** Within the platform's 10m window, so only the per-role grace can be what denies it. */
+    @Test
+    void grace_aStampOlderThanTheGrace_butInsideThePlatformWindow_isDenied() {
+        when(policies.requirementFor(anyString(), any())).thenReturn(Mono.just(requirement(120)));
+        when(accounts.sessionRow("bff_A"))
+                .thenReturn(Mono.just(stamped("bff_A", ADMIN_A, LocalDateTime.now().minusSeconds(121), "otp")));
+
+        denied(web.get().uri(PROBE).header(HttpHeaders.AUTHORIZATION, "Bearer bff_A"));
+    }
+
+    @Test
+    void grace_noStampAtAll_isDenied() {
+        when(policies.requirementFor(anyString(), any())).thenReturn(Mono.just(requirement(3600)));
+
+        denied(web.get().uri(PROBE).header(HttpHeaders.AUTHORIZATION, "Bearer bff_A"));
+    }
+
+    @Test
+    void grace_aSetFlagWithNoTimestamp_cannotProveFreshness_andIsDenied() {
+        when(policies.requirementFor(anyString(), any())).thenReturn(Mono.just(requirement(3600)));
+        when(accounts.sessionRow("bff_A")).thenReturn(Mono.just(stamped("bff_A", ADMIN_A, null, "otp")));
+
+        denied(web.get().uri(PROBE).header(HttpHeaders.AUTHORIZATION, "Bearer bff_A"));
+    }
+
+    /** grace 0 is the platform window (10m here), not "younger than nothing": the retry after a challenge passes. */
+    @Test
+    void grace_zero_isThePlatformWindow_soAFreshStampPasses_andAnElevenMinuteOneDoesNot() {
+        when(policies.requirementFor(anyString(), any())).thenReturn(Mono.just(requirement(0)));
+        when(accounts.sessionRow("bff_A"))
+                .thenReturn(Mono.just(stamped("bff_A", ADMIN_A, LocalDateTime.now().minusMinutes(9), "otp")));
+        web.get().uri(PROBE).header(HttpHeaders.AUTHORIZATION, "Bearer bff_A").exchange().expectStatus().isOk();
+
+        when(accounts.sessionRow("bff_A"))
+                .thenReturn(Mono.just(stamped("bff_A", ADMIN_A, LocalDateTime.now().minusMinutes(11), "otp")));
+        denied(web.get().uri(PROBE).header(HttpHeaders.AUTHORIZATION, "Bearer bff_A"));
+    }
+
+    /** A grace longer than the platform window extends it only when no sibling role is on the platform window. */
+    @Test
+    void grace_longerThanThePlatformWindow_isHonoured_whenItIsTheOnlyParticipant() {
+        when(policies.requirementFor(anyString(), any())).thenReturn(Mono.just(requirement(3600)));
+        when(accounts.sessionRow("bff_A"))
+                .thenReturn(Mono.just(stamped("bff_A", ADMIN_A, LocalDateTime.now().minusMinutes(30), "otp")));
+
+        web.get().uri(PROBE).header(HttpHeaders.AUTHORIZATION, "Bearer bff_A").exchange().expectStatus().isOk();
+    }
+
+    @Test
+    void grace_longerThanThePlatformWindow_isCapped_whenASiblingIsOnThePlatformWindow() {
+        when(policies.requirementFor(anyString(), any()))
+                .thenReturn(Mono.just(new MfaRequirement(true, 3600, true, false, Set.of())));
+        when(accounts.sessionRow("bff_A"))
+                .thenReturn(Mono.just(stamped("bff_A", ADMIN_A, LocalDateTime.now().minusMinutes(30), "otp")));
+
+        denied(web.get().uri(PROBE).header(HttpHeaders.AUTHORIZATION, "Bearer bff_A"));
+    }
+
+    // ── methods: the stamped factor must be one the policy allows ──────────────────────
+
+    @Test
+    void methods_aStampMadeWithAnAllowedFactor_isLetThrough() {
+        when(policies.requirementFor(anyString(), any())).thenReturn(Mono.just(requirement(0, "webauthn", "otp")));
+        when(accounts.sessionRow("bff_A"))
+                .thenReturn(Mono.just(stamped("bff_A", ADMIN_A, LocalDateTime.now(), "otp")));
+
+        web.get().uri(PROBE).header(HttpHeaders.AUTHORIZATION, "Bearer bff_A").exchange()
+                .expectStatus().isOk()
+                .expectBody(String.class).isEqualTo("REACHED acct-a");
+    }
+
+    @Test
+    void methods_aFreshStampMadeWithADisallowedFactor_isDenied() {
+        when(policies.requirementFor(anyString(), any())).thenReturn(Mono.just(requirement(0, "webauthn")));
+        when(accounts.sessionRow("bff_A"))
+                .thenReturn(Mono.just(stamped("bff_A", ADMIN_A, LocalDateTime.now(), "recovery")));
+
+        denied(web.get().uri(PROBE).header(HttpHeaders.AUTHORIZATION, "Bearer bff_A"));
+    }
+
+    /** The stamp writes "" when the factor is unknown; a constrained policy cannot accept that. */
+    @Test
+    void methods_aFreshStampThatRecordedNoMethod_failsClosed_whenMethodsAreConstrained() {
+        when(policies.requirementFor(anyString(), any())).thenReturn(Mono.just(requirement(0, "webauthn", "otp")));
+        when(accounts.sessionRow("bff_A")).thenReturn(Mono.just(stamped("bff_A", ADMIN_A, LocalDateTime.now(), "")));
+        denied(web.get().uri(PROBE).header(HttpHeaders.AUTHORIZATION, "Bearer bff_A"));
+
+        when(accounts.sessionRow("bff_A")).thenReturn(Mono.just(stamped("bff_A", ADMIN_A, LocalDateTime.now(), null)));
+        denied(web.get().uri(PROBE).header(HttpHeaders.AUTHORIZATION, "Bearer bff_A"));
+    }
+
+    @Test
+    void methods_unconstrained_acceptsAFreshStampThatRecordedNoMethod() {
+        when(policies.requirementFor(anyString(), any())).thenReturn(Mono.just(requirement(0)));
+        when(accounts.sessionRow("bff_A")).thenReturn(Mono.just(stamped("bff_A", ADMIN_A, LocalDateTime.now(), "")));
+
+        web.get().uri(PROBE).header(HttpHeaders.AUTHORIZATION, "Bearer bff_A").exchange().expectStatus().isOk();
+    }
+
+    @Test
+    void methods_anUnsatisfiableIntersection_deniesEveryFactor() {
+        when(policies.requirementFor(anyString(), any()))
+                .thenReturn(Mono.just(new MfaRequirement(true, 0, true, true, Set.of())));
+        for (String amr : List.of("webauthn", "otp", "recovery")) {
+            when(accounts.sessionRow("bff_A")).thenReturn(Mono.just(stamped("bff_A", ADMIN_A, LocalDateTime.now(), amr)));
+            denied(web.get().uri(PROBE).header(HttpHeaders.AUTHORIZATION, "Bearer bff_A"));
+        }
+    }
+
+    @Test
+    void methods_andGrace_areBothChecked_onTheSameRow() {
+        when(policies.requirementFor(anyString(), any())).thenReturn(Mono.just(requirement(120, "otp")));
+        // right method, too old
+        when(accounts.sessionRow("bff_A"))
+                .thenReturn(Mono.just(stamped("bff_A", ADMIN_A, LocalDateTime.now().minusSeconds(200), "otp")));
+        denied(web.get().uri(PROBE).header(HttpHeaders.AUTHORIZATION, "Bearer bff_A"));
+        // fresh, wrong method
+        when(accounts.sessionRow("bff_A"))
+                .thenReturn(Mono.just(stamped("bff_A", ADMIN_A, LocalDateTime.now(), "webauthn")));
+        denied(web.get().uri(PROBE).header(HttpHeaders.AUTHORIZATION, "Bearer bff_A"));
+        // fresh and allowed
+        when(accounts.sessionRow("bff_A"))
+                .thenReturn(Mono.just(stamped("bff_A", ADMIN_A, LocalDateTime.now(), "otp")));
+        web.get().uri(PROBE).header(HttpHeaders.AUTHORIZATION, "Bearer bff_A").exchange().expectStatus().isOk();
+    }
+
+    @Test
+    void anExpiredSession_hasNoEvidence_whateverItsStampSays() {
+        when(policies.requirementFor(anyString(), any())).thenReturn(Mono.just(requirement(3600)));
+        // sessionRow resolves EMPTY for an expired row (the store reaps it); the stamp is unreachable.
+        when(accounts.sessionRow("bff_A")).thenReturn(Mono.empty());
+
+        denied(web.get().uri(PROBE).header(HttpHeaders.AUTHORIZATION, "Bearer bff_A"));
     }
 }

@@ -205,6 +205,79 @@ class RoleMfaPolicyServiceTest {
         assertThat(RoleMfaPolicyService.normaliseRole(null)).isEmpty();
     }
 
+    // ── requirementFor (the filter's question) ─────────────────────────────────────
+
+    @Test
+    void requirementFor_emptyOrNullRoles_isNone_withoutAStoreRead() {
+        assertThat(service.requirementFor("brandx", List.of()).block()).isSameAs(MfaRequirement.NONE);
+        assertThat(service.requirementFor("brandx", null).block()).isSameAs(MfaRequirement.NONE);
+        verify(repo, never()).findByDomainAndRoleIn(anyString(), any());
+    }
+
+    @Test
+    void requirementFor_defaultsOnly_requiredForAFloorRole_onThePlatformWindow_anyMethod() {
+        MfaRequirement r = service.requirementFor("brandx", List.of("ROLE_USER", "ROLE_ADMIN")).block();
+        assertThat(r.required()).isTrue();
+        assertThat(r.graceSeconds()).isZero();
+        assertThat(r.platformWindowApplies()).isTrue();
+        assertThat(r.methodsConstrained()).isFalse();
+        // Unlike requiredForAny, a floor role does NOT short-circuit: the row may carry
+        // methods / grace, so the store is read with the normalised set.
+        verify(repo).findByDomainAndRoleIn(eq("brandx"), eq(Set.of("user", "admin")));
+    }
+
+    @Test
+    void requirementFor_defaultsOnly_unrequiredRoles_isNone() {
+        assertThat(service.requirementFor("brandx", List.of("user", "mod")).block().required()).isFalse();
+    }
+
+    @Test
+    void requirementFor_aFloorRow_keepsRequiredTrue_butContributesItsMethodsAndGrace() {
+        when(repo.findByDomainAndRoleIn(eq("brandx"), any()))
+                .thenReturn(Flux.just(row("brandx", "admin", false, "webauthn,otp", 300)));
+        MfaRequirement r = service.requirementFor("brandx", List.of("admin")).block();
+        assertThat(r.required()).as("the floor pins required even on a hand-edited false row").isTrue();
+        assertThat(r.graceSeconds()).isEqualTo(300L);
+        assertThat(r.platformWindowApplies()).isFalse();
+        assertThat(r.methodsConstrained()).isTrue();
+        assertThat(r.methods()).containsExactlyInAnyOrder("webauthn", "otp");
+    }
+
+    @Test
+    void requirementFor_mergesTheStrictestGrace_andIntersectsMethods_acrossRequiredRoles() {
+        when(repo.findByDomainAndRoleIn(eq("brandx"), any()))
+                .thenReturn(Flux.just(
+                        row("brandx", "admin", true, "webauthn,otp", 3600),
+                        row("brandx", "mod", true, "otp,recovery", 120),
+                        // user is not required: its narrow methods must not bite
+                        row("brandx", "user", false, "recovery", 1)));
+        MfaRequirement r = service.requirementFor("brandx", List.of("user", "mod", "admin")).block();
+        assertThat(r.required()).isTrue();
+        assertThat(r.graceSeconds()).isEqualTo(120L);
+        assertThat(r.platformWindowApplies()).isFalse();
+        assertThat(r.methods()).containsExactly("otp");
+    }
+
+    @Test
+    void requirementFor_aRowForARoleNotAsked_isIgnored() {
+        // A store that answers more than it was asked (it never should) cannot widen the merge.
+        when(repo.findByDomainAndRoleIn(eq("brandx"), any()))
+                .thenReturn(Flux.just(row("brandx", "fleet_admin", true, "recovery", 5)));
+        MfaRequirement r = service.requirementFor("brandx", List.of("user")).block();
+        assertThat(r.required()).isFalse();
+    }
+
+    @Test
+    void requiredForAny_isTheBooleanProjectionOfRequirementFor() {
+        when(repo.findByDomainAndRoleIn(eq("brandx"), eq(Set.of("mod"))))
+                .thenReturn(Flux.just(row("brandx", "mod", true, null, 0)));
+        when(repo.findByDomainAndRoleIn(eq("brandx"), eq(Set.of("user")))).thenReturn(Flux.empty());
+        assertThat(service.requirementFor("brandx", List.of("mod")).block().required())
+                .isEqualTo(service.requiredForAny("brandx", List.of("mod")).block());
+        assertThat(service.requirementFor("brandx", List.of("user")).block().required())
+                .isEqualTo(service.requiredForAny("brandx", List.of("user")).block());
+    }
+
     // ── requiredForAny ────────────────────────────────────────────────────────────
 
     @Test

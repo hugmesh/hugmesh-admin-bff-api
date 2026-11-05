@@ -1,7 +1,7 @@
 package net.hugmesh.adminbff.mfa;
 
-import net.hugmesh.authcore.account.Account;
 import net.hugmesh.authcore.account.AccountStore;
+import net.hugmesh.authcore.account.BffSession;
 import net.hugmesh.authcore.casdoor.MfaStepUpService;
 import net.hugmesh.commons.security.DomainRegistry;
 import net.hugmesh.commons.security.PrincipalDomain;
@@ -20,6 +20,7 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.context.ReactiveSecurityContextHolder;
 import org.springframework.security.core.context.SecurityContext;
+import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
 import org.springframework.stereotype.Component;
 import org.springframework.web.server.ServerWebExchange;
@@ -29,8 +30,11 @@ import reactor.core.publisher.Mono;
 
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.time.LocalDateTime;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Deque;
 import java.util.List;
 import java.util.Locale;
@@ -64,22 +68,40 @@ import java.util.Set;
  * requirement unsatisfiable.
  *
  * <h2>What counts as fresh MFA</h2>
- * Either of two pieces of evidence, whichever carrier the request arrived on:
+ * The policy answer is the MERGED {@link MfaRequirement} across the principal's roles
+ * ({@link RoleMfaPolicyService#requirementFor}): required or not, the strictest grace window and
+ * the intersection of the allowed methods. Against it, either of two pieces of evidence,
+ * whichever carrier the request arrived on:
  * <ul>
  *   <li>the {@code MFA_SATISFIED} authority on a JWT principal — present only when
  *       {@code app.mfa.enabled} is on AND the JWT carries a fresh BFF-written
- *       {@code mfa_satisfied_at} claim. On a {@code bff_} session principal the same authority
- *       is granted from the raw {@code mfa_satisfied} flag with no freshness window, so there it
- *       is ignored and only the session check below counts;</li>
- *   <li>a fresh MFA stamp on the principal's OWN {@code bff_session}
- *       ({@link MfaStepUpService#isFresh}): the token is the {@code Bearer bff_...} the
+ *       {@code mfa_satisfied_at} claim (fresh by the gateway's own window). When a policy sets a
+ *       POSITIVE grace, that claim is re-read here and must also be within the grace; when a
+ *       policy restricts methods, the JWT's {@code amr} claim must name an allowed one (absent =
+ *       denied). On a {@code bff_} session principal the same authority is granted from the raw
+ *       {@code mfa_satisfied} flag with no freshness window, so there it is ignored and only the
+ *       session check below counts;</li>
+ *   <li>the MFA stamp on the principal's OWN {@code bff_session}
+ *       ({@link AccountStore#sessionRow}): the token is the {@code Bearer bff_...} the
  *       principal was built from (a cookie-only request reaches this filter with the cookie
  *       already bridged into that header), never a {@code bff_session} cookie sent alongside a
  *       different Bearer, and the session must resolve to the account the principal names
- *       (see {@link #sessionEvidence}). This is read-only: it never CONSUMES the stamp (the
- *       single-use consume belongs to the step-up gates, which still run on top).</li>
+ *       (see {@link #sessionEvidence}). The stamp passes only when {@code mfa_satisfied} is set,
+ *       {@code mfa_satisfied_at} is younger than {@link MfaRequirement#window} and the stamped
+ *       {@code amr} is allowed by {@link MfaRequirement#allowsMethod}. This is read-only: it
+ *       never CONSUMES the stamp (the single-use consume belongs to the step-up gates, which
+ *       still run on top).</li>
  * </ul>
- * <b>Carrier caveat.</b> A principal authenticated by a custody JWT never has session evidence
+ * <b>graceSeconds.</b> A policy's positive {@code graceSeconds} is the window its stamp must be
+ * younger than; across several required roles the smallest wins. {@code 0} is the schema default
+ * and the built-in default for every role: it means "no per-role grace of its own, re-prompt on
+ * the platform cadence", i.e. the stamp must be fresh by {@link MfaStepUpService#freshness}
+ * ({@code app.casdoor.mfa.freshness}, default 10m) — exactly what the filter enforced before
+ * grace was honoured, so an existing row or an unseeded domain changes nothing. Reading
+ * {@code 0} as "younger than 0 seconds" would deny the retry that follows a successful challenge
+ * and lock every domain without rows out the moment the flag flips; the re-prompt itself is the
+ * step-up gates' single-use consume, not this read-only check.
+ * <p><b>Carrier caveat.</b> A principal authenticated by a custody JWT never has session evidence
  * here (a {@code bff_session} cookie sent with it replaces the JWT as the principal before this
  * filter runs), so it passes only with the {@code MFA_SATISFIED} authority. Whoever turns this
  * flag on must also have {@code app.mfa.enabled} on for JWT callers; that is an operator
@@ -92,8 +114,9 @@ import java.util.Set;
  *
  * <h2>Not done here</h2>
  * No Casdoor property is cleared or stamped and no revocation row is written, so operator
- * decision 45 does not apply to this class. {@code methods} and {@code graceSeconds} are still
- * not honoured.
+ * decision 45 does not apply to this class. A stamp dated in the future is not rejected (the
+ * stamp is the database's {@code now()}, the comparison is this JVM's clock; a skew guard would
+ * need a tolerance nobody has measured).
  */
 @Component
 @ConditionalOnProperty(name = RoleMfaPolicyEnforcementFilter.FLAG, havingValue = "true")
@@ -240,42 +263,115 @@ public class RoleMfaPolicyEnforcementFilter implements WebFilter {
         // authority from the raw mfa_satisfied flag with no freshness window, so for any other
         // principal it proves nothing here and the bound session check below decides.
         boolean carriedEvidence = mfaAuthority && auth instanceof JwtAuthenticationToken;
-        return policies.requiredForAny(domain, roles)
+        return policies.requirementFor(domain, roles)
                 // A lookup that yields nothing is an unknown answer: it must not read as "allow".
-                .defaultIfEmpty(Boolean.TRUE)
-                .flatMap(required -> {
-                    if (!required || carriedEvidence) {
+                .defaultIfEmpty(MfaRequirement.UNKNOWN)
+                .flatMap(requirement -> {
+                    if (!requirement.required()) {
                         return Mono.just(Boolean.TRUE);
                     }
-                    return sessionEvidence(exchange, auth);
+                    if (carriedEvidence) {
+                        return Mono.just(jwtEvidence(((JwtAuthenticationToken) auth).getToken(), requirement));
+                    }
+                    return sessionEvidence(exchange, auth, requirement);
                 });
     }
 
     /**
-     * Fresh MFA on the principal's OWN session, or {@code false}. Two independent bindings, so
-     * neither carrier precedence (decided in another library) nor a second session riding on
-     * the request can lend a stamp:
+     * The JWT path: the {@code MFA_SATISFIED} authority is the precondition (the converter
+     * granted it from a claim fresh by the gateway's window). On top of it a POSITIVE per-role
+     * grace re-reads {@code mfa_satisfied_at} and requires it within that grace, and a method
+     * restriction requires the {@code amr} claim to name an allowed factor. A requirement with
+     * neither tightening passes on the authority alone, exactly as before.
+     */
+    static boolean jwtEvidence(Jwt jwt, MfaRequirement requirement) {
+        if (requirement.graceSeconds() > 0) {
+            Long stampedAt = epochMillisClaim(jwt, Roles.MFA_SATISFIED_AT_CLAIM);
+            if (stampedAt == null) {
+                return false;
+            }
+            long ageMillis = System.currentTimeMillis() - stampedAt;
+            if (ageMillis < 0 || ageMillis > requirement.graceSeconds() * 1000L) {
+                return false;
+            }
+        }
+        if (requirement.methodsConstrained()) {
+            Object amr = jwt.getClaim("amr");
+            if (amr instanceof Collection<?> many) {
+                for (Object one : many) {
+                    if (one != null && requirement.allowsMethod(one.toString())) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+            return amr != null && requirement.allowsMethod(amr.toString());
+        }
+        return true;
+    }
+
+    private static Long epochMillisClaim(Jwt jwt, String name) {
+        Object raw = jwt.getClaim(name);
+        if (raw == null) {
+            return null;
+        }
+        if (raw instanceof Number n) {
+            return n.longValue() > 0 ? n.longValue() : null;
+        }
+        try {
+            long ts = Long.parseLong(raw.toString().trim());
+            return ts > 0 ? ts : null;
+        } catch (NumberFormatException malformed) {
+            return null;
+        }
+    }
+
+    /**
+     * MFA on the principal's OWN session that satisfies the requirement, or {@code false}. Two
+     * independent bindings, so neither carrier precedence (decided in another library) nor a
+     * second session riding on the request can lend a stamp:
      * <ol>
      *   <li>the token is read from the {@code Authorization} header the principal was built
      *       from (see {@link PrincipalSessionToken}), never from the {@code bff_session} cookie;</li>
-     *   <li>that session must resolve to the account the principal names
-     *       ({@link Authentication#getName()}); an unknown session, a different account or a
-     *       missing account store is a denial.</li>
+     *   <li>that session row must name the account the principal names
+     *       ({@link Authentication#getName()}); an unknown or expired session, a different
+     *       account or a missing account store is a denial.</li>
      * </ol>
+     * The row is read once ({@link AccountStore#sessionRow}) so the binding, the stamp, its time
+     * and its method all come from the same session; the stamp itself is judged by
+     * {@link #stampSatisfies}.
      */
-    private Mono<Boolean> sessionEvidence(ServerWebExchange exchange, Authentication auth) {
+    private Mono<Boolean> sessionEvidence(ServerWebExchange exchange, Authentication auth,
+                                          MfaRequirement requirement) {
         String token = PrincipalSessionToken.fromAuthorization(exchange.getRequest().getHeaders());
         AccountStore store = accounts.getIfAvailable();
         String principal = auth.getName();
         if (token == null || store == null || principal == null) {
             return Mono.just(Boolean.FALSE);
         }
-        return store.sessionOfToken(token)
-                .map(Account::id)
-                .filter(principal::equals)
-                .flatMap(sameAccount -> mfaStepUp.isFresh(token))
-                .map(Boolean.TRUE::equals)
+        Duration window = requirement.window(mfaStepUp.freshness());
+        return store.sessionRow(token)
+                .map(session -> principal.equals(session.accountId())
+                        && stampSatisfies(session, requirement, window, LocalDateTime.now()))
                 .defaultIfEmpty(Boolean.FALSE);
+    }
+
+    /**
+     * Whether a session's MFA stamp satisfies the requirement: stamped, dated, younger than the
+     * window (a stamp exactly {@code window} old still passes, as in
+     * {@link MfaStepUpService#freshSnapshot}) and made with an allowed method. Fail closed on a
+     * set flag with no timestamp (freshness cannot be proven) and on a constrained requirement
+     * with a stamp that recorded no method.
+     */
+    static boolean stampSatisfies(BffSession session, MfaRequirement requirement, Duration window,
+                                  LocalDateTime now) {
+        if (session == null || !session.mfaSatisfied() || session.mfaSatisfiedAt() == null) {
+            return false;
+        }
+        if (session.mfaSatisfiedAt().isBefore(now.minus(window))) {
+            return false;
+        }
+        return requirement.allowsMethod(session.amr());
     }
 
     private static Mono<Void> deny(ServerWebExchange exchange) {

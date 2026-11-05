@@ -1,0 +1,112 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.20.xsd">
+
+  <!--
+    ROLE MFA POLICY — the default rows (hugmesh-admin-bff-api#80, the #3 plan's per-role
+    defaults: superadmin and admin REQUIRED, mod RELAXABLE (off until a brand turns it on),
+    user OPTIONAL (off)).
+
+    WHY ROWS AT ALL: RoleMfaPolicyService already answers exactly these values from its
+    built-in defaults when a (domain, role) has no row, so enforcement behaves the same with
+    or without this band. The rows exist so the policy is VISIBLE and EDITABLE where an
+    operator looks — GET /bff/admin/mfa/role-policy reports fromRow=true, and the coming
+    admin-ui panel edits a stored row rather than materialising one on first save. They
+    carry the schema defaults for the rest: methods NULL (any factor), grace_seconds 0
+    (re-prompt on the platform freshness window), updated_at NULL (never edited).
+
+    DOMAIN: 'default' is the single-issuer domain (commons DomainRegistry.DEFAULT_DOMAIN,
+    the 010 pattern). A multi-brand cluster resolves other domains, which keep the built-in
+    defaults until an operator writes rows for them; seeding every brand here would need
+    the issuer map, which the changelog cannot see.
+
+    IDEMPOTENT: #144 shipped PUT /bff/admin/mfa/role-policy, so a cluster may already hold
+    an operator-written row for one of these (domain, role) pairs. Each insert is guarded by
+    a sqlCheck precondition and MARK_RAN when the row exists, so an operator's values are
+    never overwritten and the UNIQUE (domain, role) constraint is never tripped.
+
+    ROLLBACK: the upsert keeps the PK on conflict, so an operator edit lands on the seed's
+    id with a different updated_by. Each rollback deletes its row only while updated_by is
+    still the seed marker, so rolling the band back removes what it added and nothing an
+    operator has since taken ownership of.
+
+    GRANT: none here. 150-role-mfa-policy-grant already gave adminbff_app (the role admin-bff
+    connects as; never admin_bff) SELECT, INSERT, UPDATE on this table, which is all the
+    service needs; the seed is a migration-time write by the Liquibase (owner) connection.
+  -->
+
+  <changeSet id="380-1-role-mfa-policy-seed-superadmin" author="hugmesh">
+    <preConditions onFail="MARK_RAN">
+      <sqlCheck expectedResult="0">SELECT COUNT(*) FROM role_mfa_policy WHERE domain = 'default' AND role = 'superadmin'</sqlCheck>
+    </preConditions>
+    <comment>superadmin: MFA REQUIRED (also pinned by the service floor; a row cannot relax it).</comment>
+    <insert tableName="role_mfa_policy">
+      <column name="id" value="493fd20a-7a82-42b5-9df1-e3663733e8c3"/>
+      <column name="domain" value="default"/>
+      <column name="role" value="superadmin"/>
+      <column name="required" valueBoolean="true"/>
+      <column name="grace_seconds" valueNumeric="0"/>
+      <column name="updated_by" value="seed:380"/>
+    </insert>
+    <rollback>
+      <sql>DELETE FROM role_mfa_policy WHERE id = '493fd20a-7a82-42b5-9df1-e3663733e8c3' AND updated_by = 'seed:380'</sql>
+    </rollback>
+  </changeSet>
+
+  <changeSet id="380-2-role-mfa-policy-seed-admin" author="hugmesh">
+    <preConditions onFail="MARK_RAN">
+      <sqlCheck expectedResult="0">SELECT COUNT(*) FROM role_mfa_policy WHERE domain = 'default' AND role = 'admin'</sqlCheck>
+    </preConditions>
+    <comment>admin: MFA REQUIRED (also pinned by the service floor; a row cannot relax it).</comment>
+    <insert tableName="role_mfa_policy">
+      <column name="id" value="3fb53de4-8682-4184-9180-f24703431f38"/>
+      <column name="domain" value="default"/>
+      <column name="role" value="admin"/>
+      <column name="required" valueBoolean="true"/>
+      <column name="grace_seconds" valueNumeric="0"/>
+      <column name="updated_by" value="seed:380"/>
+    </insert>
+    <rollback>
+      <sql>DELETE FROM role_mfa_policy WHERE id = '3fb53de4-8682-4184-9180-f24703431f38' AND updated_by = 'seed:380'</sql>
+    </rollback>
+  </changeSet>
+
+  <changeSet id="380-3-role-mfa-policy-seed-mod" author="hugmesh">
+    <preConditions onFail="MARK_RAN">
+      <sqlCheck expectedResult="0">SELECT COUNT(*) FROM role_mfa_policy WHERE domain = 'default' AND role = 'mod'</sqlCheck>
+    </preConditions>
+    <comment>mod: RELAXABLE — off by default; a brand admin may set required=true (and methods / grace).</comment>
+    <insert tableName="role_mfa_policy">
+      <column name="id" value="618fc816-1480-466e-be36-9665de2e7247"/>
+      <column name="domain" value="default"/>
+      <column name="role" value="mod"/>
+      <column name="required" valueBoolean="false"/>
+      <column name="grace_seconds" valueNumeric="0"/>
+      <column name="updated_by" value="seed:380"/>
+    </insert>
+    <rollback>
+      <sql>DELETE FROM role_mfa_policy WHERE id = '618fc816-1480-466e-be36-9665de2e7247' AND updated_by = 'seed:380'</sql>
+    </rollback>
+  </changeSet>
+
+  <changeSet id="380-4-role-mfa-policy-seed-user" author="hugmesh">
+    <preConditions onFail="MARK_RAN">
+      <sqlCheck expectedResult="0">SELECT COUNT(*) FROM role_mfa_policy WHERE domain = 'default' AND role = 'user'</sqlCheck>
+    </preConditions>
+    <comment>user: OPTIONAL — off; enrolment stays available, nothing is enforced for the role.</comment>
+    <insert tableName="role_mfa_policy">
+      <column name="id" value="dfd40967-1f04-4d29-bd18-834c05e2c657"/>
+      <column name="domain" value="default"/>
+      <column name="role" value="user"/>
+      <column name="required" valueBoolean="false"/>
+      <column name="grace_seconds" valueNumeric="0"/>
+      <column name="updated_by" value="seed:380"/>
+    </insert>
+    <rollback>
+      <sql>DELETE FROM role_mfa_policy WHERE id = 'dfd40967-1f04-4d29-bd18-834c05e2c657' AND updated_by = 'seed:380'</sql>
+    </rollback>
+  </changeSet>
+</databaseChangeLog>
