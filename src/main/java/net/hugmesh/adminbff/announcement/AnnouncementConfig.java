@@ -15,8 +15,9 @@ import org.springframework.web.reactive.function.client.WebClient;
  * the in-cluster akkoma service (base URL grounded in the hugmesh-generator
  * akkoma manifest, overridable per env), and an {@code external.mastodon.enabled}
  * flag (default false) so an akkoma-less dev/test/CI run boots clean. The client is
- * ALWAYS present (so the service can inject it non-null) but stays at the stubbed
- * seam until enabled + a confirmed admin shape is wired in — it never hard-fails.
+ * ALWAYS present (so the service can inject it non-null) and stays at the stubbed
+ * seam (no HTTP) until enabled; when enabled it never hard-fails. Its {@code @system}
+ * per-user notice leg additionally needs the {@code @system} akkoma token.
  */
 @Configuration(proxyBeanMethods = false)
 public class AnnouncementConfig {
@@ -35,7 +36,11 @@ public class AnnouncementConfig {
             // The akkoma privileged admin bearer — Vault hugmesh/akkoma-admin
             // property "token" via the ESO 'akkoma-admin' ExternalSecret, referenced
             // here as a PLACEHOLDER (never inline). Blank by default → no Authorization.
-            @Value("${external.mastodon.admin-token:}") String adminToken) {
-        return new AnnouncementMastodonClient(builder.baseUrl(baseUrl).build(), enabled, adminToken);
+            @Value("${external.mastodon.admin-token:}") String adminToken,
+            // The @system account's OWN akkoma token (the same property SystemChannelTokens
+            // reads) — bearer for the per-user notice leg only. Blank → that leg stays stubbed.
+            @Value("${notification.system-account.channel.akkoma.token:}") String systemToken) {
+        return new AnnouncementMastodonClient(builder.baseUrl(baseUrl).build(), enabled, adminToken,
+                systemToken);
     }
 }
