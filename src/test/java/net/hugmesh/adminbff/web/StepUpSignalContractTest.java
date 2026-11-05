@@ -10,6 +10,7 @@ import net.hugmesh.adminbff.cloudbackup.BackupStepUpGate;
 import net.hugmesh.adminbff.desktop.terminal.DeviceTerminalStepUpGate;
 import net.hugmesh.adminbff.golive.GoLiveStepUpGate;
 import net.hugmesh.adminbff.imagegen.ImageGenStepUpGate;
+import net.hugmesh.adminbff.meshtoken.MeshTokenStepUpGate;
 import net.hugmesh.adminbff.phone.PhoneLockStepUpGate;
 import net.hugmesh.adminbff.servicecatalog.ServiceStoreStepUpGate;
 import net.hugmesh.adminbff.sshissue.SshKeyIssueStepUpGate;
@@ -68,6 +69,7 @@ class StepUpSignalContractTest {
             DeviceTerminalStepUpGate.STEP_UP_HEADER,
             GoLiveStepUpGate.STEP_UP_HEADER,
             ImageGenStepUpGate.STEP_UP_HEADER,
+            MeshTokenStepUpGate.STEP_UP_HEADER,
             PhoneLockStepUpGate.STEP_UP_HEADER,
             ServiceStoreStepUpGate.STEP_UP_HEADER,
             SshKeyIssueStepUpGate.STEP_UP_HEADER,
@@ -100,7 +102,7 @@ class StepUpSignalContractTest {
 
     @Test
     void theEightFlavours_areAllDistinct() {
-        assertThat(VOCABULARY).doesNotHaveDuplicates().hasSize(8);
+        assertThat(VOCABULARY).doesNotHaveDuplicates().hasSize(9);
     }
 
     // ── (1a) THE LITERALS. Deliberately hard-coded, not derived from the constants ──────
@@ -138,6 +140,7 @@ class StepUpSignalContractTest {
         assertThat(DeviceTerminalStepUpGate.STEP_UP_HEADER).isEqualTo("X-Device-Terminal-StepUp");
         assertThat(GoLiveStepUpGate.STEP_UP_HEADER).isEqualTo("X-GoLive-StepUp");
         assertThat(ImageGenStepUpGate.STEP_UP_HEADER).isEqualTo("X-ImageGen-StepUp");
+        assertThat(MeshTokenStepUpGate.STEP_UP_HEADER).isEqualTo("X-MeshToken-StepUp");
         assertThat(PhoneLockStepUpGate.STEP_UP_HEADER).isEqualTo("X-PhoneLock-StepUp");
         assertThat(ServiceStoreStepUpGate.STEP_UP_HEADER).isEqualTo("X-ServiceStore-StepUp");
         assertThat(SshKeyIssueStepUpGate.STEP_UP_HEADER).isEqualTo("X-SshKeyIssue-StepUp");
