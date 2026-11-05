@@ -27,7 +27,7 @@
   <!-- Beta scheme (2026-10-21): MAJOR.MINOR.PATCH-beta.N, never SNAPSHOT. 0.3 = in the
        default mesh with recorded live checks. This is also the image version: the
        release workflow refuses a v<tag> that does not equal this string. -->
-  <version>0.3.0-beta.1</version>
+  <version>0.4.0-beta.1</version>
 
   <properties>
     <!-- java.version (25), encoding, the hugmesh-commons version, the AWS SDK
