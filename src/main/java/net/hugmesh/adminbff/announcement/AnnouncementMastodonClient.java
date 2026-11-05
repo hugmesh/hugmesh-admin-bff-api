@@ -6,6 +6,7 @@ import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
 
 import java.util.Map;
+import java.util.regex.Pattern;
 
 /**
  * Reactive admin client that propagates a published announcement to akkoma (the
@@ -80,12 +81,18 @@ import java.util.Map;
  * The caller ({@code AnnouncementService}) always persists the announcement +
  * {@code akkoma_ref} (when a real ref is returned) regardless of this outcome.
  *
- * <p>The {@code @system} per-user notice leg ({@link #postLocalUserNotice}) stays a
- * SAFE GATED STUB (its per-user notice verb/token shape is still unconfirmed).
+ * <p>The {@code @system} per-user notice leg ({@link #postLocalUserNotice}) is WIRED-REAL
+ * behind the same {@code external.mastodon.enabled} gate AND the {@code @system} account's
+ * own token ({@code notification.system-account.channel.akkoma.token}, NOT the admin
+ * bearer): it posts a Mastodon-API {@code direct} status ({@code POST /api/v1/statuses})
+ * that @-mentions the recipient. Either gate off → {@link AkkomaOutcome#stubbed()} with no
+ * HTTP; any non-2xx or transport error → {@link AkkomaOutcome#degraded}. Not yet observed
+ * against a running Akkoma.
  */
 public class AnnouncementMastodonClient {
 
     private static final Logger log = LoggerFactory.getLogger(AnnouncementMastodonClient.class);
+    private static final Pattern NOTICE_LOCALPART = Pattern.compile("[a-z0-9._-]{1,64}");
 
     private final WebClient http;
     private final boolean enabled;
@@ -96,15 +103,27 @@ public class AnnouncementMastodonClient {
      * header (lets the recording-ExchangeFunction tests exercise the real call shape).
      */
     private final String adminToken;
+    /**
+     * The {@code @system} account's OWN Mastodon-API access token (Vault via ESO, injected as
+     * {@code notification.system-account.channel.akkoma.token}) — the bearer for the per-user
+     * notice leg only. Never the admin bearer: a notice is an ordinary status by an ordinary
+     * account. Blank → the notice leg stays {@link AkkomaOutcome#stubbed()}.
+     */
+    private final String systemToken;
 
     public AnnouncementMastodonClient(WebClient http, boolean enabled) {
-        this(http, enabled, null);
+        this(http, enabled, null, null);
     }
 
     public AnnouncementMastodonClient(WebClient http, boolean enabled, String adminToken) {
+        this(http, enabled, adminToken, null);
+    }
+
+    public AnnouncementMastodonClient(WebClient http, boolean enabled, String adminToken, String systemToken) {
         this.http = http;
         this.enabled = enabled;
         this.adminToken = adminToken;
+        this.systemToken = systemToken;
     }
 
     public boolean enabled() {
@@ -138,13 +157,13 @@ public class AnnouncementMastodonClient {
 
     /**
      * Post a NEUTRAL {@code @system} LOCAL-ONLY notice to {@code localpart} — the akkoma
-     * leg of the per-domain {@code @system} notifications sender (Notifications PR7).
-     * Reuses this client's same local-only akkoma POST shape + gated stub-seam: STUBBED by
-     * default (gated on {@code external.mastodon.enabled}); even when enabled it stays
-     * STUBBED until the confirmed akkoma per-user notice verb/token is wired into
-     * {@link #doPostLocalNotice}. NEVER hard-fails — a degraded call resolves to
-     * {@link AkkomaOutcome#degraded}. The {@code body} is the neutral title+body the
-     * {@code NotificationTemplate} composed (reason/ttl, NEVER the actor).
+     * leg of the per-domain {@code @system} notifications sender (Notifications PR7), used
+     * by {@code AkkomaChannel} when the separate {@code notify.akkoma.notice.wired}
+     * transport is off. Gated on {@code external.mastodon.enabled} AND the {@code @system}
+     * token: either absent → {@link AkkomaOutcome#stubbed()} (no HTTP, never a false OK).
+     * NEVER hard-fails — a failed call resolves to {@link AkkomaOutcome#degraded}. The
+     * {@code body} is the neutral title+body the {@code NotificationTemplate} composed
+     * (reason/ttl, NEVER the actor).
      */
     public Mono<AkkomaOutcome> postLocalUserNotice(String localpart, String body) {
         log.info("[akkoma] @system local notice to '{}' (enabled={})", localpart, enabled);
@@ -152,25 +171,46 @@ public class AnnouncementMastodonClient {
     }
 
     /**
-     * The {@code @system} per-user local-notice seam. STUBBED by default. The confirmed
-     * call is roughly a direct-message / local notice as the {@code @system} account over
-     * the akkoma-proxy mTLS sidecar (admin bearer), e.g.:
+     * The {@code @system} per-user local-notice seam — WIRED-REAL behind {@link #enabled}
+     * and the {@code @system} token. Issues a Mastodon-API direct message as the
+     * {@code @system} account:
      * <pre>{@code
-     *   return http.post().uri("/api/v1/statuses")
-     *       .header("Authorization", "Bearer " + systemToken)
-     *       .bodyValue(Map.of("status", "@" + localpart + " " + body, "visibility", "direct"))
-     *       .retrieve().toBodilessEntity().thenReturn(AkkomaOutcome.ok())
-     *       .onErrorResume(e -> Mono.just(AkkomaOutcome.degraded(e.getMessage())));
+     *   POST /api/v1/statuses   Authorization: Bearer <@system token>
+     *        {"status":"@<localpart> <body>","visibility":"direct"}
      * }</pre>
+     * A localpart outside {@code [a-z0-9._-]} (which could smuggle a second {@code @mention}
+     * into the status) is refused as degraded before any HTTP. Every non-2xx — including
+     * 3xx, which the default WebClient handlers pass through — and every transport error
+     * resolves DEGRADED, never a false OK.
+     *
+     * <p>Unlike {@code AkkomaSystemNoticeClient} (the {@code notify.akkoma.notice.wired}
+     * transport) this seam does no {@code accounts/lookup} existence probe and sends no
+     * {@code Idempotency-Key}: a direct status to a name nobody owns is still created, so
+     * an OK here means "Akkoma accepted the status", not "a person received it".
      */
     private Mono<AkkomaOutcome> doPostLocalNotice(String localpart, String body) {
-        if (!enabled) {
+        if (!enabled || systemToken == null || systemToken.isBlank()) {
             return Mono.just(AkkomaOutcome.stubbed());
         }
-        log.warn("[akkoma] @system notice to '{}' is STUBBED — the akkoma per-user notice "
-                + "verb/token are unconfirmed; wire the real call in doPostLocalNotice() before "
-                + "relying on it (body length={})", localpart, body == null ? 0 : body.length());
-        return Mono.just(AkkomaOutcome.stubbed());
+        if (localpart == null || !NOTICE_LOCALPART.matcher(localpart).matches()) {
+            return Mono.just(AkkomaOutcome.degraded("invalid localpart"));
+        }
+        String status = "@" + localpart + " " + (body == null ? "" : body);
+        return http.post()
+                .uri("/api/v1/statuses")
+                .headers(h -> h.setBearerAuth(systemToken))
+                .bodyValue(Map.of("status", status, "visibility", "direct"))
+                .retrieve()
+                .onStatus(s -> !s.is2xxSuccessful(),
+                        org.springframework.web.reactive.function.client.ClientResponse::createException)
+                .toBodilessEntity()
+                .thenReturn(AkkomaOutcome.ok())
+                .onErrorResume(e -> noticeDegraded(localpart, e));
+    }
+
+    private static Mono<AkkomaOutcome> noticeDegraded(String localpart, Throwable e) {
+        log.warn("[akkoma] @system notice to '{}' degraded: {}", localpart, e.toString());
+        return Mono.just(AkkomaOutcome.degraded(e.getMessage()));
     }
 
     /**
