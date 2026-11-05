@@ -20,8 +20,9 @@ import org.jspecify.annotations.Nullable;
  *       ({@link net.hugmesh.adminbff.servicecatalog.AppProfileSchema}, a byte-identical copy of
  *       the Service Catalog console's {@code schemas/app-profile.schema.json}). A body the
  *       console would refuse is a 400 here too, with every offending path named — so a direct
- *       API call or a stale browser tab cannot store one. The values are still not RESOLVED by
- *       anything; that is the effector, open on catalog-ui#3.</li>
+ *       API call or a stale browser tab cannot store one. {@code AddServiceEffector} resolves the
+ *       routes, roles and mfaRequired at provision time; resources/certs/ports are recorded
+ *       only (catalog-ui#3, first slice).</li>
  * </ul>
  */
 public record AppProfileRequest(

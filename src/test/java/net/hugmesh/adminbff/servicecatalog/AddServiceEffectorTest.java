@@ -236,4 +236,208 @@ class AddServiceEffectorTest {
         assertThat(argo.created.get(0)).contains("acme-test-tube");
         assertThat(app).isEqualTo("acme-test-tube");
     }
+
+    // ── App-profile resolution (catalog-ui#3, first slice) ───────────────────────────
+    //
+    // The app_profile store is a Mockito mock; the route-access store stays the real H2 one so
+    // the rule set each case writes (and teardown removes) is read back from the table.
+
+    private static final String GW = "acme-test-be-gateway";
+
+    private List<RouteRule> allRules() {
+        return new RouteAccessRepository(net.hugmesh.adminbff.testutil.R2dbcRepos.of(db,
+                net.hugmesh.adminbff.routeaccess.RouteAccessRowRepository.class)).list().collectList().block();
+    }
+
+    /** Every rule reduced to the fields provision writes, for whole-set comparisons. */
+    private static java.util.Set<String> shape(List<RouteRule> rules) {
+        java.util.Set<String> out = new java.util.TreeSet<>();
+        for (RouteRule r : rules) {
+            out.add(r.domain() + "|" + r.gateway() + "|" + r.urlPattern() + "|" + r.role() + "|"
+                    + r.casdoorUser() + "|allow=" + r.allow() + "|mfa=" + r.mfaRequired());
+        }
+        return out;
+    }
+
+    private static ServiceDeployment deploymentWithProfile(String profileRef) {
+        return new ServiceDeployment("dep-p", "acme.test", "owncast", profileRef,
+                ServiceDeployment.STATE_ACTIVE, Instant.now(), null, "teardown",
+                ServiceDeployment.PROP_PENDING, null, "root");
+    }
+
+    private static ServiceSource gitSource() {
+        return new ServiceSource(ServiceSource.Kind.GIT, "https://forgejo/acme/owncast", "deploy/", "HEAD");
+    }
+
+    private static AppProfile profile(String name, String json) {
+        return new AppProfile("p-1", name, json, "root", Instant.now(), Instant.now());
+    }
+
+    /** Routes, roles and mfaRequired, each also repeating the DERIVED value once (the
+     *  de-duplication case), plus resources/certs/ports that must stay recorded-only. */
+    private static final String FULL_PROFILE = "{"
+            + "\"resources\":{\"cpu\":\"500m\",\"memory\":\"512Mi\"},"
+            + "\"roles\":[\"ROLE_ADMIN\",\"ROLE_OWNCAST\"],"
+            + "\"certs\":{\"altNames\":[\"owncast.acme-be.svc.cluster.local\"],\"ttl\":\"720h\"},"
+            + "\"exposure\":{\"routes\":[\"/api/owncast/\",\"/api/owncast/**\",\"/ws/owncast/**\"],"
+            + "\"ports\":[8080],\"mfaRequired\":true}}";
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.NullSource
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"", "   "})
+    void noProfileRef_isByteIdenticalToTheDerivedRule_andNeverTouchesTheProfileStore(String ref) {
+        RecordingArgoCd argo = new RecordingArgoCd();
+        AppProfileRepository profiles = org.mockito.Mockito.mock(AppProfileRepository.class);
+        AddServiceEffector effector = new AddServiceEffector(argo, null, routeAccess(), null, profiles);
+
+        ServiceDeployment d = deploymentWithProfile(ref);
+        String app = effector.provision(d, gitSource()).block();
+
+        assertThat(app).isEqualTo("acme-test-owncast");
+        assertThat(argo.created).containsExactly("acme-test-owncast|https://forgejo/acme/owncast|acme-test-be");
+        // exactly the one rule provision wrote before profiles were resolved: mfa_required=false.
+        assertThat(shape(allRules())).containsExactly(
+                "acme.test|" + GW + "|/api/owncast/|ROLE_OWNCAST|null|allow=true|mfa=false");
+
+        effector.teardown(d).block();
+        assertThat(allRules()).isEmpty();
+        assertThat(argo.deleted).containsExactly("acme-test-owncast");
+        org.mockito.Mockito.verifyNoInteractions(profiles);
+    }
+
+    @Test
+    void profile_routesTimesRoles_allMfaRequired_resourcesAndCertsUnconsumed() {
+        RecordingArgoCd argo = new RecordingArgoCd();
+        AppProfileRepository profiles = org.mockito.Mockito.mock(AppProfileRepository.class);
+        org.mockito.Mockito.when(profiles.findByName("streaming"))
+                .thenReturn(Mono.just(profile("streaming", FULL_PROFILE)));
+        AddServiceEffector effector = new AddServiceEffector(argo, null, routeAccess(), null, profiles);
+
+        String app = effector.provision(deploymentWithProfile("streaming"), gitSource()).block();
+
+        assertThat(app).isEqualTo("acme-test-owncast");
+        // ({derived} ∪ routes) × ({derived role} ∪ roles), de-duplicated: 3 patterns × 2 roles,
+        // every one mfa_required, brand-scoped, on the per-domain be-gateway.
+        java.util.Set<String> expected = new java.util.TreeSet<>();
+        for (String pattern : List.of("/api/owncast/", "/api/owncast/**", "/ws/owncast/**")) {
+            for (String role : List.of("ROLE_OWNCAST", "ROLE_ADMIN")) {
+                expected.add("acme.test|" + GW + "|" + pattern + "|" + role + "|null|allow=true|mfa=true");
+            }
+        }
+        List<RouteRule> rules = allRules();
+        assertThat(rules).hasSize(6);
+        assertThat(shape(rules)).isEqualTo(expected);
+        // resources/certs/ports are recorded only: the ArgoCD call is byte-identical.
+        assertThat(argo.created).containsExactly("acme-test-owncast|https://forgejo/acme/owncast|acme-test-be");
+    }
+
+    @Test
+    void profile_mfaRequiredAbsent_defaultsFalse_onEveryRule() {
+        AppProfileRepository profiles = org.mockito.Mockito.mock(AppProfileRepository.class);
+        org.mockito.Mockito.when(profiles.findByName("plain")).thenReturn(Mono.just(profile("plain",
+                "{\"roles\":[\"ROLE_MESH\"],\"exposure\":{\"routes\":[\"/ws/owncast/**\"]}}")));
+        AddServiceEffector effector = new AddServiceEffector(new RecordingArgoCd(), null, routeAccess(), null, profiles);
+
+        effector.provision(deploymentWithProfile("plain"), gitSource()).block();
+
+        assertThat(allRules()).hasSize(4).allSatisfy(r -> assertThat(r.mfaRequired()).isFalse());
+    }
+
+    @Test
+    void teardown_removesExactlyWhatProvisionAdded_andLeavesEverythingElse() {
+        RouteAccessService ra = routeAccess();
+        // Pre-existing rules that teardown must NOT touch: another brand's identical grant, a
+        // same-brand rule on an unrelated pattern, and a hand-made per-user rule on a
+        // profile-derived (pattern, role) pair.
+        ra.add(new RouteRule(null, "other-test-be-gateway", "/api/owncast/**", "ROLE_ADMIN", null, true,
+                "other.test", true)).block();
+        ra.add(new RouteRule(null, GW, "/api/forum/", "ROLE_ADMIN", null, true, "acme.test")).block();
+        ra.add(new RouteRule(null, GW, "/ws/owncast/**", "ROLE_ADMIN", "mallory", false, "acme.test")).block();
+        java.util.Set<String> before = shape(allRules());
+
+        RecordingArgoCd argo = new RecordingArgoCd();
+        AppProfileRepository profiles = org.mockito.Mockito.mock(AppProfileRepository.class);
+        org.mockito.Mockito.when(profiles.findByName("streaming"))
+                .thenReturn(Mono.just(profile("streaming", FULL_PROFILE)));
+        AddServiceEffector effector = new AddServiceEffector(argo, null, ra, null, profiles);
+        ServiceDeployment d = deploymentWithProfile("streaming");
+
+        effector.provision(d, gitSource()).block();
+        assertThat(allRules()).hasSize(before.size() + 6);
+
+        effector.teardown(d).block();
+
+        assertThat(shape(allRules())).isEqualTo(before);
+        assertThat(argo.deleted).containsExactly("acme-test-owncast");
+    }
+
+    @Test
+    void teardown_profileDeletedSinceProvision_stillRemovesTheDerivedRuleAndApplication() {
+        RecordingArgoCd argo = new RecordingArgoCd();
+        AppProfileRepository profiles = org.mockito.Mockito.mock(AppProfileRepository.class);
+        org.mockito.Mockito.when(profiles.findByName("streaming"))
+                .thenReturn(Mono.just(profile("streaming", FULL_PROFILE)))
+                .thenReturn(Mono.empty());
+        AddServiceEffector effector = new AddServiceEffector(argo, null, routeAccess(), null, profiles);
+        ServiceDeployment d = deploymentWithProfile("streaming");
+        effector.provision(d, gitSource()).block();
+
+        effector.teardown(d).block();   // does not fail: an expired lease must still come down
+
+        assertThat(argo.deleted).containsExactly("acme-test-owncast");
+        assertThat(allRules()).noneSatisfy(r -> assertThat(r.urlPattern() + r.role())
+                .isEqualTo("/api/owncast/ROLE_OWNCAST"));
+        // the documented limit: profile-derived rules stay behind (WARN-logged).
+        assertThat(allRules()).hasSize(5);
+    }
+
+    @Test
+    void unknownProfileRef_failsClosedWith422_beforeAnyEffect() {
+        RecordingArgoCd argo = new RecordingArgoCd();
+        AppProfileRepository profiles = org.mockito.Mockito.mock(AppProfileRepository.class);
+        org.mockito.Mockito.when(profiles.findByName("nope")).thenReturn(Mono.empty());
+        AddServiceEffector effector = new AddServiceEffector(argo, null, routeAccess(), null, profiles);
+
+        assertThatThrownBy(() -> effector.provision(deploymentWithProfile("nope"), gitSource()).block())
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("app_profile 'nope'")
+                .hasMessageContaining("does not exist")
+                .extracting(e -> ((ApiException) e).status().value()).isEqualTo(422);
+
+        assertThat(argo.created).isEmpty();
+        assertThat(allRules()).isEmpty();
+    }
+
+    @Test
+    void storedProfileTheSchemaRefuses_failsClosedWith422_beforeAnyEffect() {
+        // the legacy flat {"cpu","memory"} body: readable, but resolving it would silently drop
+        // every grant / MFA requirement the operator meant, so provision refuses it.
+        RecordingArgoCd argo = new RecordingArgoCd();
+        AppProfileRepository profiles = org.mockito.Mockito.mock(AppProfileRepository.class);
+        org.mockito.Mockito.when(profiles.findByName("legacy"))
+                .thenReturn(Mono.just(profile("legacy", "{\"cpu\":\"500m\",\"memory\":\"512Mi\"}")));
+        AddServiceEffector effector = new AddServiceEffector(argo, null, routeAccess(), null, profiles);
+
+        assertThatThrownBy(() -> effector.provision(deploymentWithProfile("legacy"), gitSource()).block())
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("app_profile 'legacy' does not match the app-profile schema")
+                .extracting(e -> ((ApiException) e).status().value()).isEqualTo(422);
+
+        assertThat(argo.created).isEmpty();
+        assertThat(allRules()).isEmpty();
+    }
+
+    @Test
+    void profileRef_withNoProfileStoreWired_failsClosedWith422() {
+        RecordingArgoCd argo = new RecordingArgoCd();
+        AddServiceEffector effector = new AddServiceEffector(argo, null, routeAccess(), /*builder*/ null);
+
+        assertThatThrownBy(() -> effector.provision(deploymentWithProfile("streaming"), gitSource()).block())
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("no app_profile store is wired")
+                .extracting(e -> ((ApiException) e).status().value()).isEqualTo(422);
+
+        assertThat(argo.created).isEmpty();
+        assertThat(allRules()).isEmpty();
+    }
 }

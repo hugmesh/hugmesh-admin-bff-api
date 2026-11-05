@@ -809,8 +809,19 @@ These surfaces are the unscoped infra control plane. An ADMIN never reaches them
   >   path in the console's own message vocabulary.
   > - It does not rewrite a body. It does not validate a READ: a row written before the
   >   schema existed is still returned in full, WARN-logged on the superadmin read, and
-  >   fixed in the console. It does not RESOLVE the values; that effector is still open
-  >   (catalog-ui#3).
+  >   fixed in the console.
+  > - **Resolution (catalog-ui#3, first slice).** `AddServiceEffector.provision` loads a
+  >   deployment's `profileRef` and parses it into a `ResolvedAppProfile` before any other
+  >   step. The route-access rule set becomes ({`/api/<service>/`} ∪ `exposure.routes`) ×
+  >   ({`ROLE_<SERVICE>`} ∪ `roles[]`), de-duplicated, every rule carrying
+  >   `exposure.mfaRequired`. An unknown `profileRef`, or a stored body the schema refuses
+  >   (the legacy flat form), fails the provision with a 422 and no effect. `resources.*`,
+  >   `certs.*` and `exposure.ports` are **recorded only**: they are logged as not consumed,
+  >   because no ArgoCD parameter channel or ExternalSecret parameter channel exists yet.
+  >   Teardown re-resolves the profile and removes the same rules. Nothing records which
+  >   rules a provision wrote, so a profile edited before teardown is torn down by its
+  >   current contents, and a deleted one leaves its profile-derived rules behind (WARN).
+  >   A deployment with no `profileRef` writes exactly the one derived rule it always did.
   > - `AppProfileSchemaMirrorTest` guards the copy twice. A local sha256 pin makes an edit
   >   deliberate but proves nothing about the other repo: moving the schema and the literal
   >   together in one repo satisfies it, and when measured that left both suites green with

@@ -26,7 +26,9 @@ import java.time.Instant;
  * end-of-lease (e.g. {@code teardown,revoke-roles,revoke-certs,alert}); in PR1 these are
  * STUBBED/LOGGED (ships dark — no real ArgoCD/Casdoor/cert call). {@link #profileRef()} is
  * a NULLABLE soft reference to an {@link AppProfile#name()} — the template the deployment
- * was stamped from. {@link #endedAt()} is stamped when the row CASes {@code active->ended}.
+ * was stamped from. {@link AddServiceEffector#provision} resolves it (an unknown name refuses the
+ * provision with a 422) and {@link AddServiceEffector#teardown} re-resolves it to remove the
+ * same route-access rules. {@link #endedAt()} is stamped when the row CASes {@code active->ended}.
  */
 public record ServiceDeployment(
         String id,
