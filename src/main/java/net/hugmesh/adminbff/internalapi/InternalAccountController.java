@@ -712,6 +712,13 @@ public class InternalAccountController {
     public Mono<Map<String, Boolean>> allowlist(@PathVariable String provider, @PathVariable String handle,
                                                 @RequestParam(required = false) @Nullable String domain) {
         String scope = registrationDomains.forInternalCaller(domain);
+        if (!"google".equals(provider) && !"discord".equals(provider)) {
+            return Mono.error(new ResponseStatusException(HttpStatus.BAD_REQUEST, "unknown provider"));
+        }
+        // The NO_DOMAIN sentinel refuses before the lookup (#111): a row CAN carry it.
+        if (RegistrationDomainResolver.admitsNoInvite(scope)) {
+            return Mono.just(Map.of("invited", false));
+        }
         Mono<Boolean> invited = switch (provider) {
             case "google" -> accounts.isEmailInvited(handle, scope);
             case "discord" -> accounts.isDiscordInvited(handle, scope);
