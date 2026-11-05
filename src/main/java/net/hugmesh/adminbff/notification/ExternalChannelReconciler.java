@@ -16,6 +16,7 @@ import net.hugmesh.adminbff.notification.channel.ChannelMessage;
 import net.hugmesh.adminbff.notification.channel.NotificationChannel;
 
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -39,13 +40,39 @@ import java.util.concurrent.atomic.AtomicReference;
  * row is SKIPPED for this tick (records nothing, cursor not advanced past it) and retried
  * next tick — the outbox→partial, retried-next-tick degrade.
  *
+ * <h3>Preference consult (user-silenceable)</h3>
+ * After the availability gate and the recipient check, and before any send, the row
+ * owner's (the payload {@code target}'s) effective preferences are read from user-bff
+ * ({@link UserBffNotificationClient#effectivePreferences}, {@code GET
+ * /bff/user/internal/notification-preferences/{owner}?domain=}, ROLE_SERVICE bearer). The
+ * read is per category and applies to every channel alike; it is made at most once per
+ * (owner, domain) per tick and shared by all channels in that tick.
+ * <ul>
+ *   <li>Category enabled (the default; an owner with no stored rows and a category user-bff
+ *       does not list both read as enabled): delivered as before.</li>
+ *   <li>Category silenced: a terminal {@code skipped} delivery is recorded for that channel
+ *       (metered {@code notification.external.preference_skipped}), with no send. Being
+ *       terminal, the channel's cursor advances over it contiguously, exactly like a
+ *       directive skip: never a poison row, never a stall.</li>
+ *   <li>Lookup FAILED (transport / non-2xx / timeout / token): <b>fail CLOSED, retried</b>.
+ *       Nothing is sent and nothing is recorded; the row breaks the contiguous prefix and
+ *       is retried next tick (metered {@code notification.external.preference_lookup_failed}),
+ *       the same degrade as an unavailable channel. A silenced user is never messaged on a
+ *       guess, and a user-bff outage delays external notifications rather than losing them;
+ *       it does not count toward the poison-row dead-letter. The in-app path stays the floor.</li>
+ *   <li>With the user-bff gate off ({@code notification.user-bff.enabled=false}, the
+ *       default) no lookup is made and every category reads as enabled, the pre-consult
+ *       behaviour.</li>
+ * </ul>
+ *
  * <h3>account-restriction forced-on the personal channels</h3>
  * {@code account-restriction} (a ban/timeout/unban) is a forced-on category — it is
  * always attempted on every available personal channel regardless of any silence
  * preference, because a user MUST learn their access changed (the appeal path depends on
- * it). Other categories are delivered the same way here today; the user-silenceable
- * gating lives on the in-app path (user-bff prefs) and is layered on the external
- * channels by PR7's preference consult — see the PR7 follow-up.
+ * it). The carve-out is enforced HERE, not delegated to user-bff (which also reports it
+ * enabled): an account-restriction row skips the preference lookup entirely, so a stale or
+ * wrong upstream answer cannot silence it, and a failed lookup cannot delay it. That is
+ * fail OPEN for this category, by construction.
  *
  * <h3>Moderator channel directive</h3>
  * An outbox row may carry the moderator's {@code notify_channels} directive (see
@@ -79,6 +106,11 @@ public class ExternalChannelReconciler {
     private final MeterRegistry meters;
     private final int batchSize;
     private final int maxAttempts;
+    private final UserBffNotificationClient userBff;
+
+    /** The current tick's preference reads, one per (owner, domain), shared by every channel. */
+    private final AtomicReference<Map<String, Mono<UserBffNotificationClient.PreferenceLookup>>> tickPreferences =
+            new AtomicReference<>(new ConcurrentHashMap<>());
 
     /** Per-(channel,row) failure counter (in-memory) — bounds poison-row retries. */
     private final ConcurrentHashMap<String, Integer> attempts = new ConcurrentHashMap<>();
@@ -88,6 +120,7 @@ public class ExternalChannelReconciler {
                                      List<NotificationChannel> channels,
                                      LeaderElection leader,
                                      MeterRegistry meters,
+                                     UserBffNotificationClient userBff,
                                      @Value("${notification.reconcile.batch-size:100}") int batchSize,
                                      @Value("${notification.reconcile.max-attempts:5}") int maxAttempts) {
         this.deliveries = deliveries;
@@ -97,6 +130,7 @@ public class ExternalChannelReconciler {
         this.meters = meters;
         this.batchSize = batchSize;
         this.maxAttempts = maxAttempts;
+        this.userBff = userBff;
     }
 
     @Scheduled(
@@ -118,6 +152,7 @@ public class ExternalChannelReconciler {
             log.debug("[notify-external] not leader ({}) — skipping tick", leader.label());
             return Mono.empty();
         }
+        tickPreferences.set(new ConcurrentHashMap<>());
         return Flux.fromIterable(channels)
                 .filter(NotificationChannel::enabled)
                 .concatMap(ch -> drainChannel(ch)
@@ -207,6 +242,44 @@ public class ExternalChannelReconciler {
             // Un-buildable (no recipient): poison → dead-letter path.
             return onFailure(ch, row, advanceTo, prefixIntact, "no-recipient");
         }
+        if (NotificationOutbox.CATEGORY_ACCOUNT_RESTRICTION.equals(row.category())) {
+            // FORCED-ON: never consult the preference (see the class javadoc).
+            return send(ch, row, recipient, advanceTo, prefixIntact);
+        }
+        return preferencesFor(recipient, row.domain())
+                .flatMap(prefs -> deliverIfPreferred(prefs, ch, row, recipient, advanceTo, prefixIntact));
+    }
+
+    /** Apply the owner's preference verdict: failed lookup retries, silenced skips, enabled sends. */
+    private Mono<Void> deliverIfPreferred(UserBffNotificationClient.PreferenceLookup prefs,
+                                          NotificationChannel ch, NotificationOutbox row, String recipient,
+                                          AtomicReference<String> advanceTo,
+                                          AtomicReference<Boolean> prefixIntact) {
+        if (!prefs.ok()) {
+            // Fail CLOSED, retried: send nothing, record nothing, hold the cursor.
+            meters.counter("notification.external.preference_lookup_failed", "channel", ch.name()).increment();
+            prefixIntact.set(Boolean.FALSE);
+            log.debug("[notify-external] {} preference lookup failed; row {} retried next tick",
+                    ch.name(), row.id());
+            return Mono.empty();
+        }
+        if (!prefs.enabled(row.category())) {
+            return onTerminal(ch, row, advanceTo, prefixIntact,
+                    NotificationDeliveryRepository.STATUS_SKIPPED, "preference_skipped");
+        }
+        return send(ch, row, recipient, advanceTo, prefixIntact);
+    }
+
+    /** One preference read per (owner, domain) per tick, shared by every channel. */
+    private Mono<UserBffNotificationClient.PreferenceLookup> preferencesFor(String owner, String domain) {
+        return tickPreferences.get().computeIfAbsent(owner + "\u0000" + domain,
+                k -> userBff.effectivePreferences(owner, domain).cache());
+    }
+
+    /** Render the neutral message, send it, and record the outcome. */
+    private Mono<Void> send(NotificationChannel ch, NotificationOutbox row, String recipient,
+                            AtomicReference<String> advanceTo,
+                            AtomicReference<Boolean> prefixIntact) {
         NotificationTemplate.Message msg = NotificationTemplate.render(row.category(), row.payload());
         ChannelMessage cm = new ChannelMessage(row.category(), msg.title(), msg.body(), row.id());
         return ch.send(row.domain(), recipient, cm).flatMap(outcome -> switch (outcome) {
