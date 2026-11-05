@@ -10,25 +10,27 @@ import net.hugmesh.adminbff.homeserver.HomeserverOutcome;
 
 /**
  * Matrix (tuwunel) channel adapter for the {@code @system} sender (Notifications PR5).
- * Posts a neutral DM to the recipient via the EXISTING {@link HomeserverAdminClient}
- * tuwunel admin-room mTLS-sidecar seam ({@link HomeserverAdminClient#sendSystemDirectMessage}).
+ * Posts a neutral DM to the recipient over one of two transports:
+ *
+ * <ul>
+ *   <li><b>{@link MatrixSystemDmClient}</b> (the real one), used whenever it is built
+ *       ({@code notify.matrix.dm.wired=true}, default false): the standard Matrix
+ *       client-server API as the {@code @system} account. That path needs no
+ *       {@code homeserver.admin.enabled}: a DM is a client action, not an admin-room command.
+ *       Availability is then {@code notify.matrix.enabled} AND the {@code @system} token.</li>
+ *   <li><b>{@link HomeserverAdminClient#sendSystemDirectMessage}</b> otherwise. That leg
+ *       makes no request and always answers STUBBED, which this channel maps to FAILED, so
+ *       the reconciler retries and then dead-letters the row as {@code failed} — never a
+ *       false {@code sent}. Availability there additionally needs
+ *       {@code homeserver.admin.enabled}.</li>
+ * </ul>
  *
  * <h3>Ships dark</h3>
- * Gated on {@code notify.matrix.enabled} (default false). Even when the FEATURE gate is
- * on, {@link #available(String)} requires the homeserver admin seam itself to be enabled
- * ({@code homeserver.admin.enabled}) AND the {@code @system} Matrix token to be present —
- * so a tuwunel-less / Vault-less environment reports the channel UNAVAILABLE and the
- * reconciler skips it (retried next tick), never hard-failing. The underlying
- * {@code sendSystemDirectMessage} is itself STUBBED until the confirmed tuwunel DM verb is
- * wired, so a STUBBED outcome is treated as a transient skip (FAILED → retry) rather than
- * a false {@code sent}.
- *
- * <h3>Real transport (second gate)</h3>
- * When {@code notify.matrix.dm.wired=true} (default false) the channel is built with a
- * {@link MatrixSystemDmClient} and sends over the standard Matrix client-server API as the
- * {@code @system} account instead of going through the stubbed admin seam. That path needs
- * no {@code homeserver.admin.enabled}: a DM is a client action, not an admin-room command.
- * Availability is then {@code notify.matrix.enabled} AND the {@code @system} token.
+ * Gated on {@code notify.matrix.enabled} (default false). Without the {@code @system} Matrix
+ * token {@link #available(String)} is false, so a tuwunel-less / Vault-less environment
+ * reports the channel UNAVAILABLE and the reconciler skips it (retried next tick), never
+ * hard-failing. The FAILED -> retry -> dead-letter path against a real non-2xx reply is
+ * pinned by {@code MatrixChannelDeadLetterTest}.
  */
 @SuppressFBWarnings(value = "EI_EXPOSE_REP2",
         justification = "Spring constructor injection: the container owns these singleton collaborators and they are never mutated by this class after construction; a defensive copy of a bean is meaningless (not caller-owned mutable data).")
