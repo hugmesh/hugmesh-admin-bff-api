@@ -21,7 +21,9 @@ import java.util.regex.Pattern;
  * the effective per-(domain, role) MFA requirement and owns the only write path.
  *
  * <p><b>What consults it.</b> This service is a READ MODEL plus an admin write path. Its one
- * caller of {@link #requiredForAny} is {@link RoleMfaPolicyEnforcementFilter}, which exists only
+ * enforcement caller is {@link RoleMfaPolicyEnforcementFilter}, which asks
+ * {@link #requirementFor} (the merged required / grace / methods answer; {@link #requiredForAny}
+ * is the boolean projection of the same question) and exists only
  * when {@value RoleMfaPolicyEnforcementFilter#FLAG} is {@code true} (default off) and denies on
  * {@code /bff/admin/**} and {@code /bff/superadmin/**} only. {@code /bff/login},
  * {@code /bff/session}, {@code /bff/internal/session/introspect} and the step-up gates behave
@@ -105,20 +107,45 @@ public class RoleMfaPolicyService {
     }
 
     /**
+     * The MERGED requirement across the principal's roles in the domain — what
+     * {@link RoleMfaPolicyEnforcementFilter} enforces: whether MFA is required at all, the
+     * strictest grace window and the intersection of the allowed methods (see
+     * {@link MfaRequirement} for the merge rules). Roles are normalised
+     * ({@code ROLE_ADMIN} → {@code admin}); an empty role set resolves {@link MfaRequirement#NONE}.
+     *
+     * <p>Unlike {@link #requiredForAny} this ALWAYS reads the store, floor roles included: the
+     * floor pins {@code required}, but a floor row may still carry {@code methods} /
+     * {@code grace_seconds}, and those are exactly what this answer has to honour.
+     */
+    public Mono<MfaRequirement> requirementFor(String domain, Collection<String> roles) {
+        Set<String> wanted = normaliseRoles(roles);
+        if (wanted.isEmpty()) {
+            return Mono.just(MfaRequirement.NONE);
+        }
+        return repo.findByDomainAndRoleIn(domain, wanted)
+                .collectList()
+                .map(rows -> {
+                    Map<String, RoleMfaPolicy> effective = new LinkedHashMap<>();
+                    for (String role : wanted) {
+                        effective.put(role, defaultFor(domain, role));
+                    }
+                    for (RoleMfaPolicyRow row : rows) {
+                        if (wanted.contains(row.role())) {
+                            effective.put(row.role(), fromRow(row));
+                        }
+                    }
+                    return MfaRequirement.merge(effective.values());
+                });
+    }
+
+    /**
      * {@code true} iff MFA is required for ANY of the principal's roles in the domain — the
-     * OR {@link RoleMfaPolicyEnforcementFilter} asks. Roles are normalised
+     * boolean projection of {@link #requirementFor}. Roles are normalised
      * ({@code ROLE_ADMIN} → {@code admin}); an empty role set resolves {@code false} (the
      * bare {@code user} default), never an error.
      */
     public Mono<Boolean> requiredForAny(String domain, Collection<String> roles) {
-        Set<String> wanted = new LinkedHashSet<>();
-        if (roles != null) {
-            for (String role : roles) {
-                if (role != null && !role.isBlank()) {
-                    wanted.add(normaliseRole(role));
-                }
-            }
-        }
+        Set<String> wanted = normaliseRoles(roles);
         if (wanted.isEmpty()) {
             return Mono.just(false);
         }
@@ -177,6 +204,19 @@ public class RoleMfaPolicyService {
     }
 
     // ── helpers ────────────────────────────────────────────────────────────────────
+
+    /** The distinct normalised roles of a (possibly null) authority list, blanks dropped. */
+    private static Set<String> normaliseRoles(Collection<String> roles) {
+        Set<String> wanted = new LinkedHashSet<>();
+        if (roles != null) {
+            for (String role : roles) {
+                if (role != null && !role.isBlank()) {
+                    wanted.add(normaliseRole(role));
+                }
+            }
+        }
+        return wanted;
+    }
 
     /** Lower-case and strip a {@code ROLE_} authority prefix so both spellings resolve alike. */
     static String normaliseRole(String role) {

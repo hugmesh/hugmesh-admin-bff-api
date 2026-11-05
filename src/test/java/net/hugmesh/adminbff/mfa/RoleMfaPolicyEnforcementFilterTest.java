@@ -6,6 +6,7 @@ import net.hugmesh.adminbff.web.ValidationExceptionHandler;
 import net.hugmesh.authcore.casdoor.MfaStepUpService;
 import net.hugmesh.commons.security.DomainRegistry;
 import net.hugmesh.commons.security.PrincipalDomain;
+import net.hugmesh.commons.security.Roles;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -23,8 +24,10 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.net.URI;
+import java.time.Duration;
 import java.util.Collection;
 import java.util.List;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -38,12 +41,14 @@ import static org.springframework.security.test.web.reactive.server.SecurityMock
 
 /**
  * {@link RoleMfaPolicyEnforcementFilter} with the flag ON, behind the PRODUCTION
- * {@link SecurityConfig}: the first caller of {@link RoleMfaPolicyService#requiredForAny}.
+ * {@link SecurityConfig}: the enforcement caller of {@link RoleMfaPolicyService#requirementFor}.
  *
  * <p>The guarded endpoint is the real {@code GET /bff/admin/mfa/role-policy}; the policy service
- * is a mock so each test chooses the answer {@code requiredForAny} gives and can prove whether
+ * is a mock so each test chooses the answer {@code requirementFor} gives and can prove whether
  * the filter asked at all. The dark-by-default half lives in
- * {@link RoleMfaPolicyEnforcementFilterFlagTest}.
+ * {@link RoleMfaPolicyEnforcementFilterFlagTest}; the session-stamp grace and method checks
+ * (which need the cookie bridge) live in {@link RoleMfaPolicyEnforcementEvidenceBindingTest}.
+ * The JWT-carrier grace and method checks are at the end of this class.
  */
 @WebFluxTest(controllers = RoleMfaPolicyController.class,
         properties = RoleMfaPolicyEnforcementFilter.FLAG + "=true")
@@ -54,6 +59,9 @@ class RoleMfaPolicyEnforcementFilterTest {
     static final String BRANDX_ISS = "https://idp.brandx.example";
     static final String UNKNOWN_ISS = "https://idp.nobody.example";
     static final String GUARDED = "/bff/admin/mfa/role-policy";
+
+    /** Required on the platform window with any method: the pre-grace/methods answer. */
+    static final MfaRequirement REQUIRED = MfaRequirement.UNKNOWN;
 
     @TestConfiguration
     static class Registry {
@@ -75,6 +83,7 @@ class RoleMfaPolicyEnforcementFilterTest {
     void setUp() {
         web = WebTestClient.bindToApplicationContext(context).apply(springSecurity()).build();
         when(mfaStepUp.enabled()).thenReturn(true);
+        when(mfaStepUp.freshness()).thenReturn(Duration.ofMinutes(10));
         when(mfaStepUp.isFresh(any())).thenReturn(Mono.just(false));
         when(service.listEffective(anyString())).thenReturn(Flux.empty());
     }
@@ -99,7 +108,7 @@ class RoleMfaPolicyEnforcementFilterTest {
 
     @Test
     void requiredRole_withNoMfaEvidence_isDenied403_withSignal_andNeverReachesTheController() {
-        when(service.requiredForAny(anyString(), any())).thenReturn(Mono.just(true));
+        when(service.requirementFor(anyString(), any())).thenReturn(Mono.just(REQUIRED));
 
         admin().get().uri(GUARDED).exchange()
                 .expectStatus().isForbidden()
@@ -112,7 +121,7 @@ class RoleMfaPolicyEnforcementFilterTest {
 
     @Test
     void requiredRole_withAStaleOrAbsentBffSession_isDenied() {
-        when(service.requiredForAny(anyString(), any())).thenReturn(Mono.just(true));
+        when(service.requirementFor(anyString(), any())).thenReturn(Mono.just(REQUIRED));
 
         // a cookie whose stamp is NOT fresh (isFresh -> false), and no session at all
         admin().get().uri(GUARDED).cookie("bff_session", "bff_stale").exchange()
@@ -123,7 +132,7 @@ class RoleMfaPolicyEnforcementFilterTest {
 
     @Test
     void superadminSurface_isGatedToo() {
-        when(service.requiredForAny(anyString(), any())).thenReturn(Mono.just(true));
+        when(service.requirementFor(anyString(), any())).thenReturn(Mono.just(REQUIRED));
 
         as(BRANDX_ISS, "ROLE_USER", "ROLE_SUPERADMIN").get().uri("/bff/superadmin/anything").exchange()
                 .expectStatus().isForbidden()
@@ -189,7 +198,7 @@ class RoleMfaPolicyEnforcementFilterTest {
     /** The exploit input: an encoded letter routes to the controller, so it must be refused first. */
     @Test
     void aPercentEncodedLetterInTheSegment_isDenied403_andNeverReachesTheController() {
-        when(service.requiredForAny(anyString(), any())).thenReturn(Mono.just(true));
+        when(service.requirementFor(anyString(), any())).thenReturn(Mono.just(REQUIRED));
 
         admin().get().uri(URI.create("/bff/%61dmin/mfa/role-policy")).exchange()
                 .expectStatus().isForbidden()
@@ -202,7 +211,7 @@ class RoleMfaPolicyEnforcementFilterTest {
 
     @Test
     void noSpellingOfAGatedPath_everReachesTheController_forAPolicyRequiredPrincipalWithoutEvidence() {
-        when(service.requiredForAny(anyString(), any())).thenReturn(Mono.just(true));
+        when(service.requirementFor(anyString(), any())).thenReturn(Mono.just(REQUIRED));
 
         for (String path : GATED_SPELLINGS) {
             admin().get().uri(URI.create(path)).exchange()
@@ -214,7 +223,7 @@ class RoleMfaPolicyEnforcementFilterTest {
 
     @Test
     void aPolicyLookupThatYieldsNothing_failsClosed() {
-        when(service.requiredForAny(anyString(), any())).thenReturn(Mono.empty());
+        when(service.requirementFor(anyString(), any())).thenReturn(Mono.empty());
 
         admin().get().uri(GUARDED).exchange().expectStatus().isForbidden();
         verify(service, never()).listEffective(anyString());
@@ -222,7 +231,7 @@ class RoleMfaPolicyEnforcementFilterTest {
 
     @Test
     void aFreshnessLookupThatYieldsNothing_failsClosed() {
-        when(service.requiredForAny(anyString(), any())).thenReturn(Mono.just(true));
+        when(service.requirementFor(anyString(), any())).thenReturn(Mono.just(REQUIRED));
         when(mfaStepUp.isFresh("bff_empty")).thenReturn(Mono.empty());
 
         admin().get().uri(GUARDED).cookie("bff_session", "bff_empty").exchange().expectStatus().isForbidden();
@@ -233,7 +242,7 @@ class RoleMfaPolicyEnforcementFilterTest {
 
     @Test
     void requiredRole_withTheMfaSatisfiedAuthority_isLetThrough_withoutASessionLookup() {
-        when(service.requiredForAny(anyString(), any())).thenReturn(Mono.just(true));
+        when(service.requirementFor(anyString(), any())).thenReturn(Mono.just(REQUIRED));
 
         admin("MFA_SATISFIED").get().uri(GUARDED).exchange().expectStatus().isOk();
 
@@ -249,7 +258,7 @@ class RoleMfaPolicyEnforcementFilterTest {
      */
     @Test
     void requiredRole_withAFreshCookieThatIsNotThePrincipalsSession_isDenied() {
-        when(service.requiredForAny(anyString(), any())).thenReturn(Mono.just(true));
+        when(service.requirementFor(anyString(), any())).thenReturn(Mono.just(REQUIRED));
         when(mfaStepUp.isFresh("bff_fresh")).thenReturn(Mono.just(true));
 
         admin().get().uri(GUARDED).cookie("bff_session", "bff_fresh").exchange()
@@ -261,7 +270,7 @@ class RoleMfaPolicyEnforcementFilterTest {
 
     @Test
     void roleNotRequiringMfa_isLetThrough_withoutAnyFreshnessLookup() {
-        when(service.requiredForAny(anyString(), any())).thenReturn(Mono.just(false));
+        when(service.requirementFor(anyString(), any())).thenReturn(Mono.just(MfaRequirement.NONE));
 
         admin().get().uri(GUARDED).exchange().expectStatus().isOk();
 
@@ -272,31 +281,31 @@ class RoleMfaPolicyEnforcementFilterTest {
 
     @Test
     void asksThePolicyWithTheIssuerDomain_andTheRoleAuthorities_butNotTheMfaMarker() {
-        when(service.requiredForAny(anyString(), any())).thenReturn(Mono.just(false));
+        when(service.requirementFor(anyString(), any())).thenReturn(Mono.just(MfaRequirement.NONE));
 
         admin("MFA_SATISFIED").get().uri(GUARDED).exchange().expectStatus().isOk();
 
         ArgumentCaptor<Collection<String>> roles = ArgumentCaptor.captor();
-        verify(service).requiredForAny(eq("brandx"), roles.capture());
+        verify(service).requirementFor(eq("brandx"), roles.capture());
         assertThat(roles.getValue()).containsExactlyInAnyOrder("ROLE_USER", "ROLE_ADMIN");
     }
 
     @Test
     void anUnresolvableIssuer_isAskedAboutUnderTheNoDomainSentinel_neverARequestValue() {
-        when(service.requiredForAny(anyString(), any())).thenReturn(Mono.just(true));
+        when(service.requirementFor(anyString(), any())).thenReturn(Mono.just(REQUIRED));
 
         as(UNKNOWN_ISS, "ROLE_USER", "ROLE_ADMIN").get().uri(GUARDED + "?domain=brandx").exchange()
                 .expectStatus().isForbidden();
 
-        verify(service).requiredForAny(eq(PrincipalDomain.NO_DOMAIN), any());
-        verify(service, never()).requiredForAny(eq("brandx"), any());
+        verify(service).requirementFor(eq(PrincipalDomain.NO_DOMAIN), any());
+        verify(service, never()).requirementFor(eq("brandx"), any());
     }
 
     // ── what must stay reachable ──────────────────────────────────────────────────
 
     @Test
     void theRoutesThatLetAPrincipalGetMfa_areNeverGated() {
-        when(service.requiredForAny(anyString(), any())).thenReturn(Mono.just(true));
+        when(service.requirementFor(anyString(), any())).thenReturn(Mono.just(REQUIRED));
 
         for (String path : List.of("/bff/mfa/challenge", "/bff/session", "/bff/sessionOut", "/bff/me",
                 "/bff/login", "/bff/internal/session/introspect")) {
@@ -304,7 +313,7 @@ class RoleMfaPolicyEnforcementFilterTest {
                     .expectHeader().doesNotExist(RoleMfaPolicyEnforcementFilter.SIGNAL_HEADER);
         }
 
-        verify(service, never()).requiredForAny(anyString(), any());
+        verify(service, never()).requirementFor(anyString(), any());
     }
 
     @Test
@@ -321,16 +330,129 @@ class RoleMfaPolicyEnforcementFilterTest {
     void anonymous_isLeftToTheSecurityChain_andNeverAsksThePolicy() {
         web.get().uri(GUARDED).exchange().expectStatus().isUnauthorized();
 
-        verify(service, never()).requiredForAny(anyString(), any());
+        verify(service, never()).requirementFor(anyString(), any());
     }
 
     @Test
     void whenTheStampingMachineryIsOff_theFilterPassesEverythingThrough() {
         when(mfaStepUp.enabled()).thenReturn(false);
-        when(service.requiredForAny(anyString(), any())).thenReturn(Mono.just(true));
+        when(service.requirementFor(anyString(), any())).thenReturn(Mono.just(REQUIRED));
 
         admin().get().uri(GUARDED).exchange().expectStatus().isOk();
 
-        verify(service, never()).requiredForAny(anyString(), any());
+        verify(service, never()).requirementFor(anyString(), any());
+    }
+
+    // ── the JWT carrier: grace re-reads the stamp claim, methods read the amr claim ─────
+
+    /** An admin JWT carrying the authority plus the claims the BFF stamps. */
+    private WebTestClient stampedAdmin(long stampedAtMillis, Object amr) {
+        return web.mutateWith(mockJwt()
+                .jwt(j -> {
+                    j.issuer(BRANDX_ISS).subject("subj");
+                    j.claim(Roles.MFA_SATISFIED_AT_CLAIM, Long.toString(stampedAtMillis));
+                    if (amr != null) {
+                        j.claim("amr", amr);
+                    }
+                })
+                .authorities(new SimpleGrantedAuthority("ROLE_USER"), new SimpleGrantedAuthority("ROLE_ADMIN"),
+                        new SimpleGrantedAuthority(Roles.MFA_SATISFIED)));
+    }
+
+    private static MfaRequirement requirement(long graceSeconds, String... methods) {
+        return new MfaRequirement(true, graceSeconds, graceSeconds == 0, methods.length > 0, Set.of(methods));
+    }
+
+    @Test
+    void jwt_graceHonoured_aStampYoungerThanTheGrace_isLetThrough() {
+        when(service.requirementFor(anyString(), any())).thenReturn(Mono.just(requirement(120)));
+
+        stampedAdmin(System.currentTimeMillis() - 30_000L, null).get().uri(GUARDED).exchange()
+                .expectStatus().isOk();
+    }
+
+    @Test
+    void jwt_graceHonoured_aStampOlderThanTheGrace_isDenied_despiteTheAuthority() {
+        when(service.requirementFor(anyString(), any())).thenReturn(Mono.just(requirement(120)));
+
+        stampedAdmin(System.currentTimeMillis() - 121_000L, null).get().uri(GUARDED).exchange()
+                .expectStatus().isForbidden()
+                .expectHeader().valueEquals(RoleMfaPolicyEnforcementFilter.SIGNAL_HEADER, "true");
+        verify(service, never()).listEffective(anyString());
+    }
+
+    @Test
+    void jwt_graceHonoured_anAuthorityWithNoStampClaim_isDenied() {
+        when(service.requirementFor(anyString(), any())).thenReturn(Mono.just(requirement(120)));
+
+        admin("MFA_SATISFIED").get().uri(GUARDED).exchange().expectStatus().isForbidden();
+    }
+
+    @Test
+    void jwt_graceHonoured_aFutureStamp_isDenied() {
+        when(service.requirementFor(anyString(), any())).thenReturn(Mono.just(requirement(120)));
+
+        stampedAdmin(System.currentTimeMillis() + 60_000L, null).get().uri(GUARDED).exchange()
+                .expectStatus().isForbidden();
+    }
+
+    @Test
+    void jwt_methodsHonoured_anAllowedAmr_isLetThrough_asStringOrList() {
+        when(service.requirementFor(anyString(), any())).thenReturn(Mono.just(requirement(0, "webauthn", "otp")));
+
+        stampedAdmin(System.currentTimeMillis(), "otp").get().uri(GUARDED).exchange().expectStatus().isOk();
+        stampedAdmin(System.currentTimeMillis(), List.of("pwd", "webauthn")).get().uri(GUARDED).exchange()
+                .expectStatus().isOk();
+    }
+
+    @Test
+    void jwt_methodsHonoured_aDisallowedOrMissingAmr_isDenied() {
+        when(service.requirementFor(anyString(), any())).thenReturn(Mono.just(requirement(0, "webauthn")));
+
+        stampedAdmin(System.currentTimeMillis(), "otp").get().uri(GUARDED).exchange().expectStatus().isForbidden();
+        stampedAdmin(System.currentTimeMillis(), List.of("pwd", "otp")).get().uri(GUARDED).exchange()
+                .expectStatus().isForbidden();
+        stampedAdmin(System.currentTimeMillis(), null).get().uri(GUARDED).exchange().expectStatus().isForbidden();
+        verify(service, never()).listEffective(anyString());
+    }
+
+    @Test
+    void jwt_withoutTheAuthority_noClaimCanSubstitute() {
+        when(service.requirementFor(anyString(), any())).thenReturn(Mono.just(requirement(120, "otp")));
+
+        web.mutateWith(mockJwt()
+                        .jwt(j -> j.issuer(BRANDX_ISS).subject("subj")
+                                .claim(Roles.MFA_SATISFIED_AT_CLAIM, Long.toString(System.currentTimeMillis()))
+                                .claim("amr", "otp"))
+                        .authorities(new SimpleGrantedAuthority("ROLE_ADMIN")))
+                .get().uri(GUARDED).exchange().expectStatus().isForbidden();
+    }
+
+    @Test
+    void jwt_platformWindowAndAnyMethod_passOnTheAuthorityAlone() {
+        when(service.requirementFor(anyString(), any())).thenReturn(Mono.just(requirement(0)));
+
+        admin("MFA_SATISFIED").get().uri(GUARDED).exchange().expectStatus().isOk();
+    }
+
+    @Test
+    void jwtEvidence_isAPureFunctionOfTheClaimsAndTheRequirement() {
+        var now = System.currentTimeMillis();
+        var fresh = org.springframework.security.oauth2.jwt.Jwt.withTokenValue("t").header("alg", "none")
+                .claim(Roles.MFA_SATISFIED_AT_CLAIM, Long.toString(now - 1_000L)).claim("amr", "otp").build();
+        var stale = org.springframework.security.oauth2.jwt.Jwt.withTokenValue("t").header("alg", "none")
+                .claim(Roles.MFA_SATISFIED_AT_CLAIM, Long.toString(now - 200_000L)).claim("amr", "otp").build();
+        var garbage = org.springframework.security.oauth2.jwt.Jwt.withTokenValue("t").header("alg", "none")
+                .claim(Roles.MFA_SATISFIED_AT_CLAIM, "soon").claim("amr", "otp").build();
+        var numeric = org.springframework.security.oauth2.jwt.Jwt.withTokenValue("t").header("alg", "none")
+                .claim(Roles.MFA_SATISFIED_AT_CLAIM, now - 1_000L).claim("amr", "otp").build();
+
+        assertThat(RoleMfaPolicyEnforcementFilter.jwtEvidence(fresh, requirement(120, "otp"))).isTrue();
+        assertThat(RoleMfaPolicyEnforcementFilter.jwtEvidence(numeric, requirement(120, "otp"))).isTrue();
+        assertThat(RoleMfaPolicyEnforcementFilter.jwtEvidence(stale, requirement(120, "otp"))).isFalse();
+        assertThat(RoleMfaPolicyEnforcementFilter.jwtEvidence(stale, requirement(0, "otp"))).as("0 = no grace re-read").isTrue();
+        assertThat(RoleMfaPolicyEnforcementFilter.jwtEvidence(garbage, requirement(120))).isFalse();
+        assertThat(RoleMfaPolicyEnforcementFilter.jwtEvidence(garbage, requirement(0))).isTrue();
+        assertThat(RoleMfaPolicyEnforcementFilter.jwtEvidence(fresh, requirement(120, "webauthn"))).isFalse();
     }
 }

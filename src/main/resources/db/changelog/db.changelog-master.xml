@@ -717,4 +717,11 @@
       83a = C and 83b = B). Appended LAST.
     -->
     <include file="db/changelog/370-matrix-admin-deactivate-proposal.xml"/>
+    <!--
+      380 — role_mfa_policy default rows for the 'default' domain (hugmesh-admin-bff-api#80,
+      the #3 plan: superadmin/admin required, mod relaxable, user optional). Idempotent
+      inserts (MARK_RAN when an operator row already exists), no new GRANT (150 covers the
+      table). Appended LAST.
+    -->
+    <include file="db/changelog/380-role-mfa-policy-seed.xml"/>
 </databaseChangeLog>
