@@ -59,7 +59,16 @@ import java.util.concurrent.atomic.AtomicReference;
  *       is retried next tick (metered {@code notification.external.preference_lookup_failed}),
  *       the same degrade as an unavailable channel. A silenced user is never messaged on a
  *       guess, and a user-bff outage delays external notifications rather than losing them;
- *       it does not count toward the poison-row dead-letter. The in-app path stays the floor.</li>
+ *       it does not count toward the poison-row dead-letter. The in-app path stays the floor.
+ *       The cost of that choice: a held row is never dead-lettered, so while lookups keep
+ *       failing, held rows accumulate at the head of the channel's batch window, and once
+ *       {@code batch-size} of them are pending, rows behind them (an
+ *       {@code account-restriction} included) wait until the lookups recover. A lookup
+ *       failure is expected to be uniform (user-bff down, or deployed without #36), so this
+ *       is a delay rather than a loss. A per-row permanent failure is possible only if an
+ *       outbox domain does not match user-bff's {@code domain} token pattern
+ *       ({@code ^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$}), which every {@code DomainSlug} and the
+ *       {@code default} sentinel do.</li>
  *   <li>With the user-bff gate off ({@code notification.user-bff.enabled=false}, the
  *       default) no lookup is made and every category reads as enabled, the pre-consult
  *       behaviour.</li>
@@ -71,8 +80,9 @@ import java.util.concurrent.atomic.AtomicReference;
  * preference, because a user MUST learn their access changed (the appeal path depends on
  * it). The carve-out is enforced HERE, not delegated to user-bff (which also reports it
  * enabled): an account-restriction row skips the preference lookup entirely, so a stale or
- * wrong upstream answer cannot silence it, and a failed lookup cannot delay it. That is
- * fail OPEN for this category, by construction.
+ * wrong upstream answer cannot silence it, and its own delivery never waits on a lookup.
+ * That is fail OPEN for this category, by construction (subject only to the batch-window
+ * caveat under the lookup-failure rule above).
  *
  * <h3>Moderator channel directive</h3>
  * An outbox row may carry the moderator's {@code notify_channels} directive (see
