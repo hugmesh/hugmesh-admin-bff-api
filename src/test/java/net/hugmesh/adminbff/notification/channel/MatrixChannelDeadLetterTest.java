@@ -22,6 +22,7 @@ import net.hugmesh.adminbff.notification.NotificationOutbox;
 import net.hugmesh.adminbff.notification.NotificationOutboxR2dbcRepository;
 import net.hugmesh.adminbff.notification.NotificationOutboxRepository;
 import net.hugmesh.adminbff.notification.SystemChannelTokens;
+import net.hugmesh.adminbff.notification.UserBffNotificationClient;
 import net.hugmesh.adminbff.support.TestDatabaseConfig;
 import net.hugmesh.adminbff.testutil.R2dbcRepos;
 
@@ -85,7 +86,9 @@ class MatrixChannelDeadLetterTest {
 
     private ExternalChannelReconciler reconciler(NotificationChannel ch) {
         return new ExternalChannelReconciler(deliveries, cursor, List.of(ch),
-                new AlwaysLeader(), new SimpleMeterRegistry(), 100, MAX_ATTEMPTS);
+                new AlwaysLeader(), new SimpleMeterRegistry(),
+                // user-bff gate off: no preference lookup, every category reads as enabled.
+                new UserBffNotificationClient(null, false, null), 100, MAX_ATTEMPTS);
     }
 
     private String seed(String userSubject) {

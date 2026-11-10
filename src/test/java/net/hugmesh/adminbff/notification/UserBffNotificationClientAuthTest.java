@@ -157,4 +157,84 @@ class UserBffNotificationClientAuthTest {
                 .block();
         return mock.getBodyAsString().block();
     }
+
+    // ── PREFERENCE READ (user-bff #36): GET, owner in the path, domain query, bearer ──
+
+    private static UserBffNotificationClient prefsClient(AtomicReference<ClientRequest> captured,
+                                                         HttpStatus status, String body) {
+        ExchangeFunction capture = req -> {
+            captured.set(req);
+            return Mono.just(ClientResponse.create(status)
+                    .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
+                    .body(body)
+                    .build());
+        };
+        WebClient http = WebClient.builder().exchangeFunction(capture).build();
+        return new UserBffNotificationClient(http, true, () -> Mono.just("svc-jwt-ROLE_SERVICE"));
+    }
+
+    @Test
+    void effectivePreferences_getsTheContractPath_withDomainQuery_andBearer() {
+        AtomicReference<ClientRequest> captured = new AtomicReference<>();
+        UserBffNotificationClient client = prefsClient(captured, HttpStatus.OK,
+                "{\"account-restriction\":true,\"infra-impacting\":false,\"odd\":\"x\"}");
+
+        var lookup = client.effectivePreferences("subject alice/1", "brandx").block();
+
+        assertThat(lookup.ok()).isTrue();
+        assertThat(lookup.enabled("infra-impacting")).isFalse();
+        assertThat(lookup.enabled("account-restriction")).isTrue();
+        assertThat(lookup.enabled("odd")).isTrue();            // non-boolean value ignored
+        assertThat(lookup.enabled("not-listed")).isTrue();     // absent category reads as enabled
+        ClientRequest sent = captured.get();
+        assertThat(sent.method()).isEqualTo(HttpMethod.GET);
+        // The owner is a path VARIABLE, so a slash or space in it is encoded, never a new segment.
+        assertThat(sent.url().getRawPath())
+                .isEqualTo("/bff/user/internal/notification-preferences/subject%20alice%2F1");
+        assertThat(sent.url().getQuery()).isEqualTo("domain=brandx");
+        assertThat(sent.headers().getFirst(HttpHeaders.AUTHORIZATION)).isEqualTo("Bearer svc-jwt-ROLE_SERVICE");
+    }
+
+    @Test
+    void effectivePreferences_emptyMap_unknownOwner_readsAllEnabled() {
+        var lookup = prefsClient(new AtomicReference<>(), HttpStatus.OK, "{}")
+                .effectivePreferences("subject-new", "brandx").block();
+
+        assertThat(lookup.ok()).isTrue();
+        assertThat(lookup.enabled("infra-impacting")).isTrue();
+    }
+
+    @Test
+    void effectivePreferences_non2xx_isFailed_neverThrows() {
+        for (HttpStatus status : new HttpStatus[] {HttpStatus.NOT_FOUND, HttpStatus.FORBIDDEN,
+                HttpStatus.INTERNAL_SERVER_ERROR}) {
+            var lookup = prefsClient(new AtomicReference<>(), status, "{}")
+                    .effectivePreferences("subject-x", "brandx").block();
+            assertThat(lookup).as(status.toString()).isEqualTo(UserBffNotificationClient.PreferenceLookup.FAILED);
+        }
+    }
+
+    @Test
+    void effectivePreferences_tokenFailure_isFailed() {
+        WebClient http = WebClient.builder()
+                .exchangeFunction(req -> Mono.error(new AssertionError("no call without a token")))
+                .build();
+        UserBffNotificationClient client = new UserBffNotificationClient(http, true,
+                () -> Mono.error(new IllegalStateException("casdoor down")));
+
+        assertThat(client.effectivePreferences("subject-x", "brandx").block())
+                .isEqualTo(UserBffNotificationClient.PreferenceLookup.FAILED);
+    }
+
+    @Test
+    void effectivePreferences_gateOff_makesNoCall_allEnabled() {
+        WebClient http = WebClient.builder()
+                .exchangeFunction(req -> Mono.error(new AssertionError("no call expected when gate off")))
+                .build();
+        UserBffNotificationClient client = new UserBffNotificationClient(http, false,
+                () -> Mono.error(new AssertionError("token not expected")));
+
+        assertThat(client.effectivePreferences("subject-x", "brandx").block())
+                .isEqualTo(UserBffNotificationClient.PreferenceLookup.ALL_ENABLED);
+    }
 }
