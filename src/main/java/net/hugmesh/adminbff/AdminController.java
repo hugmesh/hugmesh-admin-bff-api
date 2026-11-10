@@ -18,6 +18,7 @@ import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import net.hugmesh.adminbff.account.RegistrationDomainResolver;
 import net.hugmesh.adminbff.capability.DomainCapability;
 import net.hugmesh.adminbff.capability.DomainCapabilityService;
 import net.hugmesh.adminbff.domainlock.DomainLockService;
@@ -101,6 +102,9 @@ public class AdminController {
     /** The two-tier domain capability gate. Consulted ONLY by {@link #grantRole}, and only
      *  for the external-client roles — see {@link DomainCapability#EXTERNAL_CLIENT_GRANT}. */
     private final DomainCapabilityService capabilities;
+    /** The registration gate's own domain source. Consulted ONLY by {@link #allowlistScope}
+     *  so the console's invite stamp and the register gate's read name the same domain. */
+    private final RegistrationDomainResolver registrationDomains;
 
     public AdminController(AccountStore store, RouteAccessService routeAccess,
                            UrlRegistryService urlRegistry, IsoRepository isoRepo, UsageService usage,
@@ -111,6 +115,7 @@ public class AdminController {
                            FederationApiClient federation,
                            GatewayRevocationClient revocations,
                            DomainCapabilityService capabilities,
+                           RegistrationDomainResolver registrationDomains,
                            @Nullable CasdoorAdminClient casdoor) {
         this.store = store;
         this.routeAccess = routeAccess;
@@ -124,6 +129,7 @@ public class AdminController {
         this.federation = federation;
         this.revocations = revocations;
         this.capabilities = capabilities;
+        this.registrationDomains = registrationDomains;
         this.casdoor = casdoor;
     }
 
@@ -137,12 +143,47 @@ public class AdminController {
         return PrincipalDomain.of(auth, domainRegistry);
     }
 
+    /**
+     * The scope of the admin-managed allowlist (its read, its invite stamp and its revoke).
+     * This is {@link #scope} except for one case: an acting admin with no domain at all
+     * ({@link PrincipalDomain#NO_DOMAIN}, e.g. a native-login admin, whose session is not a
+     * Casdoor JWT) uses {@link RegistrationDomainResolver#fallback()} instead.
+     *
+     * <p><b>Why (hugmesh-admin-bff-api#111).</b> The register gate reads invites in
+     * {@code fallback()} when nothing names a brand (an untokened {@code POST /bff/register/**},
+     * or user-bff's {@code GET /bff/internal/allowlist/**} without {@code domain}). On an
+     * unconfigured or single-brand install that is a real brand ({@code "default"}, or the only
+     * brand), but a domainless admin's invite was stamped {@code NO_DOMAIN}, so the gate never
+     * found it, and the console listed only those unredeemable rows while hiding the seeded
+     * {@code "default"} ones. Using the same {@code fallback()} on both sides makes them agree.
+     *
+     * <p><b>Why it is not wider.</b> On a multi-brand mesh with no pin, {@code fallback()} is
+     * itself {@code NO_DOMAIN}, so this changes nothing there: the stamp stays the sentinel and
+     * the gate refuses it (see {@link RegistrationDomainResolver#admitsNoInvite}). An admin
+     * whose JWT resolves to a brand keeps that brand. {@link #scope} and
+     * {@link PrincipalDomain#of} are deliberately untouched: every other surface in this
+     * controller relies on {@code NO_DOMAIN} matching nothing.
+     */
+    private PrincipalDomain allowlistScope(Authentication auth) {
+        PrincipalDomain principal = scope(auth);
+        if (!PrincipalDomain.NO_DOMAIN.equals(principal.domain())) {
+            return principal;
+        }
+        String fallback = registrationDomains.fallback();
+        if (PrincipalDomain.NO_DOMAIN.equals(fallback)) {
+            return principal;
+        }
+        return principal.superadmin()
+                ? PrincipalDomain.superadminFor(fallback)
+                : PrincipalDomain.forDomain(fallback);
+    }
+
     // ── Admin-managed Gmail/Discord allowlist ──────────────────────────
     @PreAuthorize("hasRole('ADMIN')")
     @Operation(summary = "Allowlist", operationId = "adminAllowlist")
     @GetMapping("/allowlist")
     public Mono<Map<String, Object>> allowlist(Authentication auth) {
-        return allowlistOut(scope(auth));
+        return allowlistOut(allowlistScope(auth));
     }
 
     @PreAuthorize("hasRole('ADMIN')")
@@ -171,7 +212,7 @@ public class AdminController {
         if (!rejection.isEmpty()) {
             return Mono.just(ResponseEntity.status(HttpStatus.UNPROCESSABLE_CONTENT).body(rejection));
         }
-        PrincipalDomain scope = scope(auth);
+        PrincipalDomain scope = allowlistScope(auth);
         String domain = scope.domain();
         // 1) Durable allowlist row(s) — the registration gate; stamped with acting admin's
         //    domain so brand-X admins only ever see/manage their own brand's allowlist.
@@ -258,7 +299,7 @@ public class AdminController {
     public Mono<Map<String, Object>> uninvite(@Valid @RequestBody AllowlistRequest b, Authentication auth) {
         String email = str(b.email());
         String discord = str(b.discord());
-        PrincipalDomain scope = scope(auth);
+        PrincipalDomain scope = allowlistScope(auth);
         String domain = scope.domain();
         // Domain-scoped revoke: a brand-X admin can only remove handles from their own
         // brand's allowlist. The SQL WHERE domain=:domain clause silently no-ops for

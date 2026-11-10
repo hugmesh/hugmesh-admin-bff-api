@@ -195,6 +195,22 @@ public class RegistrationDomainResolver {
     }
 
     /**
+     * Whether a register-gate read in {@code domain} must refuse WITHOUT querying the
+     * allowlist: {@code true} for {@link PrincipalDomain#NO_DOMAIN} (and a null/blank value).
+     *
+     * <p>The sentinel was meant to match no allowlist row, but nothing stopped a row being
+     * stamped with it: an admin with no domain on a multi-brand mesh (hugmesh-admin-bff-api#111)
+     * invites into {@code NO_DOMAIN}, because there {@link #fallback()} is the sentinel too. The
+     * allowlist lookup is a plain equality match, so an untokened registration that also
+     * resolved to {@code NO_DOMAIN} found that row and was ADMITTED: the fail-closed answer
+     * failed open. Every gate read checks this first, so the sentinel can never admit,
+     * whatever rows exist.
+     */
+    public static boolean admitsNoInvite(@Nullable String domain) {
+        return domain == null || domain.isBlank() || PrincipalDomain.NO_DOMAIN.equals(domain);
+    }
+
+    /**
      * The brand named by {@code auth}'s validated issuer, or {@code null} when the request
      * carries no JWT or an issuer this deployment does not trust. Strict membership of the
      * configured trusted set — never {@link DomainRegistry#isTrusted(String)}, which fails
