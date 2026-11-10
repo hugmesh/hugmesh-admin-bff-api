@@ -6,6 +6,7 @@ import net.hugmesh.adminbff.cloudbackup.BackupStepUpGate;
 import net.hugmesh.adminbff.desktop.terminal.DeviceTerminalStepUpGate;
 import net.hugmesh.adminbff.golive.GoLiveStepUpGate;
 import net.hugmesh.adminbff.imagegen.ImageGenStepUpGate;
+import net.hugmesh.adminbff.meshtoken.MeshTokenStepUpGate;
 import net.hugmesh.adminbff.phone.PhoneLockStepUpGate;
 import net.hugmesh.adminbff.servicecatalog.ServiceStoreStepUpGate;
 import net.hugmesh.adminbff.sshissue.SshKeyIssueStepUpGate;
@@ -49,6 +50,7 @@ class StepUpGateHarmonisationTest {
         gates.put("DeviceTerminal", new DeviceTerminalStepUpGate(stepUp));
         gates.put("GoLive", new GoLiveStepUpGate(stepUp));
         gates.put("ImageGen", new ImageGenStepUpGate(stepUp));
+        gates.put("MeshToken", new MeshTokenStepUpGate(stepUp));
         gates.put("PhoneLock", new PhoneLockStepUpGate(stepUp));
         gates.put("ServiceStore", new ServiceStoreStepUpGate(stepUp));
         gates.put("SshKeyIssue", new SshKeyIssueStepUpGate(stepUp));
@@ -105,6 +107,7 @@ class StepUpGateHarmonisationTest {
         headers.put("DeviceTerminal", DeviceTerminalStepUpGate.STEP_UP_HEADER);
         headers.put("GoLive", GoLiveStepUpGate.STEP_UP_HEADER);
         headers.put("ImageGen", ImageGenStepUpGate.STEP_UP_HEADER);
+        headers.put("MeshToken", MeshTokenStepUpGate.STEP_UP_HEADER);
         headers.put("PhoneLock", PhoneLockStepUpGate.STEP_UP_HEADER);
         headers.put("ServiceStore", ServiceStoreStepUpGate.STEP_UP_HEADER);
         headers.put("SshKeyIssue", SshKeyIssueStepUpGate.STEP_UP_HEADER);

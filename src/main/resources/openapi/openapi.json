@@ -4014,6 +4014,80 @@
         }
       }
     },
+    "/bff/admin/mesh-tokens" : {
+      "get" : {
+        "tags" : [ "mesh-token-controller" ],
+        "summary" : "The mesh-token audit trail (never a token or key)",
+        "operationId" : "meshTokenList",
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "type" : "object",
+                  "additionalProperties" : {
+                    "type" : "object"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post" : {
+        "tags" : [ "mesh-token-controller" ],
+        "summary" : "Issue one HugMesh token (returned once, never stored)",
+        "operationId" : "meshTokenIssue",
+        "parameters" : [ {
+          "name" : "X-MeshToken-StepUp",
+          "in" : "header",
+          "required" : false,
+          "schema" : {
+            "type" : "string"
+          }
+        }, {
+          "name" : "bff_session",
+          "in" : "cookie",
+          "required" : false,
+          "schema" : {
+            "type" : "string"
+          }
+        }, {
+          "name" : "Authorization",
+          "in" : "header",
+          "required" : false,
+          "schema" : {
+            "type" : "string"
+          }
+        } ],
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/MeshTokenIssueRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "type" : "object",
+                  "additionalProperties" : {
+                    "type" : "object"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/bff/admin/matrix/deactivations/propose" : {
       "post" : {
         "tags" : [ "matrix-admin-deactivate-controller" ],
@@ -7565,6 +7639,28 @@
               "application/json" : {
                 "schema" : {
                   "$ref" : "#/components/schemas/RoleMfaPolicyList"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bff/admin/mesh-tokens/issuer" : {
+      "get" : {
+        "tags" : [ "mesh-token-controller" ],
+        "summary" : "The mesh-token issuer: public key, fingerprint, domains and roles this caller may issue",
+        "operationId" : "meshTokenIssuer",
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "type" : "object",
+                  "additionalProperties" : {
+                    "type" : "object"
+                  }
                 }
               }
             }
@@ -11688,6 +11784,34 @@
             "format" : "date-time"
           },
           "domain" : {
+            "type" : "string"
+          }
+        }
+      },
+      "MeshTokenIssueRequest" : {
+        "required" : [ "domain", "role" ],
+        "type" : "object",
+        "properties" : {
+          "domain" : {
+            "maxLength" : 253,
+            "minLength" : 0,
+            "type" : "string"
+          },
+          "role" : {
+            "maxLength" : 16,
+            "minLength" : 0,
+            "type" : "string"
+          },
+          "shell" : {
+            "type" : "boolean"
+          },
+          "lifetimeSeconds" : {
+            "type" : "integer",
+            "format" : "int64"
+          },
+          "nodeName" : {
+            "maxLength" : 63,
+            "minLength" : 0,
             "type" : "string"
           }
         }
