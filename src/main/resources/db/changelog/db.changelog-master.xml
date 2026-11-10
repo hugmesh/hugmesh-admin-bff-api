@@ -724,4 +724,10 @@
       table). Appended LAST.
     -->
     <include file="db/changelog/380-role-mfa-policy-seed.xml"/>
+    <!--
+      390 — mesh_token_issued: the non-secret audit trail of HugMesh tokens v1 issued from the
+      web admin UI (POST /bff/admin/mesh-tokens). SELECT, INSERT to adminbff_app only. Appended
+      LAST.
+    -->
+    <include file="db/changelog/390-mesh-token-issued.xml"/>
 </databaseChangeLog>

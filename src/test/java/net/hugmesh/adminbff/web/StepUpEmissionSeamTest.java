@@ -175,6 +175,7 @@ class StepUpEmissionSeamTest {
             "X-Device-Terminal-StepUp",
             "X-GoLive-StepUp",
             "X-ImageGen-StepUp",
+            "X-MeshToken-StepUp",
             "X-PhoneLock-StepUp",
             "X-ServiceStore-StepUp",
             "X-SshKeyIssue-StepUp"));
@@ -262,7 +263,7 @@ class StepUpEmissionSeamTest {
         assertThat(discovered)
                 .as("""
                     the step-up retry-header vocabulary is a CROSS-REPO CONTRACT closed at exactly \
-                    these 8 values, and it is discovered BY VALUE (any string of shape \
+                    these 9 values, and it is discovered BY VALUE (any string of shape \
                     X-<flavour>-StepUp anywhere in src/main, however the constant holding it is \
                     named). Adding or renaming a flavour is a DELIBERATE cross-repo act: in the \
                     SAME change you must update (1) this PINNED_FLAVOURS set, (2) the literals in \

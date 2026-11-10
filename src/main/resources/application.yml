@@ -868,6 +868,37 @@ app:
   # step-up mint path reachable) once the feature is greenlit.
   ssh-issue:
     enabled: "${APP_SSH_ISSUE_ENABLED:false}"
+  # HUGMESH TOKEN v1 ISSUING for the web admin UI (net.hugmesh.adminbff.meshtoken,
+  # /bff/admin/mesh-tokens). A token = one single-use headscale pre-auth key + a signed grant
+  # (mesh, access domain, role, shell, expiry) the Studio tray verifies byte-for-byte
+  # (hugmesh-generator docs/HUGMESH-TOKEN.md). SHIPS DARK: DEFAULT false -> POST answers a 503
+  # descriptor naming `make stack-up HEADSCALE=1`, the issuer key is never read, headscale is
+  # never called; the reads stay live. When true, a bad mesh / domain table / issuer key FAILS
+  # THE BOOT. The issuer private key never leaves this service: locally a 0600 file mounted
+  # :ro (make stack-mesh-token-key), in-cluster the ExternalSecret admin-bff-mesh-token
+  # (Vault hugmesh/mesh-token-issuer private-key) mounted as a secret volume.
+  mesh-token:
+    enabled: "${APP_MESH_TOKEN_ENABLED:false}"
+    # the mesh id carried in every token: ^[a-z0-9][a-z0-9-]{0,62}$
+    mesh: "${APP_MESH_TOKEN_MESH:hugmesh-local}"
+    # Ed25519 private key, OpenSSH (ssh-keygen -t ed25519 -N '') or PKCS#8 PEM
+    issuer-key-path: "${APP_MESH_TOKEN_ISSUER_KEY_PATH:}"
+    # <access domain>=<https://host[:port]>[,...]; host = the domain or a name under it
+    login-servers: "${APP_MESH_TOKEN_LOGIN_SERVERS:}"
+    # <access domain>=<tenant brand>[,...]; an unlisted domain belongs to brand "default"
+    domain-brands: "${APP_MESH_TOKEN_DOMAIN_BRANDS:}"
+    default-lifetime-seconds: "${APP_MESH_TOKEN_DEFAULT_LIFETIME_SECONDS:604800}"
+    max-lifetime-seconds: "${APP_MESH_TOKEN_MAX_LIFETIME_SECONDS:7776000}"
+    headscale:
+      # headscale's REST API (POST /api/v1/preauthkey). The host OpenRC headscale on the pki
+      # node is the selector-less Service headscale in ns hugmesh-pki (same as headscale-acl).
+      base-url: "${APP_MESH_TOKEN_HEADSCALE_BASE_URL:http://headscale.hugmesh-pki.svc.cluster.local:8080}"
+      # FILE holding the headscale API key (Vault hugmesh/headscale-admin api-key in-cluster;
+      # the headscale container's admin-bff.apikey locally). Re-read on every call.
+      api-key-path: "${APP_MESH_TOKEN_HEADSCALE_API_KEY_PATH:}"
+      # the headscale user the keys are created for, by NAME (headscale 0.23)
+      user: "${APP_MESH_TOKEN_HEADSCALE_USER:hugmesh}"
+      timeout-ms: "${APP_MESH_TOKEN_HEADSCALE_TIMEOUT_MS:8000}"
   # SUPERADMIN GO-LIVE WIZARD backend (go-live wizard v1, the admin web-UI half). SHIPS
   # DARK: DEFAULT false. While false, the mutating verbs (record/withdraw an intent) refuse
   # (503 dark descriptor / no DB write) but the SUPERADMIN role + step-up authorization is
