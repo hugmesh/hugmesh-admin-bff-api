@@ -821,6 +821,9 @@ These surfaces are the unscoped infra control plane. An ADMIN never reaches them
   >   Teardown re-resolves the profile and removes the same rules. Nothing records which
   >   rules a provision wrote, so a profile edited before teardown is torn down by its
   >   current contents, and a deleted one leaves its profile-derived rules behind (WARN).
+  >   For the same reason a rule that already existed in the brand with exactly the shape a
+  >   profile grant writes (same gateway, pattern and role, role-based, allow) cannot be told
+  >   apart from it and is removed at teardown too; a per-user or deny rule is never swept.
   >   A deployment with no `profileRef` writes exactly the one derived rule it always did.
   > - `AppProfileSchemaMirrorTest` guards the copy twice. A local sha256 pin makes an edit
   >   deliberate but proves nothing about the other repo: moving the schema and the literal

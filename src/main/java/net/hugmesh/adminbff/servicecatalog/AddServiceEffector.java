@@ -68,7 +68,10 @@ import java.util.Set;
  * expired lease must still lose its Application, its derived rule and its role even if the
  * profile has since been deleted or broken — that case is logged as a WARN, because any
  * profile-derived rules then stay behind. Nothing records which rules a provision wrote, so a
- * profile EDITED between provision and teardown is torn down by its current contents.
+ * profile EDITED between provision and teardown is torn down by its current contents, and a rule
+ * that already existed in the brand with exactly the shape a profile grant writes (this gateway,
+ * same pattern and role, role-based, allow) is indistinguishable from it and removed too. A
+ * per-user or deny rule on the same pattern is never swept.
  */
 @Service
 @SuppressFBWarnings(value = "EI_EXPOSE_REP2",
