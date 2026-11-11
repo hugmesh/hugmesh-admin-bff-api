@@ -10,6 +10,7 @@ import jakarta.validation.constraints.Size;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -86,10 +87,16 @@ public class AdminController {
     /** The real Casdoor admin write client; null unless casdoor.admin.enabled=true. */
     @Nullable private final CasdoorAdminClient casdoor;
     /** Gateway revocation client — writes {@code subject:<casdoorSub>} keys on role
-     *  revoke so stale custody JWTs are denied at the gateway within the revocation
-     *  poll cycle rather than waiting for natural TTL expiry (~1 h). Best-effort;
-     *  gated on {@code broker.gateway-revocation.enabled} (default false). */
+     *  revoke so stale tokens are denied at the gateway within the revocation poll cycle
+     *  rather than waiting for their natural expiry. Best-effort; gated on
+     *  {@code broker.gateway-revocation.enabled} (default false). */
     private final GatewayRevocationClient revocations;
+    /** TTL of a CUT-OFF subject key (account-disable, role revoke): must outlive the longest
+     *  token Casdoor issues (168 h for the seeded apps). See {@link SubjectRevocationTtl}. */
+    private final long subjectCutoffTtlSeconds;
+    /** TTL of a GRANT subject key: short, because the key locks the grantee out for its whole
+     *  life and a grant cuts nothing off. See {@link SubjectRevocationTtl}. */
+    private final long subjectGrantTtlSeconds;
     /** Username-derivation gate (reserved + federation confusable check). */
     private final UsernameGate usernameGate;
     /** Issuer-&gt;domain registry — used to resolve the acting principal's tenant scope
@@ -116,7 +123,9 @@ public class AdminController {
                            GatewayRevocationClient revocations,
                            DomainCapabilityService capabilities,
                            RegistrationDomainResolver registrationDomains,
-                           @Nullable CasdoorAdminClient casdoor) {
+                           @Nullable CasdoorAdminClient casdoor,
+                           @Value(SubjectRevocationTtl.CUTOFF_VALUE) long subjectCutoffTtlSeconds,
+                           @Value(SubjectRevocationTtl.GRANT_VALUE) long subjectGrantTtlSeconds) {
         this.store = store;
         this.routeAccess = routeAccess;
         this.urlRegistry = urlRegistry;
@@ -131,6 +140,10 @@ public class AdminController {
         this.capabilities = capabilities;
         this.registrationDomains = registrationDomains;
         this.casdoor = casdoor;
+        this.subjectCutoffTtlSeconds = SubjectRevocationTtl.require(
+                SubjectRevocationTtl.CUTOFF_PROPERTY, subjectCutoffTtlSeconds);
+        this.subjectGrantTtlSeconds = SubjectRevocationTtl.require(
+                SubjectRevocationTtl.GRANT_PROPERTY, subjectGrantTtlSeconds);
     }
 
     /**
@@ -319,9 +332,10 @@ public class AdminController {
     }
 
     /**
-     * Invalidate any live custody JWT for an account being uninvited/disabled, so a bare
+     * Invalidate any live token for an account being uninvited/disabled, so a bare
      * account-disable (with no accompanying ban/suspension) cannot be exercised for the
-     * remaining natural token TTL (~1 h). Symmetric to the role-revoke path
+     * token's remaining lifetime (up to 168 h for the seeded Casdoor apps, so the key uses the
+     * CUT-OFF TTL, {@link SubjectRevocationTtl}). Symmetric to the role-revoke path
      * ({@link #revokeRole}); the subject is the Casdoor username ({@code usernameOf}) — NOT
      * the raw email/handle — so the {@code subject:} key matches the JWT {@code sub} the
      * gateway revocation filter compares. Independent of {@code casdoor} (the allowlist row,
@@ -330,7 +344,8 @@ public class AdminController {
      */
     private Mono<Void> revokeOnDisable(String provider, String handle) {
         return revocations.revokeSubject(
-                CasdoorAdminClient.usernameOf(provider, handle), "account-disable", 3_600L);
+                CasdoorAdminClient.usernameOf(provider, handle), "account-disable",
+                subjectCutoffTtlSeconds);
     }
 
     /** Best-effort Casdoor create/enable — logs + swallows so the allowlist row stands. */
@@ -888,11 +903,13 @@ public class AdminController {
     private Mono<ResponseEntity<Map<String, Object>>> doGrantRole(
             String roleName, String user, Authentication auth) {
         return casdoor.addUserToRole(roleName, casdoor.organization() + "/" + user)
-                // Invalidate the grantee's live custody JWT so the NEW role is picked up
-                // on the next (re-minted) token rather than only after the natural TTL
-                // (~1 h). Best-effort + gated on broker.gateway-revocation.enabled — a
-                // no-op in dev. Symmetric with revokeRole (closes the G2 inverse-stale gap).
-                .then(revocations.revokeSubject(user, "role-grant", 3_600L))
+                // Invalidate the grantee's live token so the NEW role is picked up on the
+                // next (re-minted) token rather than only after its natural expiry.
+                // Best-effort + gated on broker.gateway-revocation.enabled — a no-op in dev.
+                // Symmetric with revokeRole (closes the G2 inverse-stale gap), but with the
+                // SHORT grant TTL: the key refuses every token for the subject while it lives,
+                // and a grant cuts nothing off (SubjectRevocationTtl).
+                .then(revocations.revokeSubject(user, "role-grant", subjectGrantTtlSeconds))
                 .then(Mono.fromRunnable(() ->
                         usage.record(actor(auth), List.of(RoleName.ADMIN.value()), "admin.role-grant").subscribe()))
                 .thenReturn(ResponseEntity.ok(Map.<String, Object>of("granted", roleName, "user", user)));
@@ -920,10 +937,11 @@ public class AdminController {
                     Map.of("error", "Casdoor admin client not enabled (casdoor.admin.enabled=false)")));
         }
         return casdoor.removeUserFromRole(roleName, casdoor.organization() + "/" + user)
-                // Invalidate any live custody JWT for this user so the revoked role
-                // cannot be exercised for the remaining natural TTL (~1 h). Best-effort
-                // + gated on broker.gateway-revocation.enabled — a no-op in dev.
-                .then(revocations.revokeSubject(user, "role-revoke", 3_600L))
+                // Invalidate any live token for this user so the revoked role cannot be
+                // exercised for the token's remaining lifetime (up to 168 h for the seeded
+                // Casdoor apps — hence the CUT-OFF TTL, SubjectRevocationTtl). Best-effort +
+                // gated on broker.gateway-revocation.enabled — a no-op in dev.
+                .then(revocations.revokeSubject(user, "role-revoke", subjectCutoffTtlSeconds))
                 .then(Mono.fromRunnable(() ->
                         usage.record(actor(auth), List.of(RoleName.ADMIN.value()), "admin.role-revoke").subscribe()))
                 .thenReturn(ResponseEntity.ok(Map.<String, Object>of("revoked", roleName, "user", user)));

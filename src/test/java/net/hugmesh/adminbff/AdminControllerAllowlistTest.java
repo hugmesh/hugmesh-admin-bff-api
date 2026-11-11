@@ -187,10 +187,12 @@ class AdminControllerAllowlistTest {
         when(revocations.revokeSubject(org.mockito.ArgumentMatchers.anyString(),
                 org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyLong()))
                 .thenReturn(reactor.core.publisher.Mono.empty());
-        // Uninviting/disabling an account must invalidate any live custody JWT for it — a
-        // bare account-disable (no accompanying ban) otherwise survives to the natural ~1h
-        // TTL. The subject is the Casdoor username (usernameOf), reason "account-disable",
-        // TTL = custody-JWT lifetime — fired for BOTH the email- and discord-derived
+        // Uninviting/disabling an account must invalidate any live token for it — a bare
+        // account-disable (no accompanying ban) otherwise survives to the token's natural
+        // expiry. The subject is the Casdoor username (usernameOf), reason "account-disable",
+        // TTL >= the LONGEST seeded Casdoor token lifetime (expireInHours=168 on the app-*
+        // clients and hugmesh-desktop; a 1 h key let a disabled account's raw JWT work again
+        // for ~7 days once the key lapsed) — fired for BOTH the email- and discord-derived
         // identities, and independent of whether the Casdoor write client is configured
         // (it is null here, so casdoorDisable no-ops but the revocation still runs).
         // Distinct handles so the two derived Casdoor usernames differ (alice vs bob) —
@@ -203,12 +205,12 @@ class AdminControllerAllowlistTest {
                 org.mockito.ArgumentMatchers.eq(net.hugmesh.authcore.casdoor.CasdoorAdminClient
                         .usernameOf("google", "alice@gmail.com")),
                 org.mockito.ArgumentMatchers.eq("account-disable"),
-                org.mockito.ArgumentMatchers.eq(3_600L));
+                org.mockito.ArgumentMatchers.longThat(ttl -> ttl >= 168L * 3_600L));
         org.mockito.Mockito.verify(revocations).revokeSubject(
                 org.mockito.ArgumentMatchers.eq(net.hugmesh.authcore.casdoor.CasdoorAdminClient
                         .usernameOf("discord", "bob")),
                 org.mockito.ArgumentMatchers.eq("account-disable"),
-                org.mockito.ArgumentMatchers.eq(3_600L));
+                org.mockito.ArgumentMatchers.longThat(ttl -> ttl >= 168L * 3_600L));
     }
 
     @Test

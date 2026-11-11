@@ -3,9 +3,11 @@ package net.hugmesh.adminbff.desktop;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import net.hugmesh.adminbff.SubjectRevocationTtl;
 import net.hugmesh.adminbff.lease.LeaderElection;
 import net.hugmesh.authcore.casdoor.CasdoorAdminClient;
 import net.hugmesh.authcore.provision.GatewayRevocationClient;
@@ -56,8 +58,11 @@ public class DesktopSudoClaimSyncConfig {
     @ConditionalOnProperty(name = "app.desktop.sudo.claim-sync.enabled", havingValue = "true")
     DesktopSudoClaimSync casdoorDesktopSudoClaimSync(ObjectProvider<CasdoorAdminClient> casdoor,
                                                      DesktopSudoGrantRepository repo,
-                                                     GatewayRevocationClient revocations) {
-        return new CasdoorDesktopSudoClaimSync(casdoor.getIfAvailable(), repo, revocations);
+                                                     GatewayRevocationClient revocations,
+                                                     @Value(SubjectRevocationTtl.CUTOFF_VALUE) long cutoffTtlSeconds,
+                                                     @Value(SubjectRevocationTtl.GRANT_VALUE) long grantTtlSeconds) {
+        return new CasdoorDesktopSudoClaimSync(casdoor.getIfAvailable(), repo, revocations,
+                cutoffTtlSeconds, grantTtlSeconds);
     }
 
     /** The scheduled retry worker — registered ONLY when claim-sync is enabled, so the
