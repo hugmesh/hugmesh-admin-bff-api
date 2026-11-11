@@ -34,7 +34,8 @@
     },
     "snort": {
       "atoms": [
-        "net-analyzer/snort"
+        "net-analyzer/snort",
+        "net-libs/daq"
       ],
       "label": "Snort IDS"
     },
@@ -76,7 +77,8 @@
               "sys-apps/i2c-tools",
               "sys-apps/util-linux",
               "sys-fs/e2fsprogs",
-              "sys-fs/dosfstools"
+              "sys-fs/dosfstools",
+              "sys-fs/mtd-utils"
             ],
             "title": "Board hardware / storage"
           },
@@ -159,6 +161,13 @@
           },
           {
             "atoms": [
+              "dev-lang/python",
+              "sys-auth/polkit"
+            ],
+            "title": "Greeter SSO + desktop governance runtime (STATED contract, as on x86)"
+          },
+          {
+            "atoms": [
               "media-gfx/feh",
               "app-editors/nano",
               "www-client/netsurf"
@@ -171,6 +180,13 @@
               "media-fonts/noto"
             ],
             "title": "Fonts (so the lean desktop is legible out of the box)"
+          },
+          {
+            "atoms": [
+              "app-emulation/spice-vdagent",
+              "sec-policy/selinux-vdagent"
+            ],
+            "title": "Emulated-desktop display agent (QEMU runner --display spice)"
           }
         ]
       },
@@ -293,6 +309,13 @@
               "gui-libs/display-manager-init"
             ],
             "title": "Login / session bring-up"
+          },
+          {
+            "atoms": [
+              "sys-auth/polkit",
+              "dev-lang/python"
+            ],
+            "title": "Desktop-governance runtime (SSO `desktop-sudo` claim -> polkit)"
           },
           {
             "atoms": [
@@ -546,6 +569,13 @@
           },
           {
             "atoms": [
+              "sys-auth/polkit",
+              "dev-lang/python"
+            ],
+            "title": "Desktop-governance runtime (SSO `desktop-sudo` claim -> polkit)"
+          },
+          {
+            "atoms": [
               "media-gfx/feh",
               "app-editors/nano",
               "www-client/netsurf"
@@ -558,6 +588,41 @@
               "media-fonts/noto"
             ],
             "title": "Fonts (so the lean desktop is legible out of the box)"
+          },
+          {
+            "atoms": [
+              "app-emulation/spice-vdagent",
+              "sec-policy/selinux-vdagent"
+            ],
+            "title": "Emulated-desktop display agent (QEMU runner --display spice)"
+          }
+        ]
+      },
+      "packages-k8s": {
+        "gate": "k8s",
+        "sections": [
+          {
+            "atoms": [
+              "app-containers/containerd",
+              "app-containers/runc",
+              "app-containers/cni-plugins",
+              "app-containers/cri-tools"
+            ],
+            "title": "Container runtime"
+          },
+          {
+            "atoms": [
+              "sys-cluster/kubelet",
+              "sys-cluster/kubeadm",
+              "sys-cluster/kubectl"
+            ],
+            "title": "Kubernetes"
+          },
+          {
+            "atoms": [
+              "sys-fs/xfsprogs"
+            ],
+            "title": "K8s-specific dependencies"
           }
         ]
       },
@@ -567,6 +632,26 @@
           {
             "atoms": [
               "sys-kernel/dracut"
+            ],
+            "title": ""
+          }
+        ]
+      },
+      "packages-node-host": {
+        "gate": "node-host",
+        "sections": [
+          {
+            "atoms": [
+              "net-firewall/nftables",
+              "net-firewall/conntrack-tools",
+              "sys-apps/iproute2",
+              "sys-apps/ethtool",
+              "sys-fs/cryptsetup",
+              "sys-fs/lvm2",
+              "sys-apps/nvme-cli",
+              "sec-policy/selinux-container",
+              "sec-policy/selinux-virt",
+              "app-admin/setools"
             ],
             "title": ""
           }
@@ -681,6 +766,13 @@
           },
           {
             "atoms": [
+              "sys-auth/polkit",
+              "dev-lang/python"
+            ],
+            "title": "Desktop-governance runtime (SSO `desktop-sudo` claim -> polkit)"
+          },
+          {
+            "atoms": [
               "media-gfx/feh",
               "app-editors/nano",
               "www-client/netsurf"
@@ -693,6 +785,41 @@
               "media-fonts/noto"
             ],
             "title": "Fonts (so the lean desktop is legible out of the box)"
+          },
+          {
+            "atoms": [
+              "app-emulation/spice-vdagent",
+              "sec-policy/selinux-vdagent"
+            ],
+            "title": "Emulated-desktop display agent (QEMU runner --display spice)"
+          }
+        ]
+      },
+      "packages-k8s": {
+        "gate": "k8s",
+        "sections": [
+          {
+            "atoms": [
+              "app-containers/containerd",
+              "app-containers/runc",
+              "app-containers/cni-plugins",
+              "app-containers/cri-tools"
+            ],
+            "title": "Container runtime"
+          },
+          {
+            "atoms": [
+              "sys-cluster/kubelet",
+              "sys-cluster/kubeadm",
+              "sys-cluster/kubectl"
+            ],
+            "title": "Kubernetes"
+          },
+          {
+            "atoms": [
+              "sys-fs/xfsprogs"
+            ],
+            "title": "K8s-specific dependencies"
           }
         ]
       },
@@ -702,6 +829,26 @@
           {
             "atoms": [
               "sys-kernel/dracut"
+            ],
+            "title": ""
+          }
+        ]
+      },
+      "packages-node-host": {
+        "gate": "node-host",
+        "sections": [
+          {
+            "atoms": [
+              "net-firewall/nftables",
+              "net-firewall/conntrack-tools",
+              "sys-apps/iproute2",
+              "sys-apps/ethtool",
+              "sys-fs/cryptsetup",
+              "sys-fs/lvm2",
+              "sys-apps/nvme-cli",
+              "sec-policy/selinux-container",
+              "sec-policy/selinux-virt",
+              "app-admin/setools"
             ],
             "title": ""
           }
@@ -1081,6 +1228,13 @@
           },
           {
             "atoms": [
+              "sys-auth/polkit",
+              "dev-lang/python"
+            ],
+            "title": "Desktop-governance runtime (SSO `desktop-sudo` claim -> polkit)"
+          },
+          {
+            "atoms": [
               "media-gfx/feh",
               "app-editors/nano",
               "www-client/netsurf"
@@ -1093,6 +1247,13 @@
               "media-fonts/noto"
             ],
             "title": "Fonts (so the lean desktop is legible out of the box)"
+          },
+          {
+            "atoms": [
+              "app-emulation/spice-vdagent",
+              "sec-policy/selinux-vdagent"
+            ],
+            "title": "Emulated-desktop display agent (QEMU runner --display spice)"
           }
         ]
       },
@@ -1132,6 +1293,7 @@
           {
             "atoms": [
               "sys-kernel/gentoo-sources",
+              "dev-util/pahole",
               "sys-kernel/linux-firmware",
               "sys-firmware/intel-microcode",
               "sys-kernel/dracut",
@@ -1249,6 +1411,13 @@
               "dev-lang/python"
             ],
             "title": ""
+          },
+          {
+            "atoms": [
+              "app-emulation/spice-vdagent",
+              "sec-policy/selinux-vdagent"
+            ],
+            "title": "Emulated-desktop display agent (QEMU runner --display spice)"
           }
         ]
       },
@@ -1471,6 +1640,7 @@
           "sys-block/parted",
           "sys-fs/dosfstools",
           "sys-fs/e2fsprogs",
+          "sys-fs/mtd-utils",
           "sys-kernel/gentoo-sources",
           "sys-kernel/linux-firmware",
           "sys-libs/libseccomp",
@@ -1482,6 +1652,8 @@
           "x11-wm/openbox"
         ],
         "removable": [
+          "app-emulation/spice-vdagent",
+          "dev-lang/python",
           "gui-libs/display-manager-init",
           "lxde-base/lxappearance",
           "lxde-base/lxpanel",
@@ -1489,6 +1661,8 @@
           "media-fonts/dejavu",
           "media-fonts/noto",
           "media-gfx/feh",
+          "sec-policy/selinux-vdagent",
+          "sys-auth/polkit",
           "www-client/netsurf",
           "x11-apps/setxkbmap",
           "x11-apps/xrandr",
@@ -1510,6 +1684,7 @@
           "media-fonts/dejavu",
           "media-fonts/noto",
           "media-gfx/feh",
+          "sys-auth/polkit",
           "www-client/netsurf",
           "x11-apps/setxkbmap",
           "x11-apps/xrandr",
@@ -1583,6 +1758,7 @@
           "media-fonts/dejavu",
           "media-fonts/noto",
           "media-gfx/feh",
+          "sys-auth/polkit",
           "www-client/netsurf",
           "x11-apps/setxkbmap",
           "x11-apps/xrandr",
@@ -1653,7 +1829,6 @@
           "app-containers/containerd",
           "app-containers/cri-tools",
           "app-containers/runc",
-          "dev-lang/python",
           "net-firewall/conntrack-tools",
           "net-firewall/nftables",
           "net-misc/curl",
@@ -1703,6 +1878,7 @@
           "x11-wm/openbox"
         ],
         "removable": [
+          "dev-lang/python",
           "gui-libs/display-manager-init",
           "lxde-base/lxappearance",
           "lxde-base/lxpanel",
@@ -1710,6 +1886,7 @@
           "media-fonts/dejavu",
           "media-fonts/noto",
           "media-gfx/feh",
+          "sys-auth/polkit",
           "www-client/netsurf",
           "x11-apps/setxkbmap",
           "x11-apps/xrandr",
@@ -1729,6 +1906,7 @@
           "media-fonts/dejavu",
           "media-fonts/noto",
           "media-gfx/feh",
+          "sys-auth/polkit",
           "www-client/netsurf",
           "x11-apps/setxkbmap",
           "x11-apps/xrandr",
@@ -1836,8 +2014,108 @@
       }
     },
     "orangepi4-lts": {
+      "frontend": {
+        "available": [
+          "app-emulation/spice-vdagent",
+          "dev-lang/python",
+          "gui-libs/display-manager-init",
+          "lxde-base/lxappearance",
+          "lxde-base/lxpanel",
+          "lxde-base/lxsession",
+          "media-fonts/dejavu",
+          "media-fonts/noto",
+          "media-gfx/feh",
+          "sec-policy/selinux-vdagent",
+          "sys-auth/polkit",
+          "sys-kernel/dracut",
+          "www-client/netsurf",
+          "x11-apps/setxkbmap",
+          "x11-apps/xrandr",
+          "x11-apps/xset",
+          "x11-base/xorg-drivers",
+          "x11-base/xorg-server",
+          "x11-misc/lightdm",
+          "x11-misc/lightdm-gtk-greeter",
+          "x11-misc/pcmanfm",
+          "x11-terms/xterm",
+          "x11-wm/openbox"
+        ],
+        "essential": [
+          "app-admin/sudo",
+          "app-containers/cni-plugins",
+          "app-containers/containerd",
+          "app-containers/cri-tools",
+          "app-containers/runc",
+          "app-editors/nano",
+          "app-misc/jq",
+          "app-misc/screen",
+          "dev-embedded/u-boot-tools",
+          "net-firewall/iptables",
+          "net-fs/cifs-utils",
+          "net-fs/nfs-utils",
+          "net-misc/networkmanager",
+          "net-misc/openssh",
+          "net-misc/socat",
+          "net-vpn/openvpn",
+          "net-vpn/wireguard-tools",
+          "net-wireless/wpa_supplicant",
+          "sec-policy/selinux-base",
+          "sec-policy/selinux-base-policy",
+          "sys-apps/checkpolicy",
+          "sys-apps/haveged",
+          "sys-apps/i2c-tools",
+          "sys-apps/pciutils",
+          "sys-apps/policycoreutils",
+          "sys-apps/semodule-utils",
+          "sys-apps/usbutils",
+          "sys-apps/util-linux",
+          "sys-block/parted",
+          "sys-cluster/kubeadm",
+          "sys-cluster/kubectl",
+          "sys-cluster/kubelet",
+          "sys-fs/dosfstools",
+          "sys-fs/e2fsprogs",
+          "sys-fs/xfsprogs",
+          "sys-kernel/gentoo-sources",
+          "sys-kernel/linux-firmware",
+          "sys-libs/libseccomp",
+          "sys-libs/libselinux",
+          "sys-process/audit",
+          "sys-process/cronie"
+        ],
+        "removable": [
+          "app-admin/setools",
+          "net-firewall/conntrack-tools",
+          "net-firewall/nftables",
+          "sec-policy/selinux-container",
+          "sec-policy/selinux-virt",
+          "sys-apps/ethtool",
+          "sys-apps/iproute2",
+          "sys-apps/nvme-cli",
+          "sys-fs/cryptsetup",
+          "sys-fs/lvm2"
+        ]
+      },
       "orangepi4-lts": {
         "available": [
+          "app-admin/setools",
+          "app-containers/cni-plugins",
+          "app-containers/containerd",
+          "app-containers/cri-tools",
+          "app-containers/runc",
+          "net-firewall/conntrack-tools",
+          "net-firewall/nftables",
+          "sec-policy/selinux-container",
+          "sec-policy/selinux-virt",
+          "sys-apps/ethtool",
+          "sys-apps/iproute2",
+          "sys-apps/nvme-cli",
+          "sys-cluster/kubeadm",
+          "sys-cluster/kubectl",
+          "sys-cluster/kubelet",
+          "sys-fs/cryptsetup",
+          "sys-fs/lvm2",
+          "sys-fs/xfsprogs",
           "sys-kernel/dracut"
         ],
         "essential": [
@@ -1879,6 +2157,8 @@
           "x11-wm/openbox"
         ],
         "removable": [
+          "app-emulation/spice-vdagent",
+          "dev-lang/python",
           "gui-libs/display-manager-init",
           "lxde-base/lxappearance",
           "lxde-base/lxpanel",
@@ -1886,6 +2166,8 @@
           "media-fonts/dejavu",
           "media-fonts/noto",
           "media-gfx/feh",
+          "sec-policy/selinux-vdagent",
+          "sys-auth/polkit",
           "www-client/netsurf",
           "x11-apps/setxkbmap",
           "x11-apps/xrandr",
@@ -1898,8 +2180,272 @@
       }
     },
     "orangepi5": {
+      "backend": {
+        "available": [
+          "app-emulation/spice-vdagent",
+          "dev-lang/python",
+          "gui-libs/display-manager-init",
+          "lxde-base/lxappearance",
+          "lxde-base/lxpanel",
+          "lxde-base/lxsession",
+          "media-fonts/dejavu",
+          "media-fonts/noto",
+          "media-gfx/feh",
+          "sec-policy/selinux-vdagent",
+          "sys-auth/polkit",
+          "sys-kernel/dracut",
+          "www-client/netsurf",
+          "x11-apps/setxkbmap",
+          "x11-apps/xrandr",
+          "x11-apps/xset",
+          "x11-base/xorg-drivers",
+          "x11-base/xorg-server",
+          "x11-misc/lightdm",
+          "x11-misc/lightdm-gtk-greeter",
+          "x11-misc/pcmanfm",
+          "x11-terms/xterm",
+          "x11-wm/openbox"
+        ],
+        "essential": [
+          "app-admin/sudo",
+          "app-containers/cni-plugins",
+          "app-containers/containerd",
+          "app-containers/cri-tools",
+          "app-containers/runc",
+          "app-editors/nano",
+          "app-misc/jq",
+          "app-misc/screen",
+          "dev-embedded/u-boot-tools",
+          "net-firewall/iptables",
+          "net-fs/cifs-utils",
+          "net-fs/nfs-utils",
+          "net-misc/networkmanager",
+          "net-misc/openssh",
+          "net-misc/socat",
+          "net-vpn/openvpn",
+          "net-vpn/wireguard-tools",
+          "net-wireless/wpa_supplicant",
+          "sec-policy/selinux-base",
+          "sec-policy/selinux-base-policy",
+          "sys-apps/checkpolicy",
+          "sys-apps/haveged",
+          "sys-apps/i2c-tools",
+          "sys-apps/pciutils",
+          "sys-apps/policycoreutils",
+          "sys-apps/semodule-utils",
+          "sys-apps/usbutils",
+          "sys-apps/util-linux",
+          "sys-block/parted",
+          "sys-cluster/kubeadm",
+          "sys-cluster/kubectl",
+          "sys-cluster/kubelet",
+          "sys-fs/dosfstools",
+          "sys-fs/e2fsprogs",
+          "sys-fs/xfsprogs",
+          "sys-kernel/gentoo-sources",
+          "sys-kernel/linux-firmware",
+          "sys-libs/libseccomp",
+          "sys-libs/libselinux",
+          "sys-process/audit",
+          "sys-process/cronie"
+        ],
+        "removable": [
+          "app-admin/setools",
+          "net-firewall/conntrack-tools",
+          "net-firewall/nftables",
+          "sec-policy/selinux-container",
+          "sec-policy/selinux-virt",
+          "sys-apps/ethtool",
+          "sys-apps/iproute2",
+          "sys-apps/nvme-cli",
+          "sys-fs/cryptsetup",
+          "sys-fs/lvm2"
+        ]
+      },
+      "frontend": {
+        "available": [
+          "app-emulation/spice-vdagent",
+          "dev-lang/python",
+          "gui-libs/display-manager-init",
+          "lxde-base/lxappearance",
+          "lxde-base/lxpanel",
+          "lxde-base/lxsession",
+          "media-fonts/dejavu",
+          "media-fonts/noto",
+          "media-gfx/feh",
+          "sec-policy/selinux-vdagent",
+          "sys-auth/polkit",
+          "sys-kernel/dracut",
+          "www-client/netsurf",
+          "x11-apps/setxkbmap",
+          "x11-apps/xrandr",
+          "x11-apps/xset",
+          "x11-base/xorg-drivers",
+          "x11-base/xorg-server",
+          "x11-misc/lightdm",
+          "x11-misc/lightdm-gtk-greeter",
+          "x11-misc/pcmanfm",
+          "x11-terms/xterm",
+          "x11-wm/openbox"
+        ],
+        "essential": [
+          "app-admin/sudo",
+          "app-containers/cni-plugins",
+          "app-containers/containerd",
+          "app-containers/cri-tools",
+          "app-containers/runc",
+          "app-editors/nano",
+          "app-misc/jq",
+          "app-misc/screen",
+          "dev-embedded/u-boot-tools",
+          "net-firewall/iptables",
+          "net-fs/cifs-utils",
+          "net-fs/nfs-utils",
+          "net-misc/networkmanager",
+          "net-misc/openssh",
+          "net-misc/socat",
+          "net-vpn/openvpn",
+          "net-vpn/wireguard-tools",
+          "net-wireless/wpa_supplicant",
+          "sec-policy/selinux-base",
+          "sec-policy/selinux-base-policy",
+          "sys-apps/checkpolicy",
+          "sys-apps/haveged",
+          "sys-apps/i2c-tools",
+          "sys-apps/pciutils",
+          "sys-apps/policycoreutils",
+          "sys-apps/semodule-utils",
+          "sys-apps/usbutils",
+          "sys-apps/util-linux",
+          "sys-block/parted",
+          "sys-cluster/kubeadm",
+          "sys-cluster/kubectl",
+          "sys-cluster/kubelet",
+          "sys-fs/dosfstools",
+          "sys-fs/e2fsprogs",
+          "sys-fs/xfsprogs",
+          "sys-kernel/gentoo-sources",
+          "sys-kernel/linux-firmware",
+          "sys-libs/libseccomp",
+          "sys-libs/libselinux",
+          "sys-process/audit",
+          "sys-process/cronie"
+        ],
+        "removable": [
+          "app-admin/setools",
+          "net-firewall/conntrack-tools",
+          "net-firewall/nftables",
+          "sec-policy/selinux-container",
+          "sec-policy/selinux-virt",
+          "sys-apps/ethtool",
+          "sys-apps/iproute2",
+          "sys-apps/nvme-cli",
+          "sys-fs/cryptsetup",
+          "sys-fs/lvm2"
+        ]
+      },
+      "omnibus": {
+        "available": [
+          "app-emulation/spice-vdagent",
+          "dev-lang/python",
+          "gui-libs/display-manager-init",
+          "lxde-base/lxappearance",
+          "lxde-base/lxpanel",
+          "lxde-base/lxsession",
+          "media-fonts/dejavu",
+          "media-fonts/noto",
+          "media-gfx/feh",
+          "sec-policy/selinux-vdagent",
+          "sys-auth/polkit",
+          "sys-kernel/dracut",
+          "www-client/netsurf",
+          "x11-apps/setxkbmap",
+          "x11-apps/xrandr",
+          "x11-apps/xset",
+          "x11-base/xorg-drivers",
+          "x11-base/xorg-server",
+          "x11-misc/lightdm",
+          "x11-misc/lightdm-gtk-greeter",
+          "x11-misc/pcmanfm",
+          "x11-terms/xterm",
+          "x11-wm/openbox"
+        ],
+        "essential": [
+          "app-admin/sudo",
+          "app-containers/cni-plugins",
+          "app-containers/containerd",
+          "app-containers/cri-tools",
+          "app-containers/runc",
+          "app-editors/nano",
+          "app-misc/jq",
+          "app-misc/screen",
+          "dev-embedded/u-boot-tools",
+          "net-firewall/iptables",
+          "net-fs/cifs-utils",
+          "net-fs/nfs-utils",
+          "net-misc/networkmanager",
+          "net-misc/openssh",
+          "net-misc/socat",
+          "net-vpn/openvpn",
+          "net-vpn/wireguard-tools",
+          "net-wireless/wpa_supplicant",
+          "sec-policy/selinux-base",
+          "sec-policy/selinux-base-policy",
+          "sys-apps/checkpolicy",
+          "sys-apps/haveged",
+          "sys-apps/i2c-tools",
+          "sys-apps/pciutils",
+          "sys-apps/policycoreutils",
+          "sys-apps/semodule-utils",
+          "sys-apps/usbutils",
+          "sys-apps/util-linux",
+          "sys-block/parted",
+          "sys-cluster/kubeadm",
+          "sys-cluster/kubectl",
+          "sys-cluster/kubelet",
+          "sys-fs/dosfstools",
+          "sys-fs/e2fsprogs",
+          "sys-fs/xfsprogs",
+          "sys-kernel/gentoo-sources",
+          "sys-kernel/linux-firmware",
+          "sys-libs/libseccomp",
+          "sys-libs/libselinux",
+          "sys-process/audit",
+          "sys-process/cronie"
+        ],
+        "removable": [
+          "app-admin/setools",
+          "net-firewall/conntrack-tools",
+          "net-firewall/nftables",
+          "sec-policy/selinux-container",
+          "sec-policy/selinux-virt",
+          "sys-apps/ethtool",
+          "sys-apps/iproute2",
+          "sys-apps/nvme-cli",
+          "sys-fs/cryptsetup",
+          "sys-fs/lvm2"
+        ]
+      },
       "orangepi5": {
         "available": [
+          "app-admin/setools",
+          "app-containers/cni-plugins",
+          "app-containers/containerd",
+          "app-containers/cri-tools",
+          "app-containers/runc",
+          "net-firewall/conntrack-tools",
+          "net-firewall/nftables",
+          "sec-policy/selinux-container",
+          "sec-policy/selinux-virt",
+          "sys-apps/ethtool",
+          "sys-apps/iproute2",
+          "sys-apps/nvme-cli",
+          "sys-cluster/kubeadm",
+          "sys-cluster/kubectl",
+          "sys-cluster/kubelet",
+          "sys-fs/cryptsetup",
+          "sys-fs/lvm2",
+          "sys-fs/xfsprogs",
           "sys-kernel/dracut"
         ],
         "essential": [
@@ -1941,6 +2487,8 @@
           "x11-wm/openbox"
         ],
         "removable": [
+          "app-emulation/spice-vdagent",
+          "dev-lang/python",
           "gui-libs/display-manager-init",
           "lxde-base/lxappearance",
           "lxde-base/lxpanel",
@@ -1948,6 +2496,8 @@
           "media-fonts/dejavu",
           "media-fonts/noto",
           "media-gfx/feh",
+          "sec-policy/selinux-vdagent",
+          "sys-auth/polkit",
           "www-client/netsurf",
           "x11-apps/setxkbmap",
           "x11-apps/xrandr",
@@ -1956,6 +2506,88 @@
           "x11-misc/lightdm-gtk-greeter",
           "x11-misc/pcmanfm",
           "x11-terms/xterm"
+        ]
+      },
+      "pki": {
+        "available": [
+          "app-emulation/spice-vdagent",
+          "dev-lang/python",
+          "gui-libs/display-manager-init",
+          "lxde-base/lxappearance",
+          "lxde-base/lxpanel",
+          "lxde-base/lxsession",
+          "media-fonts/dejavu",
+          "media-fonts/noto",
+          "media-gfx/feh",
+          "sec-policy/selinux-vdagent",
+          "sys-auth/polkit",
+          "sys-kernel/dracut",
+          "www-client/netsurf",
+          "x11-apps/setxkbmap",
+          "x11-apps/xrandr",
+          "x11-apps/xset",
+          "x11-base/xorg-drivers",
+          "x11-base/xorg-server",
+          "x11-misc/lightdm",
+          "x11-misc/lightdm-gtk-greeter",
+          "x11-misc/pcmanfm",
+          "x11-terms/xterm",
+          "x11-wm/openbox"
+        ],
+        "essential": [
+          "app-admin/sudo",
+          "app-containers/cni-plugins",
+          "app-containers/containerd",
+          "app-containers/cri-tools",
+          "app-containers/runc",
+          "app-editors/nano",
+          "app-misc/jq",
+          "app-misc/screen",
+          "dev-embedded/u-boot-tools",
+          "net-firewall/iptables",
+          "net-fs/cifs-utils",
+          "net-fs/nfs-utils",
+          "net-misc/networkmanager",
+          "net-misc/openssh",
+          "net-misc/socat",
+          "net-vpn/openvpn",
+          "net-vpn/wireguard-tools",
+          "net-wireless/wpa_supplicant",
+          "sec-policy/selinux-base",
+          "sec-policy/selinux-base-policy",
+          "sys-apps/checkpolicy",
+          "sys-apps/haveged",
+          "sys-apps/i2c-tools",
+          "sys-apps/pciutils",
+          "sys-apps/policycoreutils",
+          "sys-apps/semodule-utils",
+          "sys-apps/usbutils",
+          "sys-apps/util-linux",
+          "sys-block/parted",
+          "sys-cluster/kubeadm",
+          "sys-cluster/kubectl",
+          "sys-cluster/kubelet",
+          "sys-fs/dosfstools",
+          "sys-fs/e2fsprogs",
+          "sys-fs/xfsprogs",
+          "sys-kernel/gentoo-sources",
+          "sys-kernel/linux-firmware",
+          "sys-libs/libseccomp",
+          "sys-libs/libselinux",
+          "sys-process/audit",
+          "sys-process/cronie"
+        ],
+        "removable": [
+          "app-admin/setools",
+          "net-firewall/conntrack-tools",
+          "net-firewall/nftables",
+          "sec-policy/selinux-container",
+          "sec-policy/selinux-virt",
+          "sys-apps/ethtool",
+          "sys-apps/iproute2",
+          "sys-apps/nvme-cli",
+          "sys-fs/cryptsetup",
+          "sys-fs/lvm2"
         ]
       }
     },
@@ -2085,6 +2717,8 @@
     "rpi5": {
       "backend": {
         "available": [
+          "app-emulation/spice-vdagent",
+          "dev-lang/python",
           "gui-libs/display-manager-init",
           "lxde-base/lxappearance",
           "lxde-base/lxpanel",
@@ -2092,6 +2726,8 @@
           "media-fonts/dejavu",
           "media-fonts/noto",
           "media-gfx/feh",
+          "sec-policy/selinux-vdagent",
+          "sys-auth/polkit",
           "www-client/netsurf",
           "x11-apps/setxkbmap",
           "x11-apps/xrandr",
@@ -2164,6 +2800,8 @@
       },
       "frontend": {
         "available": [
+          "app-emulation/spice-vdagent",
+          "dev-lang/python",
           "gui-libs/display-manager-init",
           "lxde-base/lxappearance",
           "lxde-base/lxpanel",
@@ -2171,6 +2809,8 @@
           "media-fonts/dejavu",
           "media-fonts/noto",
           "media-gfx/feh",
+          "sec-policy/selinux-vdagent",
+          "sys-auth/polkit",
           "www-client/netsurf",
           "x11-apps/setxkbmap",
           "x11-apps/xrandr",
@@ -2243,6 +2883,8 @@
       },
       "generic": {
         "available": [
+          "app-emulation/spice-vdagent",
+          "dev-lang/python",
           "gui-libs/display-manager-init",
           "lxde-base/lxappearance",
           "lxde-base/lxpanel",
@@ -2250,6 +2892,91 @@
           "media-fonts/dejavu",
           "media-fonts/noto",
           "media-gfx/feh",
+          "sec-policy/selinux-vdagent",
+          "sys-auth/polkit",
+          "www-client/netsurf",
+          "x11-apps/setxkbmap",
+          "x11-apps/xrandr",
+          "x11-apps/xset",
+          "x11-base/xorg-drivers",
+          "x11-base/xorg-server",
+          "x11-misc/lightdm",
+          "x11-misc/lightdm-gtk-greeter",
+          "x11-misc/pcmanfm",
+          "x11-terms/xterm",
+          "x11-wm/openbox"
+        ],
+        "essential": [
+          "app-admin/setools",
+          "app-admin/sudo",
+          "app-containers/cni-plugins",
+          "app-containers/containerd",
+          "app-containers/cri-tools",
+          "app-containers/runc",
+          "app-editors/nano",
+          "app-misc/jq",
+          "app-misc/screen",
+          "dev-embedded/raspberrypi-utils",
+          "dev-embedded/rpi-eeprom",
+          "dev-embedded/u-boot-tools",
+          "net-firewall/conntrack-tools",
+          "net-firewall/iptables",
+          "net-firewall/nftables",
+          "net-fs/cifs-utils",
+          "net-fs/nfs-utils",
+          "net-misc/networkmanager",
+          "net-misc/openssh",
+          "net-misc/socat",
+          "net-vpn/openvpn",
+          "net-vpn/wireguard-tools",
+          "net-wireless/wpa_supplicant",
+          "sec-policy/selinux-base",
+          "sec-policy/selinux-base-policy",
+          "sec-policy/selinux-container",
+          "sec-policy/selinux-virt",
+          "sys-apps/checkpolicy",
+          "sys-apps/ethtool",
+          "sys-apps/haveged",
+          "sys-apps/i2c-tools",
+          "sys-apps/iproute2",
+          "sys-apps/nvme-cli",
+          "sys-apps/pciutils",
+          "sys-apps/policycoreutils",
+          "sys-apps/semodule-utils",
+          "sys-apps/usbutils",
+          "sys-apps/util-linux",
+          "sys-block/parted",
+          "sys-boot/raspberrypi-firmware",
+          "sys-cluster/kubeadm",
+          "sys-cluster/kubectl",
+          "sys-cluster/kubelet",
+          "sys-firmware/raspberrypi-wifi-ucode",
+          "sys-fs/cryptsetup",
+          "sys-fs/dosfstools",
+          "sys-fs/e2fsprogs",
+          "sys-fs/lvm2",
+          "sys-fs/xfsprogs",
+          "sys-kernel/raspberrypi-sources",
+          "sys-libs/libseccomp",
+          "sys-libs/libselinux",
+          "sys-process/audit",
+          "sys-process/cronie"
+        ],
+        "removable": []
+      },
+      "omnibus": {
+        "available": [
+          "app-emulation/spice-vdagent",
+          "dev-lang/python",
+          "gui-libs/display-manager-init",
+          "lxde-base/lxappearance",
+          "lxde-base/lxpanel",
+          "lxde-base/lxsession",
+          "media-fonts/dejavu",
+          "media-fonts/noto",
+          "media-gfx/feh",
+          "sec-policy/selinux-vdagent",
+          "sys-auth/polkit",
           "www-client/netsurf",
           "x11-apps/setxkbmap",
           "x11-apps/xrandr",
@@ -2322,6 +3049,8 @@
       },
       "pki": {
         "available": [
+          "app-emulation/spice-vdagent",
+          "dev-lang/python",
           "gui-libs/display-manager-init",
           "lxde-base/lxappearance",
           "lxde-base/lxpanel",
@@ -2329,6 +3058,8 @@
           "media-fonts/dejavu",
           "media-fonts/noto",
           "media-gfx/feh",
+          "sec-policy/selinux-vdagent",
+          "sys-auth/polkit",
           "www-client/netsurf",
           "x11-apps/setxkbmap",
           "x11-apps/xrandr",
@@ -2462,6 +3193,8 @@
           "x11-wm/openbox"
         ],
         "removable": [
+          "app-emulation/spice-vdagent",
+          "dev-lang/python",
           "gui-libs/display-manager-init",
           "lxde-base/lxappearance",
           "lxde-base/lxpanel",
@@ -2469,6 +3202,8 @@
           "media-fonts/dejavu",
           "media-fonts/noto",
           "media-gfx/feh",
+          "sec-policy/selinux-vdagent",
+          "sys-auth/polkit",
           "www-client/netsurf",
           "x11-apps/setxkbmap",
           "x11-apps/xrandr",
@@ -2489,6 +3224,7 @@
           "app-crypt/gocryptfs",
           "app-editors/neovim",
           "app-editors/vim",
+          "app-emulation/spice-vdagent",
           "app-office/libreoffice",
           "dev-lang/go",
           "dev-lang/python",
@@ -2545,6 +3281,7 @@
           "media-video/wireplumber",
           "net-im/neochat",
           "net-print/cups",
+          "sec-policy/selinux-vdagent",
           "sys-apps/dbus",
           "sys-apps/flatpak",
           "sys-auth/elogind",
@@ -2585,6 +3322,7 @@
           "app-editors/nano",
           "app-misc/jq",
           "app-misc/screen",
+          "dev-util/pahole",
           "net-firewall/conntrack-tools",
           "net-firewall/firewalld",
           "net-firewall/iptables",
@@ -2635,6 +3373,7 @@
           "app-crypt/gocryptfs",
           "app-editors/neovim",
           "app-editors/vim",
+          "app-emulation/spice-vdagent",
           "app-office/libreoffice",
           "dev-lang/go",
           "dev-lang/python",
@@ -2687,6 +3426,7 @@
           "media-video/wireplumber",
           "net-im/neochat",
           "net-print/cups",
+          "sec-policy/selinux-vdagent",
           "sys-apps/dbus",
           "sys-apps/flatpak",
           "sys-auth/elogind",
@@ -2726,6 +3466,7 @@
           "app-editors/nano",
           "app-misc/jq",
           "app-misc/screen",
+          "dev-util/pahole",
           "net-firewall/conntrack-tools",
           "net-firewall/firewalld",
           "net-firewall/iptables",
@@ -2844,6 +3585,7 @@
           "app-editors/nano",
           "app-misc/jq",
           "app-misc/screen",
+          "dev-util/pahole",
           "net-firewall/conntrack-tools",
           "net-firewall/firewalld",
           "net-firewall/iptables",
@@ -2889,6 +3631,7 @@
         ],
         "removable": [
           "app-crypt/gocryptfs",
+          "app-emulation/spice-vdagent",
           "dev-lang/python",
           "dev-util/vulkan-tools",
           "gnome-extra/nm-applet",
@@ -2903,6 +3646,7 @@
           "media-libs/libva",
           "media-libs/mesa",
           "media-libs/vulkan-loader",
+          "sec-policy/selinux-vdagent",
           "sys-apps/dbus",
           "sys-apps/flatpak",
           "sys-auth/elogind",
@@ -2991,6 +3735,7 @@
           "app-editors/nano",
           "app-misc/jq",
           "app-misc/screen",
+          "dev-util/pahole",
           "net-firewall/conntrack-tools",
           "net-firewall/firewalld",
           "net-firewall/iptables",
@@ -3036,6 +3781,7 @@
         ],
         "removable": [
           "app-crypt/gocryptfs",
+          "app-emulation/spice-vdagent",
           "dev-lang/python",
           "dev-util/vulkan-tools",
           "gnome-extra/nm-applet",
@@ -3050,6 +3796,7 @@
           "media-libs/libva",
           "media-libs/mesa",
           "media-libs/vulkan-loader",
+          "sec-policy/selinux-vdagent",
           "sys-apps/dbus",
           "sys-apps/flatpak",
           "sys-auth/elogind",
@@ -3076,6 +3823,7 @@
           "app-crypt/gocryptfs",
           "app-editors/neovim",
           "app-editors/vim",
+          "app-emulation/spice-vdagent",
           "app-office/libreoffice",
           "dev-lang/go",
           "dev-lang/python",
@@ -3128,6 +3876,7 @@
           "media-video/wireplumber",
           "net-im/neochat",
           "net-print/cups",
+          "sec-policy/selinux-vdagent",
           "sys-apps/dbus",
           "sys-apps/flatpak",
           "sys-auth/elogind",
@@ -3167,6 +3916,7 @@
           "app-editors/nano",
           "app-misc/jq",
           "app-misc/screen",
+          "dev-util/pahole",
           "net-firewall/conntrack-tools",
           "net-firewall/firewalld",
           "net-firewall/iptables",
@@ -3223,6 +3973,7 @@
           "app-crypt/gocryptfs",
           "app-editors/neovim",
           "app-editors/vim",
+          "app-emulation/spice-vdagent",
           "app-office/libreoffice",
           "dev-lang/go",
           "dev-lang/python",
@@ -3279,6 +4030,7 @@
           "media-video/wireplumber",
           "net-im/neochat",
           "net-print/cups",
+          "sec-policy/selinux-vdagent",
           "sys-apps/dbus",
           "sys-apps/flatpak",
           "sys-auth/elogind",
@@ -3319,6 +4071,7 @@
           "app-editors/nano",
           "app-misc/jq",
           "app-misc/screen",
+          "dev-util/pahole",
           "net-firewall/conntrack-tools",
           "net-firewall/firewalld",
           "net-firewall/iptables",
@@ -3431,6 +4184,7 @@
           "app-editors/nano",
           "app-misc/jq",
           "app-misc/screen",
+          "dev-util/pahole",
           "net-firewall/conntrack-tools",
           "net-firewall/firewalld",
           "net-firewall/iptables",
@@ -3476,6 +4230,7 @@
         ],
         "removable": [
           "app-crypt/gocryptfs",
+          "app-emulation/spice-vdagent",
           "dev-lang/python",
           "dev-util/vulkan-tools",
           "gnome-extra/nm-applet",
@@ -3490,6 +4245,7 @@
           "media-libs/libva",
           "media-libs/mesa",
           "media-libs/vulkan-loader",
+          "sec-policy/selinux-vdagent",
           "sys-apps/dbus",
           "sys-apps/flatpak",
           "sys-auth/elogind",
@@ -3516,6 +4272,7 @@
           "app-crypt/gocryptfs",
           "app-editors/neovim",
           "app-editors/vim",
+          "app-emulation/spice-vdagent",
           "app-office/libreoffice",
           "dev-lang/go",
           "dev-lang/python",
@@ -3568,6 +4325,7 @@
           "media-video/wireplumber",
           "net-im/neochat",
           "net-print/cups",
+          "sec-policy/selinux-vdagent",
           "sys-apps/dbus",
           "sys-apps/flatpak",
           "sys-auth/elogind",
@@ -3607,6 +4365,7 @@
           "app-editors/nano",
           "app-misc/jq",
           "app-misc/screen",
+          "dev-util/pahole",
           "net-firewall/conntrack-tools",
           "net-firewall/firewalld",
           "net-firewall/iptables",
@@ -3663,6 +4422,7 @@
           "app-crypt/gocryptfs",
           "app-editors/neovim",
           "app-editors/vim",
+          "app-emulation/spice-vdagent",
           "app-office/libreoffice",
           "dev-lang/go",
           "dev-lang/python",
@@ -3719,6 +4479,7 @@
           "media-video/wireplumber",
           "net-im/neochat",
           "net-print/cups",
+          "sec-policy/selinux-vdagent",
           "sys-apps/dbus",
           "sys-apps/flatpak",
           "sys-auth/elogind",
@@ -3759,6 +4520,7 @@
           "app-editors/nano",
           "app-misc/jq",
           "app-misc/screen",
+          "dev-util/pahole",
           "net-firewall/conntrack-tools",
           "net-firewall/firewalld",
           "net-firewall/iptables",
@@ -3871,6 +4633,7 @@
           "app-editors/nano",
           "app-misc/jq",
           "app-misc/screen",
+          "dev-util/pahole",
           "net-firewall/conntrack-tools",
           "net-firewall/firewalld",
           "net-firewall/iptables",
@@ -3916,6 +4679,7 @@
         ],
         "removable": [
           "app-crypt/gocryptfs",
+          "app-emulation/spice-vdagent",
           "dev-lang/python",
           "dev-util/vulkan-tools",
           "gnome-extra/nm-applet",
@@ -3930,6 +4694,7 @@
           "media-libs/libva",
           "media-libs/mesa",
           "media-libs/vulkan-loader",
+          "sec-policy/selinux-vdagent",
           "sys-apps/dbus",
           "sys-apps/flatpak",
           "sys-auth/elogind",
@@ -4018,6 +4783,7 @@
           "app-editors/nano",
           "app-misc/jq",
           "app-misc/screen",
+          "dev-util/pahole",
           "net-firewall/conntrack-tools",
           "net-firewall/firewalld",
           "net-firewall/iptables",
@@ -4063,6 +4829,7 @@
         ],
         "removable": [
           "app-crypt/gocryptfs",
+          "app-emulation/spice-vdagent",
           "dev-lang/python",
           "dev-util/vulkan-tools",
           "gnome-extra/nm-applet",
@@ -4077,6 +4844,7 @@
           "media-libs/libva",
           "media-libs/mesa",
           "media-libs/vulkan-loader",
+          "sec-policy/selinux-vdagent",
           "sys-apps/dbus",
           "sys-apps/flatpak",
           "sys-auth/elogind",
@@ -4165,6 +4933,7 @@
           "app-editors/nano",
           "app-misc/jq",
           "app-misc/screen",
+          "dev-util/pahole",
           "net-firewall/conntrack-tools",
           "net-firewall/firewalld",
           "net-firewall/iptables",
@@ -4210,6 +4979,7 @@
         ],
         "removable": [
           "app-crypt/gocryptfs",
+          "app-emulation/spice-vdagent",
           "dev-lang/python",
           "dev-util/vulkan-tools",
           "gnome-extra/nm-applet",
@@ -4224,6 +4994,7 @@
           "media-libs/libva",
           "media-libs/mesa",
           "media-libs/vulkan-loader",
+          "sec-policy/selinux-vdagent",
           "sys-apps/dbus",
           "sys-apps/flatpak",
           "sys-auth/elogind",
