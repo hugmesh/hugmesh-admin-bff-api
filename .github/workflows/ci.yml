@@ -1,0 +1,173 @@
+# GitHub-side TEST workflow: the full Maven suite, with the cross-repo drift guards ARMED.
+#
+# WHY THIS FILE EXISTS. Until it landed, the only GitHub workflow here was release.yml, whose
+# image build runs `package -DskipTests`. The suite ran nowhere on GitHub, so the drift guards
+# that compare this repo against its siblings were dark. The vendored image-gen catalogs
+# (src/main/resources/catalog/{image,packages}-catalog.json) drifted from the generator's
+# canonical docs/catalog for seven weeks (last refresh 2026-09-24, generator changes through
+# 2026-11-10) and the admin console served stale options the whole time. ImageCatalogDriftTest
+# would have caught it on day one, but it assumeTrue()-SKIPS unless -Dcatalog.source.dir names a
+# real generator checkout, and only .gitlab-ci.yml ever passed that flag.
+#
+# TRIGGERS. pull_request, so a PR that breaks the suite or a guard is red before it merges. A
+# daily schedule, because the generator changes on ITS OWN main: a catalog change there makes
+# this repo stale without any commit here, and only a run that nobody has to start turns that
+# red. workflow_dispatch for a manual re-check after a refresh.
+#
+# RUNNER. GitHub-hosted `ubuntu-latest`, written literally, on every job. This workflow runs on
+# pull_request, and a pull request must never reach the operator's self-hosted runner (see
+# release.yml, which deliberately has no pull_request trigger for that reason). Hosted runners
+# have Docker, which the Testcontainers full-context tests need.
+#
+# THE SIBLINGS. Both checkouts go under .catalog-sibling/ inside the workspace, the same place
+# .gitlab-ci.yml clones them. NEVER at ../hugmesh-generator: the pom's catalog-copy profile
+# activates on the existence of that exact path and OVERWRITES the vendored catalogs from it at
+# generate-resources, so the drift test would compare the generator with itself and pass on a
+# stale commit. `-P '!catalog-copy'` below switches the profile off by name as well.
+# The generator is read at main, not at a pinned commit, on purpose: the question this job
+# answers is "does this repo serve what the generator ships today".
+#
+# CREDENTIAL. The net.hugmesh libraries (hugmesh-parent, -build-config, -commons incl. its
+# tests classifier, -auth-core) resolve from GitHub Packages through
+# .github/maven-ci-settings.xml, the file release.yml's image build uses. maven.pkg.github.com
+# needs a token even to read and the automatic GITHUB_TOKEN cannot read another repository's
+# package, so the build needs the PACKAGES_READ_TOKEN secret. It reaches pushes, schedules and
+# same-repository pull requests, not a fork's pull request; without it the job fails by name.
+#
+# scripts/test-ci-workflow.py pins the parts of this file that keep the guards armed. It runs
+# first, so a change that disarms them fails in seconds instead of passing a blind build.
+name: CI
+
+on:
+  pull_request:
+  schedule:
+    # 06:17 UTC daily. Off the hour, where scheduled runs queue behind everyone else's.
+    - cron: '17 6 * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: test (drift guards armed)
+    # GitHub-hosted, never self-hosted: this job runs on pull_request (see RUNNER above).
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      CATALOG_SIBLING_ROOT: ${{ github.workspace }}/.catalog-sibling
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # Stdlib only, no network, well under a second.
+      - name: Pin this workflow (the guards must stay armed)
+        run: python3 scripts/test-ci-workflow.py
+
+      - name: Require the package read token (say WHY, never fall back)
+        env:
+          UPSTREAM_PACKAGES_TOKEN: ${{ secrets.PACKAGES_READ_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${UPSTREAM_PACKAGES_TOKEN}" ]; then
+            echo "::error::PACKAGES_READ_TOKEN did not reach this run (a pull request from a fork, or the secret is unset). The net.hugmesh libraries cannot be resolved without it, so the suite cannot run. The repo-root settings.xml is NOT a fall-back: it points at the retired GitLab registry and fails as 'Non-resolvable parent POM'."
+            exit 1
+          fi
+
+      # The generator owns the CANONICAL catalogs; src/main/resources/catalog/*.json here are a
+      # vendored copy that ImageCatalogDriftTest compares against this checkout.
+      - name: Check out hugmesh-generator at main (catalog source)
+        id: generator
+        uses: actions/checkout@v4
+        with:
+          repository: hugmesh/hugmesh-generator
+          ref: main
+          path: .catalog-sibling/hugmesh-generator
+          fetch-depth: 1
+          sparse-checkout: docs/catalog
+          persist-credentials: false
+
+      # The CONSOLE half of the app-profile schema contract (AppProfileSchemaMirrorTest).
+      - name: Check out hugmesh-superadmin-service-catalog-ui at main (schema mirror)
+        id: console
+        uses: actions/checkout@v4
+        with:
+          repository: hugmesh/hugmesh-superadmin-service-catalog-ui
+          ref: main
+          path: .catalog-sibling/hugmesh-superadmin-service-catalog-ui
+          fetch-depth: 1
+          sparse-checkout: schemas
+          persist-credentials: false
+
+      # A FAILED CHECKOUT MUST NOT LOOK LIKE A PASS. ImageCatalogDriftTest SKIPS when its source
+      # file is absent, so assert every file by name before Maven starts.
+      - name: Preflight, sibling sources present
+        env:
+          GENERATOR_SHA: ${{ steps.generator.outputs.commit }}
+          CONSOLE_SHA: ${{ steps.console.outputs.commit }}
+        run: |
+          set -euo pipefail
+          rc=0
+          for f in \
+            "${CATALOG_SIBLING_ROOT}/hugmesh-generator/docs/catalog/image-catalog.json" \
+            "${CATALOG_SIBLING_ROOT}/hugmesh-generator/docs/catalog/packages-catalog.json" \
+            "${CATALOG_SIBLING_ROOT}/hugmesh-superadmin-service-catalog-ui/schemas/app-profile.schema.json"; do
+            test -f "${f}" || { echo "::error::SIBLING SOURCE MISSING: ${f}. The guard that reads it would SKIP and this job would be green while blind."; rc=1; }
+          done
+          if [ -e "${GITHUB_WORKSPACE}/../hugmesh-generator" ]; then
+            echo "::error::a hugmesh-generator checkout sits next to the workspace; the pom's catalog-copy profile activates on that path and would refresh the vendored catalogs instead of asserting them."
+            rc=1
+          fi
+          {
+            echo '## Drift sources'
+            echo
+            echo "- hugmesh-generator main @ \`${GENERATOR_SHA}\` (docs/catalog)"
+            echo "- hugmesh-superadmin-service-catalog-ui main @ \`${CONSOLE_SHA}\` (schemas)"
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit ${rc}
+
+      - name: Set up JDK 25 (matches the Dockerfile's eclipse-temurin:25)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+
+      # Same drift flags as .gitlab-ci.yml's test:mvn. Deliberately NOT -Pcatalog-copy: the
+      # committed copy must be ASSERTED here, never silently refreshed into agreement. To refresh
+      # it, copy generator docs/catalog/{image,packages}-catalog.json into
+      # src/main/resources/catalog/ and commit. Ryuk off and api.version pinned as in GitLab CI.
+      - name: Build + test (verify, drift guards armed)
+        env:
+          UPSTREAM_PACKAGES_ACTOR: ${{ secrets.PACKAGES_READ_ACTOR || github.actor }}
+          UPSTREAM_PACKAGES_TOKEN: ${{ secrets.PACKAGES_READ_TOKEN }}
+          TESTCONTAINERS_RYUK_DISABLED: "true"
+          MAVEN_OPTS: "-Dapi.version=1.43"
+        run: |
+          set -euo pipefail
+          ./mvnw -B -s .github/maven-ci-settings.xml clean verify -P '!catalog-copy' \
+            -Dcatalog.source.dir="${CATALOG_SIBLING_ROOT}/hugmesh-generator/docs/catalog" \
+            -Dappprofile.schema.console.dir="${CATALOG_SIBLING_ROOT}/hugmesh-superadmin-service-catalog-ui/schemas" \
+            -Dappprofile.schema.mirror.required=true
+
+      # A test that regenerates a COMMITTED artefact passes by rewriting it; in a throwaway
+      # workspace nobody sees the diff. A clean tree after the build is the invariant.
+      - name: The build rewrote no committed file
+        run: |
+          git diff --exit-code \
+            || { echo "::error::BUILD REWROTE A COMMITTED FILE (see the diff above): a test regenerated a checked-in artefact instead of asserting it."; exit 1; }
+
+      - name: Upload the surefire reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-reports
+          path: target/surefire-reports/
+          if-no-files-found: warn
+          retention-days: 7
