@@ -9,6 +9,8 @@ import net.hugmesh.adminbff.device.ExportModels.ExportBody;
 
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Properties;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -137,38 +139,45 @@ class HeadscaleAclParityTest {
         assertThat(golden.get("ssh").get(0).get("src").get(0).asText()).isEqualTo("tag:superadmin");
         assertThat(golden.get("ssh").get(0).get("dst").get(0).asText()).startsWith("tag:mesh_");
 
-        // [FIX-SERVERTAG] every PER-NODE dst tag is control-owned.
+        // [FIX-SERVERTAG] every security tag the document names is DECLARED with the EMPTY
+        // owner list, and the membership tags stay owned by the membership user.
         //
-        // ⚠ KNOWN CARVE-OUT, DELIBERATELY PINNED RATHER THAN HIDDEN — `tag:mesh_<id>`.
-        // It is force-applied to every node (hugmesh-generator
-        // specs/usr/sbin/hugmesh-headscale-forcetags: mesh_tag is built there and unconditionally
-        // added to `forced`) and it is the dst of the always-on SUPERADMIN rule
-        // (specs/usr/sbin/gen-headscale-policy.sh), yet it is NOT declared in tagOwners: the
-        // template's static head (specs/etc/headscale/policy.hujson.tmpl) lists only
-        // tag:hugmesh/pki/be/fe/host/superadmin, and the dynamic splice emits per-node
-        // tag:dev_* / tag:dom_* only. So the template's own [FIX-SERVERTAG] claim — "security
-        // dst tags are listed as control-owned in tagOwners" — does not hold for tag:mesh_*.
-        //
-        // This compiler MIRRORS the live node-side writer; it is not the place to unilaterally
-        // change what the live mesh declares (that is a node-side change to the LIVE writer, and
-        // a policy headscale currently accepts). So the gap is asserted AS IT IS, and named, so
-        // that closing it is a deliberate decision rather than a silent diff. Decision 101 = B
-        // settled the single-writer question (this compiler becomes the only writer), so once
-        // the node renderer is retired, closing this gap is this compiler's job alone — and it
-        // must be done together with dropping this pin and the shared golden.
-        String meshDst = golden.get("ssh").get(0).get("dst").get(0).asText();
-        assertThat(golden.get("tagOwners").has(meshDst))
-                .as("KNOWN GAP (node-side, pre-existing): %s is an ssh dst and is force-assigned, "
-                        + "but neither writer declares it in tagOwners. If this flips to true, the "
-                        + "node-side template gained the declaration — update this carve-out.", meshDst)
-                .isFalse();
+        // History, because the golden itself once carried the hole: until 2026-11-11 this file's
+        // copy of the golden (and this compiler) gave tag:superadmin and every tag:dev_<fp> the
+        // owner "hugmesh", the user every pre-auth key is minted for. headscale 0.23 grants a
+        // node every advertised tag its user owns, so that let any node self-assign the tag.
+        // hugmesh-generator #888/#896 fixed the live writer and its golden; this copy was not
+        // re-synced, and the cross-repo byte-identity check that would have said so did not run
+        // in CI. The same change closed the old `tag:mesh_<id>` carve-out: the renderer now
+        // declares the mesh tag (ownerless), so a missing declaration is a failure here too.
+        JsonNode tagOwners = golden.get("tagOwners");
+        for (String t : List.of("tag:hugmesh", "tag:pki", "tag:be", "tag:fe", "tag:host")) {
+            assertThat(tagOwners.get(t)).as("membership tag %s must be declared", t).isNotNull();
+            assertThat(tagOwners.get(t).toString()).as(t).isEqualTo("[\"hugmesh\"]");
+        }
+        List<String> named = new ArrayList<>();
         golden.get("ssh").forEach(rule -> {
-            String dst = rule.get("dst").get(0).asText();
-            if (dst.startsWith("tag:mesh_")) {
-                return;   // the carve-out asserted immediately above
+            rule.get("src").forEach(n -> named.add(n.asText()));
+            rule.get("dst").forEach(n -> named.add(n.asText()));
+        });
+        assertThat(named).contains("tag:superadmin").anyMatch(t -> t.startsWith("tag:mesh_"));
+        for (String tag : named) {
+            if (tag.equals("tag:hugmesh")) {
+                continue;   // the advisory membership src, asserted owned above
             }
-            assertThat(golden.get("tagOwners").has(dst))
-                    .as("dst %s must be declared control-owned in tagOwners", dst).isTrue();
+            assertThat(tagOwners.has(tag)).as("ssh names %s, which must be declared", tag).isTrue();
+            assertThat(tagOwners.get(tag).isArray() && tagOwners.get(tag).isEmpty())
+                    .as("security tag %s must have the EMPTY owner list, got %s", tag,
+                            tagOwners.get(tag))
+                    .isTrue();
+        }
+        tagOwners.fieldNames().forEachRemaining(tag -> {
+            if (tag.equals("tag:superadmin") || tag.startsWith("tag:mesh_")
+                    || tag.startsWith("tag:dev_") || tag.startsWith("tag:dom_")) {
+                assertThat(tagOwners.get(tag).isEmpty())
+                        .as("security tag %s must have NO owner, got %s", tag, tagOwners.get(tag))
+                        .isTrue();
+            }
         });
 
         // [FIX-OIDC-USERS] no principals headscale does not know.
