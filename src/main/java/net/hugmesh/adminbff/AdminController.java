@@ -908,7 +908,9 @@ public class AdminController {
                 // Best-effort + gated on broker.gateway-revocation.enabled — a no-op in dev.
                 // Symmetric with revokeRole (closes the G2 inverse-stale gap), but with the
                 // SHORT grant TTL: the key refuses every token for the subject while it lives,
-                // and a grant cuts nothing off (SubjectRevocationTtl).
+                // and a grant cuts nothing off (SubjectRevocationTtl). It cannot shorten a
+                // cut-off already on the key (a demotion is revoke-then-grant): the gateway
+                // keeps the later expiry (hugmesh-gateway#69).
                 .then(revocations.revokeSubject(user, "role-grant", subjectGrantTtlSeconds))
                 .then(Mono.fromRunnable(() ->
                         usage.record(actor(auth), List.of(RoleName.ADMIN.value()), "admin.role-grant").subscribe()))

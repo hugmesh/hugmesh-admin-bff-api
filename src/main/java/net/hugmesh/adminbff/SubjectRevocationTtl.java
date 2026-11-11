@@ -34,10 +34,24 @@ package net.hugmesh.adminbff;
  * role. A stale token here is UNDER-privileged; nothing is cut off, and the key's lifetime is
  * pure lock-out. They keep the short 1 h default and must not share the cut-off value.
  *
+ * <h2>One key, several writers: the gateway keeps the later expiry</h2>
+ * Every writer above, and the suspension reconcile below, writes the SAME key
+ * {@code subject:<user>}. An ordinary demotion is a role revoke (cut-off TTL) followed by a role
+ * grant (grant TTL); an account-disable while a suspension is active is followed within 30 s by a
+ * suspension tick (1 h). With a last-write-wins key both sequences cut the 168 h cut-off down to
+ * 1 h. The gateway therefore keeps the LATER of the stored and the requested expiry
+ * (hugmesh-gateway {@code RevocationListService.revoke}, a compare-and-set on
+ * {@code expires_at}, hugmesh-gateway#69): a short write can extend a key but never shorten it,
+ * and only a DELETE lifts one early. Nothing here clears a subject key, so after a demotion the
+ * person stays refused for the full cut-off TTL. Turn {@code broker.gateway-revocation.enabled}
+ * on only against gateways that all carry that change; an older gateway still lets the last
+ * write win.
+ *
  * <h2>Not covered here</h2>
  * The access-suspension reconcile re-writes its subject key on every tick while the suspension
  * is active (see {@code AbstractAccessSyncAction}), so it does not depend on the key outliving a
- * token; it keeps its own short, named TTL so lifting a suspension restores access promptly.
+ * token; it keeps its own short, named TTL so lifting a suspension restores access promptly
+ * (unless a cut-off on the same key is still running, which the gateway keeps).
  *
  * <p>All of this is inert while {@code broker.gateway-revocation.enabled} is false (the shipped
  * default) and while the client has no credential the gateway accepts (hugmesh-admin-bff-api#45,

@@ -57,7 +57,9 @@ abstract class AbstractAccessSyncAction {
      * outlive a token on its own. Its life after the LAST tick is how long the person stays
      * locked out once the suspension is lifted or expires (the gateway refuses every token for
      * the subject while the key lives, and nothing clears a subject key early). A 168 h value
-     * here would keep a lifted suspension in force for a week. Known gap: if the reconcile
+     * here would keep a lifted suspension in force for a week. These writes cannot shorten a
+     * longer cut-off already on the same key (an account-disable, a role revoke): the gateway
+     * keeps the later expiry (hugmesh-gateway#69). Known gap: if the reconcile
      * stops ticking for longer than this TTL while a suspension is active, the key lapses
      * until the next successful tick.
      */
