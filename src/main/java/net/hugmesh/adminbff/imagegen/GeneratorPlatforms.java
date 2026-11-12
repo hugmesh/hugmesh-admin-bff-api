@@ -28,8 +28,9 @@ import java.util.regex.Pattern;
  *       platform, which is an entry's {@code imageSpec.platform}.</li>
  * </ul>
  *
- * <p><b>Fail closed.</b> Loading happens once, at class initialisation. A missing or unreadable
- * resource, a missing or empty enum, a non-string member, or a member outside
+ * <p><b>Fail closed.</b> Loading happens once, at class initialisation, which the
+ * {@link WorklistEnvelopeValidator} bean triggers while the context starts. A missing or
+ * unreadable resource, a missing or empty enum, a non-string member, or a member outside
  * {@link #TOKEN} throws, so the BFF does not start rather than accept a platform set it cannot
  * trust. The charset check matters because the entry platform is substituted into the per-build
  * manifest ({@code ImageBuildOrchestrator.renderManifest}); a schema refresh must never be able

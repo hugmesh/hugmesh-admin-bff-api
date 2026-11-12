@@ -49,6 +49,14 @@ public class WorklistEnvelopeValidator {
     static final Set<String> SECRET_FIELDS =
             Set.of("local_pass", "luks_pass", "user_password", "root_password");
 
+    /**
+     * The platform sets, read when this bean is CONSTRUCTED. Touching {@link GeneratorPlatforms}
+     * here runs its fail-closed load during context startup, so a missing or untrusted vendored
+     * schema stops the BFF from starting instead of turning the first batch request into a 500.
+     */
+    private final Set<String> entryPlatforms = GeneratorPlatforms.entryPlatforms();
+    private final Set<String> imageSpecPlatforms = GeneratorPlatforms.imageSpecPlatforms();
+
     /** Portage atom charset (worklist.v1 schema packages_add/packages_drop). */
     private static final Pattern ATOM =
             Pattern.compile("^[a-z0-9][a-z0-9+._-]*/[A-Za-z0-9+._-]+$");
@@ -100,10 +108,10 @@ public class WorklistEnvelopeValidator {
             if (e == null) {
                 throw ApiException.badRequest("entry " + i + " is missing");
             }
-            if (!GeneratorPlatforms.isEntryPlatform(e.hardwareClass())) {
+            if (e.hardwareClass() == null || !entryPlatforms.contains(e.hardwareClass())) {
                 throw ApiException.badRequest("entry " + i + " platform " + quoted(e.hardwareClass())
                         + " is not in the generator worklist schema (accepted: "
-                        + GeneratorPlatforms.describeEntryPlatforms() + ")");
+                        + String.join(", ", entryPlatforms) + ")");
             }
             JsonNode spec = e.imageSpec();
             if (spec != null && !spec.isNull()) {
@@ -118,11 +126,11 @@ public class WorklistEnvelopeValidator {
                 assertPackageAtoms(spec, "entry " + i + " imageSpec");
                 JsonNode p = spec.get("platform");
                 if (p != null && !p.isNull()
-                        && !(p.isTextual() && GeneratorPlatforms.isImageSpecPlatform(p.asText()))) {
+                        && !(p.isTextual() && imageSpecPlatforms.contains(p.asText()))) {
                     throw ApiException.badRequest("entry " + i + " imageSpec platform "
                             + quoted(p.isTextual() ? p.asText() : p.toString())
                             + " is not in the generator worklist schema (accepted: "
-                            + GeneratorPlatforms.describeImageSpecPlatforms() + ")");
+                            + String.join(", ", imageSpecPlatforms) + ")");
                 }
             }
         }
