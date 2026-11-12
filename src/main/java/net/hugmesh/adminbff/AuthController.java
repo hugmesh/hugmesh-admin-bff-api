@@ -238,7 +238,11 @@ public class AuthController {
         // request's brand admits the registration. `auth` is null/anonymous on the ordinary
         // untokened registration and the resolver falls back to the deployment's own brand;
         // it never reads a caller-supplied domain. See RegistrationDomainResolver.
-        return store.isEmailInvited(email, registrationDomains.forRegistration(auth))
+        String domain = registrationDomains.forRegistration(auth);
+        // The NO_DOMAIN sentinel refuses before the lookup (#111): a row CAN carry it.
+        Mono<Boolean> gate = RegistrationDomainResolver.admitsNoInvite(domain)
+                ? Mono.just(false) : store.isEmailInvited(email, domain);
+        return gate
                 .flatMap(invited -> {
                     if (!invited) return Mono.error(ApiException.forbidden("email not invited by an admin"));
                     return store.ensureAccount("google", email)
@@ -256,7 +260,11 @@ public class AuthController {
                                                      ServerWebExchange exchange) {
         String handle = str(body.username()).toLowerCase();
         // DOMAIN-SCOPED GATE (auth-core issue #1) — see registerGoogle above.
-        return store.isDiscordInvited(handle, registrationDomains.forRegistration(auth))
+        String domain = registrationDomains.forRegistration(auth);
+        // The NO_DOMAIN sentinel refuses before the lookup (#111): a row CAN carry it.
+        Mono<Boolean> gate = RegistrationDomainResolver.admitsNoInvite(domain)
+                ? Mono.just(false) : store.isDiscordInvited(handle, domain);
+        return gate
                 .flatMap(invited -> {
                     if (!invited) return Mono.error(ApiException.forbidden("discord username not invited by an admin"));
                     return store.ensureAccount("discord", handle)

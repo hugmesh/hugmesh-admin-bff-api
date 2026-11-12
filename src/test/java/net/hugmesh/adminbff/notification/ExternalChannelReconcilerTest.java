@@ -51,6 +51,27 @@ class ExternalChannelReconcilerTest {
     private NotificationCursorRepository cursor;
     private NotificationOutboxRepository outbox;
     private MeterRegistry meters;
+    private StubPreferences prefs;
+
+    /** A stub user-bff preference read: a settable verdict and a count of lookups made. */
+    static class StubPreferences extends UserBffNotificationClient {
+        volatile UserBffNotificationClient.PreferenceLookup verdict = PreferenceLookup.ALL_ENABLED;
+        final java.util.concurrent.atomic.AtomicInteger calls = new java.util.concurrent.atomic.AtomicInteger();
+        StubPreferences() { super(null, true, null); }
+        @Override public Mono<PreferenceLookup> effectivePreferences(String owner, String domain) {
+            return Mono.fromSupplier(() -> {
+                calls.incrementAndGet();
+                return verdict;
+            });
+        }
+        void silence(String... categories) {
+            java.util.Map<String, Boolean> m = new java.util.HashMap<>();
+            for (String c : categories) {
+                m.put(c, false);
+            }
+            verdict = new PreferenceLookup(true, m);
+        }
+    }
 
     /** A controllable channel: enabled flag, per-domain availability set, fixed outcome,
      *  and a record of every (recipient, message) it was asked to send. */
@@ -83,11 +104,12 @@ class ExternalChannelReconcilerTest {
         cursor = new NotificationCursorRepository(net.hugmesh.adminbff.testutil.R2dbcRepos.of(db, net.hugmesh.adminbff.notification.NotificationCursorR2dbcRepository.class));
         outbox = new NotificationOutboxRepository(net.hugmesh.adminbff.testutil.R2dbcRepos.of(db, net.hugmesh.adminbff.notification.NotificationOutboxR2dbcRepository.class));
         meters = new SimpleMeterRegistry();
+        prefs = new StubPreferences();
     }
 
     private ExternalChannelReconciler reconciler(NotificationChannel... ch) {
         return new ExternalChannelReconciler(deliveries, cursor, List.of(ch),
-                new AlwaysLeader(), meters, 100, 3);
+                new AlwaysLeader(), meters, prefs, 100, 3);
     }
 
     private String seed(String domain, String userSubject) {
@@ -468,7 +490,7 @@ class ExternalChannelReconcilerTest {
         String a = seedWithDirective("brandx", "subject-a", List.of("email"));
         String b = seedWithDirective("brandx", "subject-b", List.of("email"));
         ExternalChannelReconciler r = new ExternalChannelReconciler(failingFirstMatrixRecord(synchronous),
-                cursor, List.of(matrix, email), new AlwaysLeader(), meters, 100, 3);
+                cursor, List.of(matrix, email), new AlwaysLeader(), meters, prefs, 100, 3);
 
         r.runOnce().block();
 
@@ -494,5 +516,226 @@ class ExternalChannelReconcilerTest {
     @Test
     void directiveSkip_recordThrowingSynchronously_doesNotAbortTheBatch() {
         assertBadDirectiveSkipDoesNotAbortBatch(true);
+    }
+
+    // ── preference consult (issue #92) ────────────────────────────────────────
+
+    /** A non-forced row (infra-impacting unless named) carrying the owner as {@code target}. */
+    private String seedCategory(String domain, String userSubject, String category) {
+        String sourceId = UUID.randomUUID().toString();
+        String payload = "{\"target\":\"" + userSubject + "\",\"reason\":\"maintenance\"}";
+        outbox.insert(domain, NotificationOutbox.SOURCE_PLATFORM_EVENT, sourceId, category, payload).block();
+        return outbox.findBySource(NotificationOutbox.SOURCE_PLATFORM_EVENT, sourceId, category).block().id();
+    }
+
+    /** Pin the scan order (created_at, id) so a same-instant insert cannot reorder rows. */
+    private void orderRows(String... ids) {
+        for (int i = 0; i < ids.length; i++) {
+            db.sql("UPDATE notification_outbox SET created_at = TIMESTAMP WITH TIME ZONE '2026-01-01 00:00:00+00' "
+                            + "+ :n * INTERVAL '1' SECOND WHERE id = :id")
+                    .bind("n", i).bind("id", ids[i]).fetch().rowsUpdated().block();
+        }
+    }
+
+    private double meter(String name, String channel) {
+        var c = meters.find(name).tag("channel", channel).counter();
+        return c == null ? 0.0 : c.count();
+    }
+
+    @Test
+    void silencedCategory_isSkippedByPreference_notSent_andTheCursorAdvances() {
+        FakeChannel matrix = up("matrix");
+        prefs.silence(NotificationOutbox.CATEGORY_INFRA_IMPACTING);
+        String id = seedCategory("brandx", "subject-quiet", NotificationOutbox.CATEGORY_INFRA_IMPACTING);
+
+        reconciler(matrix).runOnce().block();
+
+        assertThat(matrix.sent).isEmpty();
+        assertThat(deliveries.status(id, "matrix").block()).isEqualTo(NotificationDeliveryRepository.STATUS_SKIPPED);
+        assertThat(meter("notification.external.preference_skipped", "matrix")).isEqualTo(1.0);
+        assertThat(cursor.find("ext:matrix").block()).isEqualTo(id);
+    }
+
+    @Test
+    void enabledCategory_isDelivered_afterTheLookup() {
+        FakeChannel matrix = up("matrix");
+        prefs.silence(NotificationOutbox.CATEGORY_FEATURE_AVAILABILITY);   // a different category
+        String id = seedCategory("brandx", "subject-loud", NotificationOutbox.CATEGORY_INFRA_IMPACTING);
+
+        reconciler(matrix).runOnce().block();
+
+        assertThat(matrix.sent).hasSize(1);
+        assertThat(prefs.calls.get()).isEqualTo(1);
+        assertThat(deliveries.status(id, "matrix").block()).isEqualTo(NotificationDeliveryRepository.STATUS_SENT);
+    }
+
+    @Test
+    void accountRestriction_isDeliveredOnEveryAvailableChannel_whileSilenced_withNoLookup() {
+        FakeChannel matrix = up("matrix");
+        FakeChannel email = up("email");
+        // A stale or regressed upstream that reports the forced-on category silenced.
+        prefs.silence(NotificationOutbox.CATEGORY_ACCOUNT_RESTRICTION, NotificationOutbox.CATEGORY_INFRA_IMPACTING);
+        String id = seed("brandx", "subject-banned");
+
+        reconciler(matrix, email).runOnce().block();
+
+        assertThat(matrix.sent).hasSize(1);
+        assertThat(email.sent).hasSize(1);
+        assertThat(deliveries.status(id, "matrix").block()).isEqualTo(NotificationDeliveryRepository.STATUS_SENT);
+        assertThat(deliveries.status(id, "email").block()).isEqualTo(NotificationDeliveryRepository.STATUS_SENT);
+        assertThat(prefs.calls.get()).isZero();
+    }
+
+    @Test
+    void accountRestriction_isDelivered_whenTheLookupWouldFail_failOpen() {
+        FakeChannel matrix = up("matrix");
+        prefs.verdict = UserBffNotificationClient.PreferenceLookup.FAILED;
+        String id = seed("brandx", "subject-banned-2");
+
+        reconciler(matrix).runOnce().block();
+
+        assertThat(matrix.sent).hasSize(1);
+        assertThat(deliveries.status(id, "matrix").block()).isEqualTo(NotificationDeliveryRepository.STATUS_SENT);
+        assertThat(meter("notification.external.preference_lookup_failed", "matrix")).isZero();
+    }
+
+    @Test
+    void cursorAdvancesContiguously_overSilencedRows_mixedWithDeliveredOnes() {
+        FakeChannel matrix = up("matrix");
+        prefs.silence(NotificationOutbox.CATEGORY_INFRA_IMPACTING);
+        String quiet1 = seedCategory("brandx", "subject-m", NotificationOutbox.CATEGORY_INFRA_IMPACTING);
+        String forced = seed("brandx", "subject-m");
+        String quiet2 = seedCategory("brandx", "subject-m", NotificationOutbox.CATEGORY_INFRA_IMPACTING);
+        orderRows(quiet1, forced, quiet2);
+        ExternalChannelReconciler r = reconciler(matrix);
+
+        r.runOnce().block();
+
+        assertThat(matrix.sent).hasSize(1);   // only the forced row
+        assertThat(deliveries.status(quiet1, "matrix").block()).isEqualTo(NotificationDeliveryRepository.STATUS_SKIPPED);
+        assertThat(deliveries.status(forced, "matrix").block()).isEqualTo(NotificationDeliveryRepository.STATUS_SENT);
+        assertThat(deliveries.status(quiet2, "matrix").block()).isEqualTo(NotificationDeliveryRepository.STATUS_SKIPPED);
+        // The whole batch is terminal, so the cursor sits on the LAST row.
+        assertThat(cursor.find("ext:matrix").block()).isEqualTo(quiet2);
+
+        // The skips are terminal: no re-lookup, no re-send, no poison counting next tick.
+        int callsAfterFirstTick = prefs.calls.get();
+        r.runOnce().block();
+        r.runOnce().block();
+        r.runOnce().block();
+        assertThat(matrix.sent).hasSize(1);
+        assertThat(prefs.calls.get()).isEqualTo(callsAfterFirstTick);
+        assertThat(meter("notification.external.dead_lettered", "matrix")).isZero();
+    }
+
+    @Test
+    void lookupFailure_failsClosed_sendsAndRecordsNothing_neverDeadLetters_thenDeliversOnRecovery() {
+        FakeChannel matrix = up("matrix");
+        prefs.verdict = UserBffNotificationClient.PreferenceLookup.FAILED;
+        String id = seedCategory("brandx", "subject-outage", NotificationOutbox.CATEGORY_INFRA_IMPACTING);
+        ExternalChannelReconciler r = reconciler(matrix);
+
+        // More failing ticks than maxAttempts (3): a user-bff outage delays, never dead-letters.
+        for (int i = 0; i < 5; i++) {
+            r.runOnce().block();
+        }
+
+        assertThat(matrix.sent).isEmpty();
+        assertThat(deliveries.status(id, "matrix").block()).isNull();
+        assertThat(cursor.find("ext:matrix").block()).isNull();
+        assertThat(meter("notification.external.preference_lookup_failed", "matrix")).isEqualTo(5.0);
+        assertThat(meter("notification.external.dead_lettered", "matrix")).isZero();
+
+        prefs.verdict = UserBffNotificationClient.PreferenceLookup.ALL_ENABLED;   // user-bff recovers
+        r.runOnce().block();
+        r.runOnce().block();
+
+        assertThat(matrix.sent).hasSize(1);
+        assertThat(deliveries.status(id, "matrix").block()).isEqualTo(NotificationDeliveryRepository.STATUS_SENT);
+        assertThat(cursor.find("ext:matrix").block()).isEqualTo(id);
+    }
+
+    @Test
+    void lookupFailure_holdsTheCursorBehindIt_laterRowsDeliverButDoNotJumpIt() {
+        FakeChannel matrix = up("matrix");
+        prefs.verdict = UserBffNotificationClient.PreferenceLookup.FAILED;
+        String held = seedCategory("brandx", "subject-h", NotificationOutbox.CATEGORY_INFRA_IMPACTING);
+        String forced = seed("brandx", "subject-h");
+        orderRows(held, forced);
+
+        reconciler(matrix).runOnce().block();
+
+        assertThat(deliveries.status(held, "matrix").block()).isNull();
+        assertThat(deliveries.status(forced, "matrix").block()).isEqualTo(NotificationDeliveryRepository.STATUS_SENT);
+        assertThat(cursor.find("ext:matrix").block()).isNull();
+    }
+
+    @Test
+    void unknownOwner_emptyMap_readsAsAllEnabled() {
+        FakeChannel matrix = up("matrix");
+        prefs.verdict = new UserBffNotificationClient.PreferenceLookup(true, java.util.Map.of());
+        String id = seedCategory("brandx", "subject-new", NotificationOutbox.CATEGORY_INFRA_IMPACTING);
+
+        reconciler(matrix).runOnce().block();
+
+        assertThat(matrix.sent).hasSize(1);
+        assertThat(deliveries.status(id, "matrix").block()).isEqualTo(NotificationDeliveryRepository.STATUS_SENT);
+    }
+
+    @Test
+    void categoryTheUpstreamDoesNotList_readsAsEnabled() {
+        FakeChannel matrix = up("matrix");
+        prefs.silence(NotificationOutbox.CATEGORY_INFRA_IMPACTING);
+        String id = seedCategory("brandx", "subject-b", NotificationOutbox.CATEGORY_BACKUP_STARTED);
+
+        reconciler(matrix).runOnce().block();
+
+        assertThat(matrix.sent).hasSize(1);
+        assertThat(deliveries.status(id, "matrix").block()).isEqualTo(NotificationDeliveryRepository.STATUS_SENT);
+    }
+
+    @Test
+    void silencedCategory_isSkippedOnEveryChannel_withOneLookupPerOwnerPerTick() {
+        FakeChannel matrix = up("matrix");
+        FakeChannel email = up("email");
+        prefs.silence(NotificationOutbox.CATEGORY_INFRA_IMPACTING);
+        String id = seedCategory("brandx", "subject-both", NotificationOutbox.CATEGORY_INFRA_IMPACTING);
+
+        reconciler(matrix, email).runOnce().block();
+
+        assertThat(matrix.sent).isEmpty();
+        assertThat(email.sent).isEmpty();
+        assertThat(deliveries.status(id, "matrix").block()).isEqualTo(NotificationDeliveryRepository.STATUS_SKIPPED);
+        assertThat(deliveries.status(id, "email").block()).isEqualTo(NotificationDeliveryRepository.STATUS_SKIPPED);
+        assertThat(prefs.calls.get()).isEqualTo(1);
+    }
+
+    @Test
+    void unavailableChannel_makesNoLookup() {
+        FakeChannel matrix = up("matrix");
+        matrix.availableDomains = Set.of();
+        seedCategory("brandx", "subject-u", NotificationOutbox.CATEGORY_INFRA_IMPACTING);
+
+        reconciler(matrix).runOnce().block();
+
+        assertThat(prefs.calls.get()).isZero();
+    }
+
+    @Test
+    void userBffGateOff_makesNoCall_andDeliversAsBefore() {
+        FakeChannel matrix = up("matrix");
+        org.springframework.web.reactive.function.client.WebClient explode =
+                org.springframework.web.reactive.function.client.WebClient.builder()
+                        .exchangeFunction(req -> Mono.error(new AssertionError("no call expected when gate off")))
+                        .build();
+        UserBffNotificationClient gateOff = new UserBffNotificationClient(explode, false,
+                () -> Mono.error(new AssertionError("token not expected")));
+        String id = seedCategory("brandx", "subject-off", NotificationOutbox.CATEGORY_INFRA_IMPACTING);
+
+        new ExternalChannelReconciler(deliveries, cursor, List.of(matrix), new AlwaysLeader(), meters,
+                gateOff, 100, 3).runOnce().block();
+
+        assertThat(matrix.sent).hasSize(1);
+        assertThat(deliveries.status(id, "matrix").block()).isEqualTo(NotificationDeliveryRepository.STATUS_SENT);
     }
 }

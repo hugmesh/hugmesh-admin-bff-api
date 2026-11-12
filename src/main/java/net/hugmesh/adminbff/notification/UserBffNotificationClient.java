@@ -18,6 +18,11 @@ import java.util.function.Supplier;
  * <pre>POST {user-bff}/bff/user/internal/notifications
  *   body { domain, userSubject, category, title, body, sourceTable, sourceId } -&gt; 200 {delivered:bool, ...}</pre>
  *
+ * <p>It also carries the read {@link ExternalChannelReconciler} consults before each
+ * external-channel attempt (user-bff #36):
+ *
+ * <pre>GET {user-bff}/bff/user/internal/notification-preferences/{owner}?domain=&lt;domain&gt; -&gt; 200 {category: bool, ...}</pre>
+ *
  * <h3>Auth (reused VERBATIM from the platform pattern part A gates on)</h3>
  * The endpoint is internal / ROLE_SERVICE-gated on the user-bff side via the canonical
  * {@code CasdoorAuthorities} converter ({@code roles} claim entry {@code service} ->
@@ -57,6 +62,9 @@ public class UserBffNotificationClient {
     /** The contract path (part A). */
     static final String PATH = "/bff/user/internal/notifications";
 
+    /** The internal effective-preferences read (user-bff #36), owner in the path, domain as a query. */
+    static final String PREFERENCES_PATH = "/bff/user/internal/notification-preferences/{owner}";
+
     private final WebClient http;
     private final boolean enabled;
     private final Supplier<Mono<String>> serviceToken;
@@ -86,6 +94,78 @@ public class UserBffNotificationClient {
         SUPPRESSED,
         /** transport error / 5xx / timeout — record NOTHING, retry next tick. */
         FAILED
+    }
+
+    /**
+     * The verdict of one effective-preferences lookup. {@code ok=false} means the lookup
+     * itself failed (transport / non-2xx / timeout / token mint) and says nothing about the
+     * owner's choices; the caller decides what a failure means. On {@code ok=true} a category
+     * is enabled unless the map holds an explicit {@code false} for it: an owner with no
+     * stored rows (an empty map) and a category user-bff does not know both read as enabled.
+     */
+    public record PreferenceLookup(boolean ok, Map<String, Boolean> categories) {
+
+        /** No lookup made (gate off) or an owner with no stored choices: everything enabled. */
+        public static final PreferenceLookup ALL_ENABLED = new PreferenceLookup(true, Map.of());
+        /** The lookup failed; nothing is known about the owner's choices. */
+        public static final PreferenceLookup FAILED = new PreferenceLookup(false, Map.of());
+
+        public PreferenceLookup {
+            categories = categories == null ? Map.of() : Map.copyOf(categories);
+        }
+
+        /** True unless the owner explicitly silenced {@code category}. */
+        public boolean enabled(String category) {
+            return !Boolean.FALSE.equals(categories.get(category));
+        }
+    }
+
+    /**
+     * GET one owner's effective per-category notification preferences in one domain
+     * (user-bff #36's {@code GET /bff/user/internal/notification-preferences/{owner}?domain=}),
+     * with the same ROLE_SERVICE bearer as {@link #deliverInApp}. Never throws.
+     *
+     * <ul>
+     *   <li>Gate OFF: {@link PreferenceLookup#ALL_ENABLED} without a call, so an environment
+     *       with no user-bff wiring keeps the pre-consult behaviour instead of failing every
+     *       lookup.</li>
+     *   <li>A 2xx map: its {@code category -> boolean} entries (non-boolean values are
+     *       ignored, so they read as enabled). An empty 2xx body reads as all-enabled, the
+     *       same "the call succeeded" reading {@link #deliverInApp} gives an empty body.</li>
+     *   <li>Transport error / non-2xx (a 404 included: user-bff answers an unknown owner with
+     *       200 all-enabled, so a 404 means the route is missing) / timeout / token failure:
+     *       {@link PreferenceLookup#FAILED}.</li>
+     * </ul>
+     */
+    public Mono<PreferenceLookup> effectivePreferences(String owner, String domain) {
+        if (!enabled) {
+            return Mono.just(PreferenceLookup.ALL_ENABLED);
+        }
+        return serviceToken.get()
+                .flatMap(token -> http.get()
+                        .uri(b -> b.path(PREFERENCES_PATH).queryParam("domain", "{domain}").build(owner, domain))
+                        .accept(MediaType.APPLICATION_JSON)
+                        .headers(h -> h.setBearerAuth(token))
+                        .retrieve()
+                        .bodyToMono(Map.class))
+                .map(UserBffNotificationClient::toLookup)
+                .defaultIfEmpty(PreferenceLookup.ALL_ENABLED)
+                .timeout(CALL_TIMEOUT)
+                .onErrorResume(e -> {
+                    log.warn("[notify-external] user-bff preference lookup failed for domain={}: {}",
+                            domain, e.toString());
+                    return Mono.just(PreferenceLookup.FAILED);
+                });
+    }
+
+    private static PreferenceLookup toLookup(Map<?, ?> body) {
+        Map<String, Boolean> categories = new LinkedHashMap<>();
+        body.forEach((k, v) -> {
+            if (k instanceof String key && v instanceof Boolean flag) {
+                categories.put(key, flag);
+            }
+        });
+        return new PreferenceLookup(true, categories);
     }
 
     /**

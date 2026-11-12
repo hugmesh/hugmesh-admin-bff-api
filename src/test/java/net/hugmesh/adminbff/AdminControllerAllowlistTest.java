@@ -42,7 +42,7 @@ import static org.springframework.security.test.web.reactive.server.SecurityMock
  * resolves to null and the invite still writes the durable allowlist row.
  */
 @WebFluxTest(controllers = AdminController.class)
-@Import({SecurityConfig.class, net.hugmesh.commons.security.DomainRegistry.class, TestDatabaseConfig.class})
+@Import({SecurityConfig.class, net.hugmesh.commons.security.DomainRegistry.class, TestDatabaseConfig.class, net.hugmesh.adminbff.account.RegistrationDomainResolver.class})
 class AdminControllerAllowlistTest {
 
     @Autowired ApplicationContext context;
@@ -103,11 +103,11 @@ class AdminControllerAllowlistTest {
         // bean-creation, racing the allowlist-domain migration (#19), so it can silently
         // no-op. The seed email derives the reserved username "admin", so it must be written
         // via the store (the controller's username gate would 422 it) — exactly as
-        // seedAdmins() does. The mockJwt() slice principals carry no issuer claim, so
-        // PrincipalDomain resolves them to the NO_DOMAIN sentinel scope (Roles read JWT
-        // claims, NOT Spring authorities); invite into that same scope the admin reads from.
-        store.inviteEmail("admin@hugmesh.net",
-                net.hugmesh.commons.security.PrincipalDomain.NO_DOMAIN).block();
+        // seedAdmins() does, into AccountStore.DEFAULT_DOMAIN. The mockJwt() slice principals
+        // carry no issuer claim, so PrincipalDomain resolves them to the NO_DOMAIN sentinel;
+        // the allowlist then reads the register gate's fallback() domain instead (#111),
+        // which on this issuer-uri-only registry is "default", so the seeded row is listed.
+        store.inviteEmail("admin@hugmesh.net", AccountStore.DEFAULT_DOMAIN).block();
         asAdmin().get().uri("/bff/admin/allowlist").exchange()
                 .expectStatus().isOk()
                 .expectBody()
@@ -187,10 +187,12 @@ class AdminControllerAllowlistTest {
         when(revocations.revokeSubject(org.mockito.ArgumentMatchers.anyString(),
                 org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyLong()))
                 .thenReturn(reactor.core.publisher.Mono.empty());
-        // Uninviting/disabling an account must invalidate any live custody JWT for it — a
-        // bare account-disable (no accompanying ban) otherwise survives to the natural ~1h
-        // TTL. The subject is the Casdoor username (usernameOf), reason "account-disable",
-        // TTL = custody-JWT lifetime — fired for BOTH the email- and discord-derived
+        // Uninviting/disabling an account must invalidate any live token for it — a bare
+        // account-disable (no accompanying ban) otherwise survives to the token's natural
+        // expiry. The subject is the Casdoor username (usernameOf), reason "account-disable",
+        // TTL >= the LONGEST seeded Casdoor token lifetime (expireInHours=168 on the app-*
+        // clients and hugmesh-desktop; a 1 h key let a disabled account's raw JWT work again
+        // for ~7 days once the key lapsed) — fired for BOTH the email- and discord-derived
         // identities, and independent of whether the Casdoor write client is configured
         // (it is null here, so casdoorDisable no-ops but the revocation still runs).
         // Distinct handles so the two derived Casdoor usernames differ (alice vs bob) —
@@ -203,12 +205,12 @@ class AdminControllerAllowlistTest {
                 org.mockito.ArgumentMatchers.eq(net.hugmesh.authcore.casdoor.CasdoorAdminClient
                         .usernameOf("google", "alice@gmail.com")),
                 org.mockito.ArgumentMatchers.eq("account-disable"),
-                org.mockito.ArgumentMatchers.eq(3_600L));
+                org.mockito.ArgumentMatchers.longThat(ttl -> ttl >= 168L * 3_600L));
         org.mockito.Mockito.verify(revocations).revokeSubject(
                 org.mockito.ArgumentMatchers.eq(net.hugmesh.authcore.casdoor.CasdoorAdminClient
                         .usernameOf("discord", "bob")),
                 org.mockito.ArgumentMatchers.eq("account-disable"),
-                org.mockito.ArgumentMatchers.eq(3_600L));
+                org.mockito.ArgumentMatchers.longThat(ttl -> ttl >= 168L * 3_600L));
     }
 
     @Test

@@ -18,7 +18,8 @@ import java.util.function.Supplier;
 
 /**
  * Wires the {@link UserBffNotificationClient} the {@link NotificationReconciler} calls —
- * a ROLE_SERVICE WebClient over user-bff's INTERNAL in-app notification endpoint.
+ * a ROLE_SERVICE WebClient over user-bff's INTERNAL in-app notification endpoint — and
+ * the {@link ExternalChannelReconciler} uses for its per-owner preference read.
  *
  * <p><b>GATED STUB-SEAM (mirrors {@code FederationUsernameConfig} /
  * {@code GatewayRevocationClient}).</b> The client bean is ALWAYS present (so the

@@ -232,41 +232,36 @@ public class HomeserverAdminClient {
 
     // ── @system NOTIFICATION DM (Notifications PR5) ────────────────────────────
     /**
-     * Send a NEUTRAL {@code @system} direct message to a tuwunel (Matrix) user
-     * {@code localpart} — the Matrix leg of the per-domain {@code @system} notifications
-     * sender. Reuses the SAME tuwunel mTLS-sidecar admin-room seam the suspend/lock legs
-     * use, gated on the SAME {@link #enabled} suspend gate (the homeserver admin seam is a
-     * single switch). STUBBED by default — see {@link #doTuwunelSystemDm}.
+     * The LEGACY admin-seam leg of the Matrix {@code @system} DM. It is NOT the real
+     * transport and never delivers anything.
+     *
+     * <p>The real DM is {@code net.hugmesh.adminbff.notification.channel.MatrixSystemDmClient}:
+     * the standard Matrix client-server API ({@code whoami}, a {@code profile} existence probe,
+     * an {@code m.direct} lookup or {@code createRoom} with {@code is_direct}, then
+     * {@code PUT /rooms/{room}/send/m.room.message/{txn}} with {@code m.text}) as the
+     * {@code @system} account with its own token. {@code MatrixChannel} uses it whenever it is
+     * built, i.e. when {@code notify.matrix.dm.wired=true}; this method is reached only when
+     * that flag is off. A DM is a client action, so it does not belong on this admin seam.
      *
      * <p>The {@code body} is the neutral title+body the {@code NotificationTemplate}
      * composed (reason/ttl context, NEVER the acting mod/admin identity).
+     *
+     * @return always {@link HomeserverOutcome#stubbed()}, which {@code MatrixChannel} maps to
+     *         FAILED (retry, then dead-letter) — never a false "sent"
      */
     public Mono<HomeserverOutcome> sendSystemDirectMessage(String localpart, String body) {
         log.info("[tuwunel] @system DM to '{}' (enabled={})", localpart, enabled);
         return doTuwunelSystemDm(localpart, body);
     }
 
-    /**
-     * The tuwunel {@code @system} DM seam. STUBBED by default. tuwunel (Conduit-family)
-     * has no REST send API, so the confirmed path is: as the {@code @system} bot, create-
-     * or-resolve a DM room with the target localpart and send an {@code m.text} event,
-     * over the tuwunel-proxy mTLS sidecar with the {@code @system} access token, roughly:
-     * <pre>{@code
-     *   // resolve/create the @system<->user DM room then send the neutral text
-     *   return tuwunel.post().uri("/_matrix/client/v3/rooms/{room}/send/m.room.message/{txn}", room, txn)
-     *       .header("Authorization", "Bearer " + systemToken)
-     *       .bodyValue(Map.of("msgtype", "m.text", "body", body))
-     *       .retrieve().toBodilessEntity().thenReturn(HomeserverOutcome.ok())
-     *       .onErrorResume(e -> Mono.just(HomeserverOutcome.degraded(e.getMessage())));
-     * }</pre>
-     */
+    /** Stub on both branches: makes no request (see {@link #sendSystemDirectMessage}). */
     private Mono<HomeserverOutcome> doTuwunelSystemDm(String localpart, String body) {
         if (!enabled) {
             return Mono.just(HomeserverOutcome.stubbed());
         }
-        log.warn("[tuwunel] @system DM to '{}' is STUBBED — the tuwunel @system DM "
-                + "room-resolve + send shape/token are unconfirmed; wire the real call in "
-                + "doTuwunelSystemDm() before relying on it (body length={})",
+        log.warn("[tuwunel] @system DM to '{}' NOT sent: the admin seam has no DM transport. "
+                + "Set notify.matrix.dm.wired=true to send over the Matrix client API "
+                + "(MatrixSystemDmClient) (body length={})",
                 localpart, body == null ? 0 : body.length());
         return Mono.just(HomeserverOutcome.stubbed());
     }

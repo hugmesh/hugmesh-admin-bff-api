@@ -1,0 +1,1 @@
+{"auth_key":"hskey-AbC_123.xyz~","domain":"example.org","expires":1577923200,"format":"hugmesh-token-v1","id":"","issued":1577836800,"issuer":"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICTwK631IyKcmKAoH9hg3g8Q4br5BpOXwcpLDIFNnKEY","login_server":"https://example.org","mesh":"m0","node_name":"","role":"user","shell":false}

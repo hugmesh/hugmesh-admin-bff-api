@@ -6,6 +6,8 @@ import net.hugmesh.adminbff.desktop.DesktopSudoGrantR2dbcRepository;
 import net.hugmesh.adminbff.device.DeviceRowRepository;
 import net.hugmesh.adminbff.device.SshLicenseRowRepository;
 import net.hugmesh.adminbff.radio.RadioDeviceR2dbcRepository;
+import net.hugmesh.adminbff.sshissue.AdminSshIssuedKeyRowRepository;
+import net.hugmesh.adminbff.storage.ServiceAssignmentR2dbcRepository;
 import net.hugmesh.adminbff.storage.StoragePoolR2dbcRepository;
 
 import java.util.List;
@@ -40,6 +42,17 @@ public class DeviceRegistryCleanup {
      * <p>{@code device_ssh_dial} and {@code admin_ssh_issued_key} are deliberately ABSENT:
      * their FKs are {@code ON DELETE CASCADE}, so the database clears them itself. Adding them
      * here would work, but would hide which children actually constrain the delete.
+     *
+     * <p>GRANDCHILDREN block too, one level up. Two of these children have {@code NO ACTION}
+     * children of their own, so clearing the child fails while those rows exist:
+     * {@code storage_service_assignment} ({@code fk_storage_service_assignment_pool}) blocks
+     * {@code node_storage_pool}, and {@code admin_ssh_issued_key}
+     * ({@code fk_admin_ssh_issued_key_license}, {@code license_id NOT NULL}) blocks
+     * {@code device_ssh_license}. {@link #clearDeviceRegistry()} clears both first. They are not
+     * listed here because the coverage test compares this list with the DIRECT children only.
+     * Missing the assignment delete was 44 errors on the GitHub CI run of 2026-11-11: a storage
+     * test left assignment rows behind, and every later fixture that cleared
+     * {@code device_registry} died on {@code DELETE FROM "node_storage_pool"}.
      */
     public static final List<String> BLOCKING_CHILDREN = List.of(
             "desktop_sudo_grant",
@@ -50,27 +63,34 @@ public class DeviceRegistryCleanup {
 
     private final DesktopSudoGrantR2dbcRepository sudoGrants;
     private final DesktopInstallRequestR2dbcRepository installRequests;
+    private final AdminSshIssuedKeyRowRepository issuedKeys;
     private final SshLicenseRowRepository sshLicenses;
+    private final ServiceAssignmentR2dbcRepository storageAssignments;
     private final StoragePoolR2dbcRepository storagePools;
     private final RadioDeviceR2dbcRepository radioDevices;
     private final DeviceRowRepository devices;
 
     public DeviceRegistryCleanup(DesktopSudoGrantR2dbcRepository sudoGrants,
                                  DesktopInstallRequestR2dbcRepository installRequests,
+                                 AdminSshIssuedKeyRowRepository issuedKeys,
                                  SshLicenseRowRepository sshLicenses,
+                                 ServiceAssignmentR2dbcRepository storageAssignments,
                                  StoragePoolR2dbcRepository storagePools,
                                  RadioDeviceR2dbcRepository radioDevices,
                                  DeviceRowRepository devices) {
         this.sudoGrants = sudoGrants;
         this.installRequests = installRequests;
+        this.issuedKeys = issuedKeys;
         this.sshLicenses = sshLicenses;
+        this.storageAssignments = storageAssignments;
         this.storagePools = storagePools;
         this.radioDevices = radioDevices;
         this.devices = devices;
     }
 
     /**
-     * Clears every blocking child, then {@code device_registry} itself. {@code then()} keeps
+     * Clears every blocking child (each after its own blocking children), then
+     * {@code device_registry} itself. {@code then()} keeps
      * the order the foreign keys require — the parent delete is only subscribed once every
      * child delete has completed. Safe to call from a fixture that has already emptied some of
      * these tables: a second {@code deleteAll()} removes nothing.
@@ -78,7 +98,9 @@ public class DeviceRegistryCleanup {
     public Mono<Void> clearDeviceRegistry() {
         return sudoGrants.deleteAll()
                 .then(installRequests.deleteAll())
+                .then(issuedKeys.deleteAll())
                 .then(sshLicenses.deleteAll())
+                .then(storageAssignments.deleteAll())
                 .then(storagePools.deleteAll())
                 .then(radioDevices.deleteAll())
                 .then(devices.deleteAll());

@@ -49,6 +49,22 @@ import java.util.Set;
  */
 abstract class AbstractAccessSyncAction {
 
+    /**
+     * TTL of the {@code subject:} key {@link #enforceSuspension} writes. Deliberately SHORT and
+     * deliberately NOT the cut-off TTL ({@code net.hugmesh.adminbff.SubjectRevocationTtl}): the
+     * key is re-written on EVERY reconcile tick while the suspension is active
+     * ({@code app.access-suspension.reconcile.interval-ms}, 30 s default), so it never has to
+     * outlive a token on its own. Its life after the LAST tick is how long the person stays
+     * locked out once the suspension is lifted or expires (the gateway refuses every token for
+     * the subject while the key lives, and nothing clears a subject key early). A 168 h value
+     * here would keep a lifted suspension in force for a week. These writes cannot shorten a
+     * longer cut-off already on the same key (an account-disable, a role revoke): the gateway
+     * keeps the later expiry (hugmesh-gateway#69). Known gap: if the reconcile
+     * stops ticking for longer than this TTL while a suspension is active, the key lapses
+     * until the next successful tick.
+     */
+    static final long REASSERTED_SUBJECT_TTL_SECONDS = 3_600L;
+
     protected final Logger log = LoggerFactory.getLogger(getClass());
 
     @Nullable
@@ -182,11 +198,12 @@ abstract class AbstractAccessSyncAction {
                 .flatMap(outcome ->
                         // Gateway coarse revoke: best-effort, never blocks the suspension.
                         revokeCoarseBearer(hsLocalpart, s.reason())
-                                // Subject revoke: invalidates the custody JWT for this user so
+                                // Subject revoke: invalidates the live token for this user so
                                 // a revoked role cannot be exercised via a stale in-flight JWT.
-                                // TTL ≥ custody JWT lifetime (default 3 600 s).
+                                // Re-written every tick, so the TTL only bounds the lock-out
+                                // after the suspension ends (REASSERTED_SUBJECT_TTL_SECONDS).
                                 .then(gatewayRevocation.revokeSubject(casdoorUsernameOf(s.casdoorUser()),
-                                        s.reason(), 3_600L))
+                                        s.reason(), REASSERTED_SUBJECT_TTL_SECONDS))
                                 .then(dropRole(s.casdoorUser()))    // JWT-leg: always drop
                                 .then(repo.updatePropagationState(s.id(), propagationFor(outcome)))
                                 .then());

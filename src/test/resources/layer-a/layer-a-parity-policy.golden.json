@@ -63,12 +63,8 @@
     "tag:be": [
       "hugmesh"
     ],
-    "tag:dev_084628ddb3aa": [
-      "hugmesh"
-    ],
-    "tag:dev_29f12e1deee6": [
-      "hugmesh"
-    ],
+    "tag:dev_084628ddb3aa": [],
+    "tag:dev_29f12e1deee6": [],
     "tag:fe": [
       "hugmesh"
     ],
@@ -78,11 +74,10 @@
     "tag:hugmesh": [
       "hugmesh"
     ],
+    "tag:mesh_east-01": [],
     "tag:pki": [
       "hugmesh"
     ],
-    "tag:superadmin": [
-      "hugmesh"
-    ]
+    "tag:superadmin": []
   }
 }

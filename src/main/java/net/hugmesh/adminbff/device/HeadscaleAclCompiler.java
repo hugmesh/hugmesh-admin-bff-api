@@ -56,9 +56,13 @@ import java.util.TreeSet;
  *       because that is the ONLY reach superadmin has to the core/control nodes the export
  *       deliberately omits. Its absence would have locked superadmin out of exactly the nodes
  *       needed to recover.</li>
- *   <li><b>NO {@code tagOwners}.</b> [FIX-SERVERTAG] requires every security dst tag to be
- *       declared control-owned so no node can self-advertise it. A policy without
- *       {@code tagOwners} re-opens the masquerade hole the force-tagger closed.</li>
+ *   <li><b>NO {@code tagOwners}.</b> [FIX-SERVERTAG] requires every security tag to be
+ *       DECLARED with an EMPTY owner list, so no node can self-advertise it and only the
+ *       force-tagger can assign it. A policy without {@code tagOwners} re-opens the masquerade
+ *       hole the force-tagger closed. (Corrected again 2026-11-11: the first fix declared the
+ *       security tags OWNED by the membership user, the shape hugmesh-generator #888/#896
+ *       removed from the live writer. Every pre-auth key is minted for that user, so an owner
+ *       there let a node self-assign the tag. See {@link #MEMBERSHIP_OWNER}.)</li>
  *   <li><b>FICTIONAL SRC IDENTITY.</b> It emitted {@code src:["group:op-<operator>"]} with the
  *       Casdoor subject as the group member. headscale has NO per-operator tailnet identity yet
  *       — [FIX-OIDC-USERS] is explicitly DEFERRED and the renderer uses the ADVISORY
@@ -120,7 +124,7 @@ public final class HeadscaleAclCompiler {
     /** The advisory SSH source tag (self-applied membership) — [FIX-OIDC-USERS] deferred. */
     static final String ADVISORY_SRC_TAG = "tag:hugmesh";
 
-    /** The superadmin OPERATOR tag; control-owned + force-assigned, never self-applyable. */
+    /** The superadmin OPERATOR tag; owned by NO user (empty owner list) + force-assigned. */
     static final String SUPERADMIN_TAG = "tag:superadmin";
 
     /** The k8s pod CIDR of the data-plane rule the node policy KEEPS. */
@@ -129,12 +133,30 @@ public final class HeadscaleAclCompiler {
     /** The k8s service/ClusterIP CIDR of the data-plane rule the node policy KEEPS. */
     static final String SERVICE_CIDR = "10.96.0.0/12";
 
-    /** Static tagOwners head — mirrors {@code policy.hujson.tmpl}'s tagOwners block. */
-    private static final List<String> STATIC_TAG_OWNERS =
-            List.of("tag:hugmesh", "tag:pki", "tag:be", "tag:fe", "tag:host", SUPERADMIN_TAG);
+    /**
+     * The MEMBERSHIP tags of the static tagOwners head — mirrors {@code policy.hujson.tmpl}.
+     * Every node self-applies these with {@code --advertise-tags} (data-plane membership: the
+     * CIDR rule and route auto-approval), so they stay owned by {@link #MEMBERSHIP_OWNER}.
+     * None of them is an ssh dst; {@code tag:hugmesh} is only the ADVISORY ssh src.
+     */
+    private static final List<String> MEMBERSHIP_TAGS =
+            List.of("tag:hugmesh", "tag:pki", "tag:be", "tag:fe", "tag:host");
 
-    /** The control (headscale) user that owns every declared tag. */
-    private static final String CONTROL_USER = "hugmesh";
+    /**
+     * The headscale user every pre-auth key is minted for (and so the user every node registers
+     * as). It owns the {@link #MEMBERSHIP_TAGS} and NOTHING ELSE.
+     *
+     * <p>[FIX-SERVERTAG] The SECURITY tags — {@link #SUPERADMIN_TAG}, this mesh's
+     * {@code tag:mesh_<id>} and every per-node {@code tag:dev_<fp>} — are declared with the
+     * EMPTY owner list. headscale 0.23 (the pinned version) gives a node its forced tags PLUS
+     * every advertised tag whose owner list names the node's own user; a forced tag does not
+     * cancel a different advertised one. So an owner here would let any holder of any pre-auth
+     * key self-assign the tag. With no owner an advertised security tag is always invalid, while
+     * {@code headscale nodes tag} (hugmesh-generator {@code hugmesh-headscale-forcetags}) does not
+     * consult tagOwners and still assigns it. This is the node-side writer's rule since
+     * hugmesh-generator #896, held to it by the shared parity golden.
+     */
+    private static final String MEMBERSHIP_OWNER = "hugmesh";
 
     private final ObjectMapper mapper;
 
@@ -172,15 +194,22 @@ public final class HeadscaleAclCompiler {
         String bodyMesh = (body == null || body.meshId() == null) ? "" : body.meshId();
         String meshTag = "tag:mesh_" + sanitiseTag(meshId);
 
-        // ── tagOwners: the static head from policy.hujson.tmpl + one control-owned entry per
-        // per-node dst tag [FIX-SERVERTAG]. Without these the dst tags are self-applyable and
-        // the force-tagger's non-forgeability guarantee is void.
+        // ── tagOwners [FIX-SERVERTAG]: two classes that must never share an owner.
+        //   * membership tags (the template's static head) are owned by MEMBERSHIP_OWNER;
+        //   * SECURITY tags (tag:superadmin, tag:mesh_<id>, every tag:dev_<fp>) are declared
+        //     with the EMPTY owner list: nobody may self-advertise them, the force-tagger
+        //     assigns them. See MEMBERSHIP_OWNER for why an owner here is the hole.
+        // tag:mesh_<id> must be DECLARED although nothing advertises it: headscale 0.23 fails
+        // every node's map update while a rule names a tag that has neither a tagOwners entry
+        // nor a node already forced to carry it (the renderer declares it for the same reason).
         ObjectNode tagOwners = mapper.createObjectNode();
-        for (String t : STATIC_TAG_OWNERS) {
+        for (String t : MEMBERSHIP_TAGS) {
             ArrayNode owners = mapper.createArrayNode();
-            owners.add(CONTROL_USER);
+            owners.add(MEMBERSHIP_OWNER);
             tagOwners.set(t, owners);
         }
+        tagOwners.set(SUPERADMIN_TAG, mapper.createArrayNode());
+        tagOwners.set(meshTag, mapper.createArrayNode());
 
         // ── The distinct machine-key fingerprints the export licensed, sorted for determinism
         // (the renderer's `jq unique`). One node -> one dst tag -> one ssh edge, regardless of
@@ -205,9 +234,7 @@ public final class HeadscaleAclCompiler {
         }
 
         for (String fp : fingerprints) {
-            ArrayNode owners = mapper.createArrayNode();
-            owners.add(CONTROL_USER);
-            tagOwners.set(nodeTagFor(fp), owners);
+            tagOwners.set(nodeTagFor(fp), mapper.createArrayNode());   // security tag: no owner
         }
 
         // ── autoApprovers: the two advertised subnet routes the data-plane rule depends on.

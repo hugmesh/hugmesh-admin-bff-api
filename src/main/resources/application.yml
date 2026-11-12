@@ -122,6 +122,22 @@ broker:
   # reachable from admin-bff.
   gateway-revocation:
     enabled: "${BROKER_GATEWAY_REVOCATION_ENABLED:false}"
+    # TTL of a subject:<user> key (net.hugmesh.adminbff.SubjectRevocationTtl). The gateway
+    # refuses EVERY token for the subject while the key lives (set membership, no iat
+    # comparison), so the TTL is both the cut-off window and a lock-out.
+    #   cut-off (account-disable, role revoke, desktop-sudo revoke): must outlive the
+    #     longest token Casdoor issues — the seeded app-* clients and hugmesh-desktop set
+    #     expireInHours: 168 (hugmesh-generator casdoor/init-job.yaml). It used to be a 1 h
+    #     literal, so a revoked token worked again for up to ~7 days once the key lapsed.
+    #     hugmesh-generator tests/scripts/test-subject-revocation-ttl.sh pins the cluster
+    #     value >= the largest seeded expireInHours x 3600.
+    #   grant (role grant, desktop-sudo grant): only nudges a re-mint; stays 1 h because a
+    #     longer key would lock the grantee out for no security gain.
+    # All of these (and the suspension reconcile) write the SAME subject:<user> key. The
+    # gateway keeps the later expiry (hugmesh-gateway#69), so a grant after a revoke cannot
+    # shorten the cut-off; enable the flag above only against gateways that carry it.
+    subject-cutoff-ttl-seconds: "${BROKER_GATEWAY_REVOCATION_SUBJECT_CUTOFF_TTL_SECONDS:604800}"
+    subject-grant-ttl-seconds: "${BROKER_GATEWAY_REVOCATION_SUBJECT_GRANT_TTL_SECONDS:3600}"
 
 # Homeserver account-state admin (akkoma suspend/unsuspend + tuwunel deactivate/
 # activate) — the shared GATED STUB-SEAM the access_suspension reconcile loop calls.
@@ -531,6 +547,29 @@ app:
     reconcile:
       interval-ms: "${DOMAIN_LOCK_RECONCILE_INTERVAL_MS:30000}"
       initial-delay-ms: "${DOMAIN_LOCK_RECONCILE_INITIAL_DELAY_MS:18000}"
+  # PER-DOMAIN CA EFFECTOR (hugmesh-admin-bff-api#99, decision 87a = B) — SHIPS DARK.
+  # For a domain_registry row with ca_ref='generate' and ca_provisioned=false the leader
+  # replica mounts a PKI engine at <mount-prefix><slug> in Vault, generates a self-signed root
+  # there with the key kept INSIDE Vault (root/generate/internal; 87b = A, one root per
+  # domain), then records the mount path in ca_ref and sets ca_provisioned=true. A failure
+  # leaves ca_provisioned=false (the console shows it; setup is not gated, 87d = B) and is
+  # retried next tick. Trust-store distribution of the new root is NOT done here.
+  domain-registry:
+    ca:
+      enabled: "${APP_DOMAIN_REGISTRY_CA_ENABLED:false}"
+      vault-addr: "${APP_DOMAIN_REGISTRY_CA_VAULT_ADDR:https://vault.vault.svc.cluster.local:8200}"
+      # A Vault token allowed sys/mounts/<prefix>* plus <prefix>*/issuers and
+      # <prefix>*/root/generate/internal. Injected by the deployment; EMPTY here, never logged.
+      vault-token: "${APP_DOMAIN_REGISTRY_CA_VAULT_TOKEN:}"
+      mount-prefix: "${APP_DOMAIN_REGISTRY_CA_MOUNT_PREFIX:pki-domain-}"
+      max-lease-ttl: "${APP_DOMAIN_REGISTRY_CA_MAX_LEASE_TTL:87600h}"
+      root-ttl: "${APP_DOMAIN_REGISTRY_CA_ROOT_TTL:87600h}"
+      key-type: "${APP_DOMAIN_REGISTRY_CA_KEY_TYPE:rsa}"
+      key-bits: "${APP_DOMAIN_REGISTRY_CA_KEY_BITS:4096}"
+      signature-bits: "${APP_DOMAIN_REGISTRY_CA_SIGNATURE_BITS:384}"
+      timeout-ms: "${APP_DOMAIN_REGISTRY_CA_TIMEOUT_MS:15000}"
+      reconcile-interval-ms: "${APP_DOMAIN_REGISTRY_CA_RECONCILE_INTERVAL_MS:60000}"
+      reconcile-initial-delay-ms: "${APP_DOMAIN_REGISTRY_CA_RECONCILE_INITIAL_DELAY_MS:45000}"
   # DEVICE-LICENSE REGISTRY (schema 011) — the source of truth governing which operator
   # may SSH into which mesh node. SECURITY-CRITICAL.
   registry:
@@ -845,6 +884,37 @@ app:
   # step-up mint path reachable) once the feature is greenlit.
   ssh-issue:
     enabled: "${APP_SSH_ISSUE_ENABLED:false}"
+  # HUGMESH TOKEN v1 ISSUING for the web admin UI (net.hugmesh.adminbff.meshtoken,
+  # /bff/admin/mesh-tokens). A token = one single-use headscale pre-auth key + a signed grant
+  # (mesh, access domain, role, shell, expiry) the Studio tray verifies byte-for-byte
+  # (hugmesh-generator docs/HUGMESH-TOKEN.md). SHIPS DARK: DEFAULT false -> POST answers a 503
+  # descriptor naming `make stack-up HEADSCALE=1`, the issuer key is never read, headscale is
+  # never called; the reads stay live. When true, a bad mesh / domain table / issuer key FAILS
+  # THE BOOT. The issuer private key never leaves this service: locally a 0600 file mounted
+  # :ro (make stack-mesh-token-key), in-cluster the ExternalSecret admin-bff-mesh-token
+  # (Vault hugmesh/mesh-token-issuer private-key) mounted as a secret volume.
+  mesh-token:
+    enabled: "${APP_MESH_TOKEN_ENABLED:false}"
+    # the mesh id carried in every token: ^[a-z0-9][a-z0-9-]{0,62}$
+    mesh: "${APP_MESH_TOKEN_MESH:hugmesh-local}"
+    # Ed25519 private key, OpenSSH (ssh-keygen -t ed25519 -N '') or PKCS#8 PEM
+    issuer-key-path: "${APP_MESH_TOKEN_ISSUER_KEY_PATH:}"
+    # <access domain>=<https://host[:port]>[,...]; host = the domain or a name under it
+    login-servers: "${APP_MESH_TOKEN_LOGIN_SERVERS:}"
+    # <access domain>=<tenant brand>[,...]; an unlisted domain belongs to brand "default"
+    domain-brands: "${APP_MESH_TOKEN_DOMAIN_BRANDS:}"
+    default-lifetime-seconds: "${APP_MESH_TOKEN_DEFAULT_LIFETIME_SECONDS:604800}"
+    max-lifetime-seconds: "${APP_MESH_TOKEN_MAX_LIFETIME_SECONDS:7776000}"
+    headscale:
+      # headscale's REST API (POST /api/v1/preauthkey). The host OpenRC headscale on the pki
+      # node is the selector-less Service headscale in ns hugmesh-pki (same as headscale-acl).
+      base-url: "${APP_MESH_TOKEN_HEADSCALE_BASE_URL:http://headscale.hugmesh-pki.svc.cluster.local:8080}"
+      # FILE holding the headscale API key (Vault hugmesh/headscale-admin api-key in-cluster;
+      # the headscale container's admin-bff.apikey locally). Re-read on every call.
+      api-key-path: "${APP_MESH_TOKEN_HEADSCALE_API_KEY_PATH:}"
+      # the headscale user the keys are created for, by NAME (headscale 0.23)
+      user: "${APP_MESH_TOKEN_HEADSCALE_USER:hugmesh}"
+      timeout-ms: "${APP_MESH_TOKEN_HEADSCALE_TIMEOUT_MS:8000}"
   # SUPERADMIN GO-LIVE WIZARD backend (go-live wizard v1, the admin web-UI half). SHIPS
   # DARK: DEFAULT false. While false, the mutating verbs (record/withdraw an intent) refuse
   # (503 dark descriptor / no DB write) but the SUPERADMIN role + step-up authorization is
