@@ -23,7 +23,9 @@ import java.util.regex.Pattern;
  *   <li>the {@code schema} discriminator is exact ({@code hugmesh-worklist/v1});</li>
  *   <li>{@code entries} is 1..{@value BatchTriggerImageBuildRequest#MAX_ENTRIES} (a HARD
  *       re-assert of the DTO {@code @Size}: one step-up authorizes at most this many images);</li>
- *   <li>every entry {@code platform} is one of the six generator platforms;</li>
+ *   <li>every entry {@code platform} (and any {@code imageSpec.platform}) is a platform the
+ *       VENDORED generator worklist schema lists ({@link GeneratorPlatforms}), never a hand
+ *       list here, so a platform the generator adds arrives with a schema refresh;</li>
  *   <li>NO plaintext {@code SECRET_FIELDS} ride the wire, in {@code base} OR any {@code imageSpec}
  *       (local_pass / luks_pass / user_password / root_password are ALWAYS blank);</li>
  *   <li>an {@code imageSpec} is a flat single-image object — it may NOT itself carry a nested
@@ -47,8 +49,13 @@ public class WorklistEnvelopeValidator {
     static final Set<String> SECRET_FIELDS =
             Set.of("local_pass", "luks_pass", "user_password", "root_password");
 
-    private static final Pattern PLATFORM =
-            Pattern.compile("x86|rpi5|frite|jetson|orangepi5|orangepizero2");
+    /**
+     * The platform sets, read when this bean is CONSTRUCTED. Touching {@link GeneratorPlatforms}
+     * here runs its fail-closed load during context startup, so a missing or untrusted vendored
+     * schema stops the BFF from starting instead of turning the first batch request into a 500.
+     */
+    private final Set<String> entryPlatforms = GeneratorPlatforms.entryPlatforms();
+    private final Set<String> imageSpecPlatforms = GeneratorPlatforms.imageSpecPlatforms();
 
     /** Portage atom charset (worklist.v1 schema packages_add/packages_drop). */
     private static final Pattern ATOM =
@@ -101,8 +108,10 @@ public class WorklistEnvelopeValidator {
             if (e == null) {
                 throw ApiException.badRequest("entry " + i + " is missing");
             }
-            if (e.hardwareClass() == null || !PLATFORM.matcher(e.hardwareClass()).matches()) {
-                throw ApiException.badRequest("entry " + i + " platform is not a supported generator platform");
+            if (e.hardwareClass() == null || !entryPlatforms.contains(e.hardwareClass())) {
+                throw ApiException.badRequest("entry " + i + " platform " + quoted(e.hardwareClass())
+                        + " is not in the generator worklist schema (accepted: "
+                        + String.join(", ", entryPlatforms) + ")");
             }
             JsonNode spec = e.imageSpec();
             if (spec != null && !spec.isNull()) {
@@ -116,11 +125,24 @@ public class WorklistEnvelopeValidator {
                 assertNoSecrets(spec, "entry " + i + " imageSpec");
                 assertPackageAtoms(spec, "entry " + i + " imageSpec");
                 JsonNode p = spec.get("platform");
-                if (p != null && p.isTextual() && !PLATFORM.matcher(p.asText()).matches()) {
-                    throw ApiException.badRequest("entry " + i + " imageSpec platform is unsupported");
+                if (p != null && !p.isNull()
+                        && !(p.isTextual() && imageSpecPlatforms.contains(p.asText()))) {
+                    throw ApiException.badRequest("entry " + i + " imageSpec platform "
+                            + quoted(p.isTextual() ? p.asText() : p.toString())
+                            + " is not in the generator worklist schema (accepted: "
+                            + String.join(", ", imageSpecPlatforms) + ")");
                 }
             }
         }
+    }
+
+    /** The refused value, quoted and cut to a readable length, for a refusal reason. */
+    private static String quoted(String value) {
+        if (value == null) {
+            return "(missing)";
+        }
+        String v = value.length() > 40 ? value.substring(0, 40) + "..." : value;
+        return "'" + v + "'";
     }
 
     /**

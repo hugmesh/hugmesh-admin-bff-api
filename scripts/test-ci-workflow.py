@@ -21,6 +21,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PATH = sys.argv[1] if len(sys.argv) > 1 else os.path.join(ROOT, ".github", "workflows", "ci.yml")
 SIBLING = "${CATALOG_SIBLING_ROOT}"
 GEN_DIR = SIBLING + "/hugmesh-generator/docs/catalog"
+# WorklistSchemaDriftTest reads the generator's docs/schemas, the sibling of GEN_DIR.
+GEN_SCHEMA = SIBLING + "/hugmesh-generator/docs/schemas/worklist.v1.schema.json"
 CONSOLE_DIR = SIBLING + "/hugmesh-superadmin-service-catalog-ui/schemas"
 FAILURES = 0
 
@@ -142,6 +144,32 @@ check("the generator is read at main (the question is what the generator ships t
       re.search(r"^\s+ref: main\s*$", gen, re.M) is not None, gen)
 check("the generator lands under .catalog-sibling/ (never ../hugmesh-generator)",
       re.search(r"^\s+path: \.catalog-sibling/hugmesh-generator\s*$", gen, re.M) is not None, gen)
+
+
+def sparse_paths(step):
+    """The paths a checkout step's sparse-checkout names: one inline value, or a | block."""
+    lines = step.splitlines()
+    for i, line in enumerate(lines):
+        m = re.match(r"^(\s+)sparse-checkout:\s*(.*?)\s*$", line)
+        if not m:
+            continue
+        if m.group(2) not in ("|", "|-", ">", ">-"):
+            return [m.group(2)] if m.group(2) else []
+        out = []
+        for nxt in lines[i + 1:]:
+            if nxt.strip() and len(nxt) - len(nxt.lstrip()) <= len(m.group(1)):
+                break
+            if nxt.strip():
+                out.append(nxt.strip())
+        return out
+    return []
+
+
+SPARSE_PATHS = sparse_paths(gen)
+check("the generator sparse checkout includes docs/catalog (ImageCatalogDriftTest's source)",
+      "docs/catalog" in SPARSE_PATHS, str(SPARSE_PATHS))
+check("the generator sparse checkout includes docs/schemas (WorklistSchemaDriftTest's source)",
+      "docs/schemas" in SPARSE_PATHS, str(SPARSE_PATHS))
 ci, con = step_with("repository: hugmesh/hugmesh-superadmin-service-catalog-ui")
 check("checks out hugmesh/hugmesh-superadmin-service-catalog-ui", ci is not None)
 check("the console lands under .catalog-sibling/",
@@ -157,7 +185,7 @@ check("nothing else names ../hugmesh-generator (no checkout, clone or source dir
 # ── the preflight ────────────────────────────────────────────────────────────────────────
 pi, pre = step_with("test -f")
 check("a preflight step asserts the sibling files with test -f", pi is not None)
-for f in (GEN_DIR + "/image-catalog.json", GEN_DIR + "/packages-catalog.json",
+for f in (GEN_DIR + "/image-catalog.json", GEN_DIR + "/packages-catalog.json", GEN_SCHEMA,
           CONSOLE_DIR + "/app-profile.schema.json"):
     check(f"the preflight names {f}", f in pre, pre)
 check("the preflight fails the step (exit non-zero) when a file is missing",

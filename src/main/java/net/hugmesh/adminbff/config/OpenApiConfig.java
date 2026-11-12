@@ -2,10 +2,14 @@ package net.hugmesh.adminbff.config;
 
 import io.swagger.v3.oas.models.OpenAPI;
 import io.swagger.v3.oas.models.info.Info;
+import io.swagger.v3.oas.models.media.Schema;
 import io.swagger.v3.oas.models.servers.Server;
+import net.hugmesh.adminbff.imagegen.GeneratorPlatforms;
+import org.springdoc.core.customizers.OpenApiCustomizer;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -38,5 +42,32 @@ public class OpenApiConfig {
                         .description("Admin BFF API (/bff/**) — registration allowlist, "
                                 + "namespace access, service-token brokering, and usage "
                                 + "aggregation behind the backend gateway."));
+    }
+
+    /**
+     * Publish {@code BatchImageSpec.hardwareClass} as an {@code enum} of the platforms the
+     * vendored generator worklist schema lists. The field is checked by the
+     * {@link net.hugmesh.adminbff.imagegen.GeneratorPlatform} constraint, which springdoc cannot
+     * read, so without this the typed clients would see a bare string. The values come from the
+     * same {@link GeneratorPlatforms} set the request validators use.
+     */
+    @Bean
+    OpenApiCustomizer generatorPlatformEnum() {
+        return OpenApiConfig::publishGeneratorPlatforms;
+    }
+
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    static void publishGeneratorPlatforms(OpenAPI openApi) {
+        if (openApi.getComponents() == null || openApi.getComponents().getSchemas() == null) {
+            return;
+        }
+        Schema spec = openApi.getComponents().getSchemas().get("BatchImageSpec");
+        if (spec == null || spec.getProperties() == null) {
+            return;
+        }
+        Object hardwareClass = spec.getProperties().get("hardwareClass");
+        if (hardwareClass instanceof Schema field) {
+            field.setEnum(new ArrayList<>(GeneratorPlatforms.entryPlatforms()));
+        }
     }
 }

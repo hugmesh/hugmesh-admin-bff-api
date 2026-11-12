@@ -2,6 +2,8 @@ package net.hugmesh.adminbff.imagegen;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webflux.test.autoconfigure.WebFluxTest;
 import org.springframework.context.ApplicationContext;
@@ -139,6 +141,36 @@ class BatchTriggerImageBuildControllerTest {
         asAdmin().post().uri("/bff/admin/image-builds/batch").contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(body)
                 .exchange().expectStatus().isBadRequest();
+        verify(service, never()).triggerBatch(any(), any(), any(), any());
+    }
+
+    /** Every platform the vendored generator worklist schema lists gets through the HTTP gate. */
+    @ParameterizedTest(name = "schema platform {0} is accepted over HTTP")
+    @MethodSource("net.hugmesh.adminbff.imagegen.GeneratorPlatformsContractTest#entryPlatforms")
+    void batch_everySchemaPlatform_accepted(String platform) {
+        when(service.triggerBatch(any(), any(), any(), any())).thenReturn(Mono.just(
+                new ImageBuildService.BatchResult("batch-1", List.of(queued("b1", "primary")))));
+        String body = "{\"schema\":\"hugmesh-worklist/v1\",\"entries\":["
+                + "{\"targetUser\":\"acme/alice\",\"imageType\":\"primary\",\"hardwareClass\":\""
+                + platform + "\"}],\"maxConcurrent\":1}";
+        asAdmin().post().uri("/bff/admin/image-builds/batch").contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(body)
+                .exchange().expectStatus().isOk();
+        verify(service).triggerBatch(any(), any(), any(), any());
+    }
+
+    /** The 400 says why: the field, and the platforms the schema accepts. */
+    @Test
+    void batch_badPlatform_400_namesTheAcceptedPlatforms() {
+        String body = VALID_BODY.replace("\"rpi5\"", "\"toaster\"");
+        asAdmin().post().uri("/bff/admin/image-builds/batch").contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(body)
+                .exchange().expectStatus().isBadRequest()
+                .expectBody()
+                .jsonPath("$.error").isEqualTo("validation failed")
+                .jsonPath("$.fields['entries[0].hardwareClass']").isEqualTo(
+                        "must be a platform in the generator worklist schema (accepted: "
+                                + GeneratorPlatforms.describeEntryPlatforms() + ")");
         verify(service, never()).triggerBatch(any(), any(), any(), any());
     }
 

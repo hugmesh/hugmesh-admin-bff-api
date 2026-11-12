@@ -11886,8 +11886,8 @@
           },
           "hardwareClass" : {
             "minLength" : 1,
-            "pattern" : "x86|rpi5|frite|jetson|orangepi5|orangepizero2",
-            "type" : "string"
+            "type" : "string",
+            "enum" : [ "x86", "rpi5", "frite", "jetson", "orangepi5", "orangepizero2", "orangepizero2w", "orangepizero3", "orangepi3-lts", "orangepi4-lts" ]
           },
           "sshKeysAllowed" : {
             "type" : "boolean"

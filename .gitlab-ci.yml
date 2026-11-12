@@ -70,6 +70,10 @@ test:mvn:
     # — the exact failure this change exists to end. Assert the file by name.
     - test -f "${CATALOG_SIBLING_ROOT}/hugmesh-generator/docs/catalog/image-catalog.json"
       || { echo "CATALOG SOURCE MISSING — the drift test would SKIP and this job would be green while blind"; exit 1; }
+    # WorklistSchemaDriftTest reads the generator's docs/schemas next to docs/catalog and SKIPS
+    # when it is absent, the same trap. Assert it by name too.
+    - test -f "${CATALOG_SIBLING_ROOT}/hugmesh-generator/docs/schemas/worklist.v1.schema.json"
+      || { echo "WORKLIST SCHEMA SOURCE MISSING — the drift test would SKIP and this job would be green while blind"; exit 1; }
     # THE SAME TRAP, SECOND INSTANCE. AppProfileSchemaMirrorTest compares this repo's
     # app-profile schema against the CONSOLE's copy byte for byte, and assumeTrue()-SKIPS when
     # the console checkout is absent — which, without this clone, is always, in CI. A sha256
