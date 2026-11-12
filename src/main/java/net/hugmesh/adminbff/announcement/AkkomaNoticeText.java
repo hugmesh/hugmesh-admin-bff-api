@@ -36,8 +36,9 @@ import java.util.regex.Pattern;
  *       servers drop trailing punctuation from a mention ({@code @bob.} reaches
  *       {@code bob}) and Mastodon also stops before a trailing {@code -}, so only
  *       {@code [a-z0-9_]}, 1 to {@value #MAX_LOCALPART_CHARS} characters, is
- *       {@linkplain #addressable addressable}. That is also the only shape the account
- *       broker gives a fediverse account ({@code ServiceTokenBroker.mastodonLocalpart}).</li>
+ *       {@linkplain #addressable addressable}. The account broker gives a fediverse account
+ *       a name of that alphabet too ({@code ServiceTokenBroker.mastodonLocalpart}, at most
+ *       30 characters).</li>
  *   <li>The status is capped at {@value #MAX_STATUS_CHARS} characters, so a long reason is
  *       shortened and not rejected by the server.</li>
  * </ul>
@@ -81,8 +82,8 @@ public final class AkkomaNoticeText {
     /**
      * Whether {@code localpart} can be the recipient of a notice: lower-case letters, digits
      * and underscores only, 1 to {@value #MAX_LOCALPART_CHARS} characters. Any other name is
-     * one no broker-created account has, and one a server could read as a mention of
-     * somebody else.
+     * one a server could read as a mention of somebody else, and one no broker-created
+     * account has.
      */
     public static boolean addressable(String localpart) {
         return localpart != null

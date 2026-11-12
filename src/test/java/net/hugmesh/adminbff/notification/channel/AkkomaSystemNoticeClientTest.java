@@ -280,7 +280,7 @@ class AkkomaSystemNoticeClientTest {
     @Test
     void theRecipientIsAlsoNamedInTheToField() {
         // Akkoma addresses exactly the nicknames in "to" and then ignores mentions in the
-        // text (read from its source, not observed live); other servers ignore the field.
+        // text (read from its source, not observed live); Mastodon drops the field.
         client().sendDirectNotice("alice", "T\n\nReason: @carol.", "row-1").block();
 
         JsonNode to = statuses.get(0).path("to");

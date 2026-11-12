@@ -197,15 +197,15 @@ public class AnnouncementMastodonClient {
      *        {"status":"@<localpart> <body, neutralised>","visibility":"direct","to":["<localpart>"]}
      * }</pre>
      * The recipient is the only account the status can reach. {@link AkkomaNoticeText}
-     * writes every at-sign in the body as text, so the moderator's reason cannot mention a
-     * second account, and a localpart that is not {@linkplain AkkomaNoticeText#addressable
-     * addressable} (one a server could read as a mention of somebody else, such as
-     * {@code bob.}) is refused as degraded before any HTTP. {@code to} is the Akkoma
-     * extension that addresses exactly the listed nicknames and ignores mentions in the
-     * text (read from the Akkoma source, not observed live; other servers ignore the
-     * field). Every non-2xx — including 3xx, which the default WebClient handlers pass
-     * through — every transport error, and no reply within the notice timeout resolve
-     * DEGRADED, never a false OK.
+     * writes every at-sign and every less-than sign in the body as text, so the moderator's
+     * reason cannot mention a second account or carry a tag, and a localpart that is not
+     * {@linkplain AkkomaNoticeText#addressable addressable} (one a server could read as a
+     * mention of somebody else, such as {@code bob.}) is refused as degraded before any
+     * HTTP. {@code to} is the Akkoma extension that addresses exactly the listed nicknames
+     * and ignores mentions in the text (read from the Akkoma source, not observed live;
+     * Mastodon drops a field it does not know). Every non-2xx — including 3xx, which the
+     * default WebClient handlers pass through — every transport error, and no reply within
+     * the notice timeout resolve DEGRADED, never a false OK.
      *
      * <p>Unlike {@code AkkomaSystemNoticeClient} (the {@code notify.akkoma.notice.wired}
      * transport) this seam does no {@code accounts/lookup} existence probe and sends no

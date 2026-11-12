@@ -293,7 +293,7 @@ class AnnouncementMastodonClientNoticeTest {
     @Test
     void theRecipientIsAlsoNamedInTheToField() {
         // Akkoma addresses exactly the nicknames in "to" and then ignores mentions in the
-        // text (read from its source, not observed live); other servers ignore the field.
+        // text (read from its source, not observed live); Mastodon drops the field.
         client(true, null, SYSTEM_TOKEN).postLocalUserNotice("alice", "T\n\nReason: @carol.").block();
 
         JsonNode to = requests.get(0).body().path("to");
