@@ -83,7 +83,7 @@ public class ExternalChannelConfig {
 
     /**
      * The Akkoma (Mastodon-API) channel, reusing the existing
-     * {@link AnnouncementMastodonClient} local-only POST seam (Notifications PR7).
+     * {@link AnnouncementMastodonClient} {@code @system} notice seam (Notifications PR7).
      * {@code systemTokenPresent} reflects the {@code @system} akkoma token (Vault via ESO).
      */
     @Bean
