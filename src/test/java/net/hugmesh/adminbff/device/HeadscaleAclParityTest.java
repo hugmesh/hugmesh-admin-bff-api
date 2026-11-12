@@ -130,10 +130,14 @@ class HeadscaleAclParityTest {
         assertThat(golden.get("ssh")).anySatisfy(
                 r -> assertThat(r.get("dst").get(0).asText()).startsWith("tag:dev_"));
 
-        // (c) the k8s data-plane rule survives — acls[] is NOT empty.
-        assertThat(golden.get("acls")).hasSize(1);
+        // (c) the k8s data-plane rule survives — acls[] is NOT empty. It is followed by the one
+        // :22 accept, from tag:superadmin only (hugmesh-generator #1018): the packet filter must
+        // pass :22 before ssh[] is consulted, and a member source there is :22 for every member.
+        assertThat(golden.get("acls")).hasSize(2);
         assertThat(golden.get("acls").get(0).get("dst").toString())
                 .contains("10.244.0.0/16:*").contains("10.96.0.0/12:*");
+        assertThat(golden.get("acls").get(1).toString()).isEqualTo(
+                "{\"action\":\"accept\",\"dst\":[\"tag:hugmesh:22\"],\"src\":[\"tag:superadmin\"]}");
 
         // the always-on SUPERADMIN mesh rule is FIRST.
         assertThat(golden.get("ssh").get(0).get("src").get(0).asText()).isEqualTo("tag:superadmin");
@@ -161,10 +165,16 @@ class HeadscaleAclParityTest {
             rule.get("dst").forEach(n -> named.add(n.asText()));
         });
         assertThat(named).contains("tag:superadmin").anyMatch(t -> t.startsWith("tag:mesh_"));
+        // SSH SOURCE (hugmesh-generator #1018): every ssh rule's src is tag:superadmin and
+        // nothing else. Until 2026-11-11 the golden sourced each per-node edge from tag:hugmesh,
+        // the tag every pre-auth key holder self-applies, and this loop SKIPPED that tag as "the
+        // advisory membership src". Tailscale SSH answers :22 itself, so the source is the only
+        // gate. No skip now: tag:hugmesh in ssh[] fails here, and so does any owned tag.
+        golden.get("ssh").forEach(rule -> assertThat(rule.get("src").toString())
+                .as("ssh rule %s must be sourced from tag:superadmin only", rule)
+                .isEqualTo("[\"tag:superadmin\"]"));
+        assertThat(named).doesNotContain("tag:hugmesh", "tag:pki", "tag:be", "tag:fe", "tag:host");
         for (String tag : named) {
-            if (tag.equals("tag:hugmesh")) {
-                continue;   // the advisory membership src, asserted owned above
-            }
             assertThat(tagOwners.has(tag)).as("ssh names %s, which must be declared", tag).isTrue();
             assertThat(tagOwners.get(tag).isArray() && tagOwners.get(tag).isEmpty())
                     .as("security tag %s must have the EMPTY owner list, got %s", tag,
