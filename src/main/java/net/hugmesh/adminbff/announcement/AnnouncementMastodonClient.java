@@ -5,8 +5,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
 
+import java.util.List;
 import java.util.Map;
-import java.util.regex.Pattern;
 
 /**
  * Reactive admin client that propagates a published announcement to akkoma (the
@@ -85,14 +85,14 @@ import java.util.regex.Pattern;
  * behind the same {@code external.mastodon.enabled} gate AND the {@code @system} account's
  * own token ({@code notification.system-account.channel.akkoma.token}, NOT the admin
  * bearer): it posts a Mastodon-API {@code direct} status ({@code POST /api/v1/statuses})
- * that @-mentions the recipient. Either gate off → {@link AkkomaOutcome#stubbed()} with no
+ * that @-mentions the recipient and nobody else (the text is built by
+ * {@link AkkomaNoticeText}). Either gate off → {@link AkkomaOutcome#stubbed()} with no
  * HTTP; any non-2xx or transport error → {@link AkkomaOutcome#degraded}. Not yet observed
  * against a running Akkoma.
  */
 public class AnnouncementMastodonClient {
 
     private static final Logger log = LoggerFactory.getLogger(AnnouncementMastodonClient.class);
-    private static final Pattern NOTICE_LOCALPART = Pattern.compile("[a-z0-9._-]{1,64}");
 
     private final WebClient http;
     private final boolean enabled;
@@ -163,7 +163,8 @@ public class AnnouncementMastodonClient {
      * token: either absent → {@link AkkomaOutcome#stubbed()} (no HTTP, never a false OK).
      * NEVER hard-fails — a failed call resolves to {@link AkkomaOutcome#degraded}. The
      * {@code body} is the neutral title+body the {@code NotificationTemplate} composed
-     * (reason/ttl, NEVER the actor).
+     * (reason/ttl, NEVER the actor). It carries the moderator's reason as typed, so it is
+     * not posted as it is: see {@link AkkomaNoticeText}.
      */
     public Mono<AkkomaOutcome> postLocalUserNotice(String localpart, String body) {
         log.info("[akkoma] @system local notice to '{}' (enabled={})", localpart, enabled);
@@ -176,30 +177,36 @@ public class AnnouncementMastodonClient {
      * {@code @system} account:
      * <pre>{@code
      *   POST /api/v1/statuses   Authorization: Bearer <@system token>
-     *        {"status":"@<localpart> <body>","visibility":"direct"}
+     *        {"status":"@<localpart> <body, neutralised>","visibility":"direct","to":["<localpart>"]}
      * }</pre>
-     * A localpart outside {@code [a-z0-9._-]} (which could smuggle a second {@code @mention}
-     * into the status) is refused as degraded before any HTTP. Every non-2xx — including
-     * 3xx, which the default WebClient handlers pass through — and every transport error
-     * resolves DEGRADED, never a false OK.
+     * The recipient is the only account the status can reach. {@link AkkomaNoticeText}
+     * writes every at-sign in the body as text, so the moderator's reason cannot mention a
+     * second account, and a localpart that is not {@linkplain AkkomaNoticeText#addressable
+     * addressable} (one a server could read as a mention of somebody else, such as
+     * {@code bob.}) is refused as degraded before any HTTP. {@code to} is the Akkoma
+     * extension that addresses exactly the listed nicknames and ignores mentions in the
+     * text (read from the Akkoma source, not observed live; other servers ignore the
+     * field). Every non-2xx — including 3xx, which the default WebClient handlers pass
+     * through — and every transport error resolves DEGRADED, never a false OK.
      *
      * <p>Unlike {@code AkkomaSystemNoticeClient} (the {@code notify.akkoma.notice.wired}
      * transport) this seam does no {@code accounts/lookup} existence probe and sends no
      * {@code Idempotency-Key}: a direct status to a name nobody owns is still created, so
-     * an OK here means "Akkoma accepted the status", not "a person received it".
+     * an OK here means "Akkoma accepted the status", not "a person received it", and a
+     * retry after a lost reply can post the notice twice.
      */
     private Mono<AkkomaOutcome> doPostLocalNotice(String localpart, String body) {
         if (!enabled || systemToken == null || systemToken.isBlank()) {
             return Mono.just(AkkomaOutcome.stubbed());
         }
-        if (localpart == null || !NOTICE_LOCALPART.matcher(localpart).matches()) {
+        if (!AkkomaNoticeText.addressable(localpart)) {
             return Mono.just(AkkomaOutcome.degraded("invalid localpart"));
         }
-        String status = "@" + localpart + " " + (body == null ? "" : body);
         return http.post()
                 .uri("/api/v1/statuses")
                 .headers(h -> h.setBearerAuth(systemToken))
-                .bodyValue(Map.of("status", status, "visibility", "direct"))
+                .bodyValue(Map.of("status", AkkomaNoticeText.status(localpart, body),
+                        "visibility", "direct", "to", List.of(localpart)))
                 .retrieve()
                 .onStatus(s -> !s.is2xxSuccessful(),
                         org.springframework.web.reactive.function.client.ClientResponse::createException)

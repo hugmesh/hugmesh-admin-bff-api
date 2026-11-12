@@ -5,6 +5,7 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import reactor.core.publisher.Mono;
+import net.hugmesh.adminbff.announcement.AkkomaNoticeText;
 import net.hugmesh.adminbff.announcement.AkkomaOutcome;
 import net.hugmesh.adminbff.announcement.AnnouncementMastodonClient;
 
@@ -26,6 +27,14 @@ import net.hugmesh.adminbff.announcement.AnnouncementMastodonClient;
  * outcome is a transient FAILED→retry, never a false {@code sent}. This path has no
  * account-existence probe, so it can report {@code sent} for a recipient with no Akkoma
  * account; the second gate below does probe.
+ *
+ * <h3>One recipient</h3>
+ * On both paths the status is built by {@link AkkomaNoticeText}: the recipient's mention is
+ * its only at-sign, so the moderator's free-text reason cannot add a second recipient. A
+ * subject whose localpart is not {@linkplain AkkomaNoticeText#addressable addressable}
+ * (anything but {@code [a-z0-9_]}, 1 to 64 characters) is a terminal {@code skipped} here,
+ * before either transport: a server could read such a name as a mention of somebody else,
+ * and no retry would change that.
  *
  * <h3>Real transport (second gate)</h3>
  * When {@code notify.akkoma.notice.wired=true} (default false) the channel is built with an
@@ -83,7 +92,11 @@ public class AkkomaChannel implements NotificationChannel {
     @Override
     public Mono<ChannelOutcome> send(String domain, String recipientSubject, ChannelMessage message) {
         String localpart = localpartOf(recipientSubject);
-        if (localpart.isBlank()) {
+        if (!AkkomaNoticeText.addressable(localpart)) {
+            // Terminal on either transport: no retry can make such a name deliverable, and
+            // posting "@bob." would reach the account "bob". The name itself is not logged.
+            log.debug("[notify-akkoma] recipient name ({} chars) is not addressable; SKIPPED",
+                    localpart.length());
             return Mono.just(ChannelOutcome.SKIPPED);
         }
         String body = message.title() + "\n\n" + (message.body() == null ? "" : message.body());

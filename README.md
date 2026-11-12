@@ -1175,12 +1175,14 @@ delivers them in-app to user-bff:
 > 🚧 **External channels: transports written, every flag still off.** The adapters live in
 > `notification/channel/` behind the `ExternalChannelReconciler`; each channel has its own
 > gate (a disabled channel contributes no work) and the two social channels a second gate
-> that selects the real transport over the old stub:
+> that selects the probing transport. With that second gate off, Matrix stays on the stubbed
+> admin seam and sends nothing; Akkoma falls back to the announcement client's notice seam,
+> which does send but does not probe (see its row):
 >
 > | Channel | Channel gate | Real-transport gate | State |
 > |---|---|---|---|
 > | Matrix DM | `notify.matrix.enabled` | `notify.matrix.dm.wired` | `MatrixSystemDmClient`: standard client-server API as `@system` (whoami, profile existence probe, `createRoom`, `m.direct`, `send` with a txn id from the outbox row). Contract-tested against a fake whose profile, `m.direct` and txn-id semantics were measured on tuwunel v1.7.0 (its forced 403/404/429/5xx replies were not), plus `MatrixSystemDmClientLiveTest` against a real homeserver. With `dm.wired=false` it stays on the stubbed admin seam. |
-> | Akkoma | `notify.akkoma.enabled` | `notify.akkoma.notice.wired` | `AkkomaSystemNoticeClient`: `accounts/lookup` probe + a `direct` status as `@system`, `Idempotency-Key` from the outbox row. Contract-tested against a fake built from the API docs; **not run against a real Akkoma**. |
+> | Akkoma | `notify.akkoma.enabled` | `notify.akkoma.notice.wired` | `AkkomaSystemNoticeClient`: `accounts/lookup` probe + a `direct` status as `@system`, `Idempotency-Key` from the outbox row. With `notice.wired=false` the channel posts through `AnnouncementMastodonClient.postLocalUserNotice` instead, and only when `external.mastodon.enabled=true`: the same `direct` status with the same `@system` token, but **no lookup probe and no `Idempotency-Key`**, so a name with no Akkoma account is recorded `sent` and a retry after a lost reply can post twice. Both paths build the status with `AkkomaNoticeText`, so the recipient is the only account it can reach: every `@` in the title and reason is written `(at)` (a reason such as "reported by @carol" cannot add a recipient) and every `<` is written `‹` (a reason cannot carry a link or image tag), the recipient is also named in the Akkoma `to` field, a recipient name outside `[a-z0-9_]{1,64}` is `skipped`, and the text is capped at 4000 characters. Hashtags, links and emoji shortcodes in a reason are posted as typed; they change how the notice looks, not who receives it. Contract-tested against a fake built from the API docs; the mention and tag rules were also run through Akkoma 3.20.1's own formatter offline. **Not run against a real Akkoma**. |
 > | email | `notify.email.enabled` | none (SMTP is the transport) | `EmailChannel` is real. A recipient that already IS an email address is mailed as before; any other subject goes to an optional `RecipientEmailResolver` bean (empty result is `skipped`, a failed lookup is `failed` and retried, a result that is not address-shaped is `skipped`). **No resolver implementation exists**: the profile-email source needs an email getter that the auth-core `CasdoorAdminClient` (2.5.1) does not have, so with no bean a subject like `org/alice` is still `skipped`. Only an in-memory fake is used in the tests; no live SMTP send was observed. |
 > | phpBB forum | `notify.forum.enabled` | `notify.forum.pm.wired` | `ForumSystemPmClient`: one `POST /bff/forum/system/private-messages` to the forum-bff as `@system`, `Idempotency-Key` from the outbox row; a 404 with body code `unknown_recipient` is `skipped`, any other non-2xx (a missing route included) is `failed` and retried. **No forum-bff or forum-api serves that route yet** (neither has a private-message verb), so the contract is a proposal encoded only by the test fake; it needs that forum-bff route and, behind it, a private-message verb in the `hugmesh/forum-api` phpBB extension. With `pm.wired=false` the channel stays the visible stub gated on `notify.forum.seam-wired`. |
 >
@@ -1188,7 +1190,9 @@ delivers them in-app to user-bff:
 > (`notification.system-account.channel.<channel>.token`, Vault via ESO, empty default) and a
 > `@system` account that exists on that homeserver; this change adds no code that creates the
 > homeserver-side account (whether the Casdoor `@system` user from `SystemAccountProvisioner`
-> yields one there was not established). A recipient with no account on the homeserver is recorded `skipped`, not `sent`.
+> yields one there was not established). On the probing transports (`dm.wired`, `notice.wired`,
+> `pm.wired`) a recipient with no account on the homeserver is recorded `skipped`, not `sent`;
+> the Akkoma fallback path above cannot tell and records `sent`.
 > A DM is an invite plus a message: the recipient is invited to a private room and the text is
 > in it once they accept (seen once in a manual run against a real homeserver; the live test
 > `MatrixSystemDmClientLiveTest` is skipped unless `MATRIX_LIVE_URL` is set and was not re-run in the last rounds). Whether a given
@@ -1287,7 +1291,7 @@ Driven entirely by environment variables (defaults in
 | `FEDERATION_USERNAME_GATE_ENABLED` | confusable/reserved username gate against the federation API |
 | `HOMESERVER_ADMIN_ENABLED`, `HOMESERVER_DOMAINLOCK_ENABLED` | homeserver suspend + force-local seams |
 | `SVC_PASSWORD` | **mandatory** homeserver service-token-broker password (`broker.svc-password`) — no baked default (#136); the app **fails to start** if unset |
-| `EXTERNAL_MASTODON_ENABLED`, `EXTERNAL_FORUM_ENABLED` | akkoma announcement + forum-console proxy seams |
+| `EXTERNAL_MASTODON_ENABLED`, `EXTERNAL_FORUM_ENABLED` | akkoma announcement + forum-console proxy seams; the first also arms the Akkoma notice fallback path (see Notifications) |
 | `ROUTE_MIRROR_*` | best-effort Cassandra mirror of route-access for the gateways |
 | `TESTREPORTS_LAUNCH_ENABLED`, `TESTREPORTS_STORAGE_DIR` | test-runner Job launch + report PVC |
 | `ACCESS_SUSPENSION_LEASE_ENABLED`, `SPRING_CLOUD_KUBERNETES_*` | multi-replica single-writer Lease |

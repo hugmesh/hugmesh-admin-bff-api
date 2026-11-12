@@ -8,6 +8,12 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.web.reactive.function.client.WebClient;
+import net.hugmesh.adminbff.notification.AccountRestrictionPayload;
+import net.hugmesh.adminbff.notification.NotificationOutbox;
+import net.hugmesh.adminbff.notification.NotificationTemplate;
+import net.hugmesh.adminbff.notification.channel.AkkomaChannel;
+import net.hugmesh.adminbff.notification.channel.ChannelMessage;
+import net.hugmesh.adminbff.notification.channel.ChannelOutcome;
 
 import java.io.IOException;
 import java.net.InetAddress;
@@ -18,6 +24,7 @@ import java.util.Collections;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.SoftAssertions.assertSoftly;
 
 /**
  * The {@code @system} per-user notice leg of {@link AnnouncementMastodonClient}
@@ -32,6 +39,8 @@ class AnnouncementMastodonClientNoticeTest {
     private static final String SYSTEM_TOKEN = "system-account-token";
     private static final String ADMIN_TOKEN = "admin-bearer";
     private static final ObjectMapper MAPPER = new ObjectMapper();
+    /** The accounts the fake instance knows; only {@code alice} is ever the recipient. */
+    private static final List<String> ACCOUNTS = List.of("alice", "bob", "carol");
 
     record Seen(String method, String path, String authorization, JsonNode body) { }
 
@@ -193,5 +202,120 @@ class AnnouncementMastodonClientNoticeTest {
     void nullBody_postsTheBareMention() {
         client(true, null, SYSTEM_TOKEN).postLocalUserNotice("alice", null).block();
         assertThat(requests.get(0).body().path("status").asText()).isEqualTo("@alice ");
+    }
+
+    // ── the notice must reach the recipient and nobody else ──────────────────
+
+    /** The text of the one status the fake received. */
+    private String onlyStatus() {
+        assertThat(requests).hasSize(1);
+        return requests.get(0).body().path("status").asText();
+    }
+
+    @Test
+    void aReasonThatNamesSomeoneElse_cannotAddARecipient() {
+        assertSoftly(soft -> {
+            for (String reason : FediverseAddressing.REASONS_NAMING_SOMEONE_ELSE) {
+                requests.clear();
+                AkkomaOutcome out = client(true, null, SYSTEM_TOKEN).postLocalUserNotice("alice",
+                        "Your account access changed\n\nReason: " + reason + ".").block();
+                soft.assertThat(out.isOk()).as("reason=[%s] posted", reason).isTrue();
+                String status = onlyStatus();
+                // Parser-independent: the recipient's own mention is the only at-sign there is.
+                soft.assertThat(status).as("reason=[%s]", reason).startsWith("@alice Your account access changed");
+                soft.assertThat(FediverseAddressing.atSigns(status)).as("at-signs in [%s]", status).isEqualTo(1);
+                // And a server that reads recipients out of the text finds only alice.
+                soft.assertThat(FediverseAddressing.addressedByText(status, ACCOUNTS))
+                        .as("addressed by [%s]", status).containsExactly("alice");
+            }
+        });
+    }
+
+    @Test
+    void aReasonThatCarriesATag_isPostedWithNoLessThanSign() {
+        assertSoftly(soft -> {
+            for (String reason : FediverseAddressing.REASONS_CARRYING_A_TAG) {
+                requests.clear();
+                client(true, null, SYSTEM_TOKEN).postLocalUserNotice("alice", "T\n\nReason: " + reason + ".")
+                        .block();
+                String status = onlyStatus();
+                // Nothing in the status can open a tag, however a server escapes plain text.
+                soft.assertThat(FediverseAddressing.lessThans(status)).as("less-than signs in [%s]", status)
+                        .isZero();
+                soft.assertThat(FediverseAddressing.atSigns(status)).as("at-signs in [%s]", status).isEqualTo(1);
+            }
+        });
+    }
+
+    @Test
+    void throughTheRealTemplateAndChannel_aModeratorReasonCannotAddARecipient() {
+        String payload = AccountRestrictionPayload.build("hugmesh/alice", "PROFILE", 3600L,
+                "reported by @carol, see @bob@remote.social");
+        NotificationTemplate.Message msg =
+                NotificationTemplate.render(NotificationOutbox.CATEGORY_ACCOUNT_RESTRICTION, payload);
+
+        ChannelOutcome out = new AkkomaChannel(client(true, null, SYSTEM_TOKEN), true, true)
+                .send("brandx", "hugmesh/alice", new ChannelMessage(
+                        NotificationOutbox.CATEGORY_ACCOUNT_RESTRICTION, msg.title(), msg.body(), "row-7"))
+                .block();
+
+        assertThat(out).isEqualTo(ChannelOutcome.SENT);
+        String status = onlyStatus();
+        assertThat(status).startsWith("@alice Your account access changed\n\n");
+        assertThat(status).contains("Reason: reported by (at)carol, see (at)bob(at)remote.social.");
+        assertThat(FediverseAddressing.atSigns(status)).isEqualTo(1);
+        assertThat(FediverseAddressing.addressedByText(status, ACCOUNTS)).containsExactly("alice");
+    }
+
+    @Test
+    void theRecipientIsAlsoNamedInTheToField() {
+        // Akkoma addresses exactly the nicknames in "to" and then ignores mentions in the
+        // text (read from its source, not observed live); other servers ignore the field.
+        client(true, null, SYSTEM_TOKEN).postLocalUserNotice("alice", "T\n\nReason: @carol.").block();
+
+        JsonNode to = requests.get(0).body().path("to");
+        assertThat(to.isArray()).as("to=%s", to).isTrue();
+        assertThat(to).hasSize(1);
+        assertThat(to.get(0).asText()).isEqualTo("alice");
+    }
+
+    @Test
+    void aRecipientNameAParserWouldShortenOrSplit_isNeverPosted() {
+        // "@bob." and "@bob," reach bob on both servers and "@bob-" does on Mastodon, so a
+        // name that is not letters, digits and underscores throughout is refused outright.
+        for (String lp : new String[] {"bob.", "bob..", "bob-", ".bob", "-bob", "bob.smith", "b-ob",
+            "bob,", "bob!", "bob)", "bob/", "bob's", "bob\tx", "bob\u200B"}) {
+            AkkomaOutcome out = client(true, null, SYSTEM_TOKEN).postLocalUserNotice(lp, "x").block();
+            assertThat(out.result()).as("localpart=[%s]", lp).startsWith("degraded:");
+        }
+        assertThat(requests).isEmpty();
+    }
+
+    @Test
+    void throughTheChannel_aNameNoAccountCanHave_isSkippedWithoutAnyRequest() {
+        // Terminal, not a retry: no later attempt can make such a name deliverable.
+        for (String subject : new String[] {"hugmesh/bob.", "hugmesh/Bob-", "bob.smith@brandx.test",
+            "hugmesh/b ob", "hugmesh/" + "a".repeat(65)}) {
+            ChannelOutcome out = new AkkomaChannel(client(true, null, SYSTEM_TOKEN), true, true)
+                    .send("brandx", subject, new ChannelMessage("c", "T", "B")).block();
+            assertThat(out).as("subject=[%s]", subject).isEqualTo(ChannelOutcome.SKIPPED);
+        }
+        assertThat(requests).isEmpty();
+    }
+
+    @Test
+    void sixtyFourCharactersIsTheLongestRecipientName() {
+        assertThat(client(true, null, SYSTEM_TOKEN).postLocalUserNotice("a".repeat(64), "x").block().isOk())
+                .isTrue();
+        assertThat(client(true, null, SYSTEM_TOKEN).postLocalUserNotice("a".repeat(65), "x").block().result())
+                .startsWith("degraded:");
+        assertThat(requests).hasSize(1);
+    }
+
+    @Test
+    void overlongNotice_isCappedNotRejected() {
+        client(true, null, SYSTEM_TOKEN).postLocalUserNotice("alice", "y".repeat(9000)).block();
+
+        assertThat(onlyStatus()).hasSize(4000).startsWith("@alice yyy").endsWith("\u2026");
     }
 }
