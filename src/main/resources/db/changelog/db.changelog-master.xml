@@ -730,4 +730,11 @@
       LAST.
     -->
     <include file="db/changelog/390-mesh-token-issued.xml"/>
+    <!--
+      400 — service_deployment_route_rule: which gateway_route_access rows each
+      service_deployment's provision wrote (hugmesh-superadmin-service-catalog-ui#3), so teardown
+      removes exactly those rows by id instead of sweeping by pattern and role. Net-new table,
+      no foreign keys (see the file); SELECT, INSERT, UPDATE to adminbff_app. Appended LAST.
+    -->
+    <include file="db/changelog/400-service-deployment-route-rule.xml"/>
 </databaseChangeLog>
