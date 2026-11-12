@@ -94,19 +94,22 @@ public class DomainCaEffector {
                 // Deferred: the row is written only AFTER Vault holds the root, never assembled
                 // (and so never timestamped or invoked) on a path where Vault failed.
                 .then(Mono.defer(() -> repo.markCaProvisioned(d.id(), mount)))
-                .map(updated -> {
-                    if (updated) {
-                        log.info("[domain-ca] {}: per-domain root ready at Vault PKI mount '{}', ca_provisioned=true",
-                                d.clusterDomain(), mount);
-                        return new CaOutcome(d.clusterDomain(), Status.PROVISIONED, mount, "root ready");
-                    }
-                    log.warn("[domain-ca] {}: root ready at '{}' but the row changed underneath "
-                            + "(ca_ref re-pointed or already provisioned) — not overwritten",
-                            d.clusterDomain(), mount);
-                    return new CaOutcome(d.clusterDomain(), Status.SKIPPED, d.caRef(),
-                            "row changed while provisioning; left as is");
-                })
+                .map(updated -> recorded(d, mount, updated))
                 .onErrorResume(e -> Mono.just(failed(d, describe(e))));
+    }
+
+    /** The outcome once Vault holds the root: {@code updated} is the compare-and-set result. */
+    private CaOutcome recorded(DomainRegistration d, String mount, boolean updated) {
+        if (updated) {
+            log.info("[domain-ca] {}: per-domain root ready at Vault PKI mount '{}', ca_provisioned=true",
+                    d.clusterDomain(), mount);
+            return new CaOutcome(d.clusterDomain(), Status.PROVISIONED, mount, "root ready");
+        }
+        log.warn("[domain-ca] {}: root ready at '{}' but the row changed underneath "
+                + "(ca_ref re-pointed or already provisioned) — not overwritten",
+                d.clusterDomain(), mount);
+        return new CaOutcome(d.clusterDomain(), Status.SKIPPED, d.caRef(),
+                "row changed while provisioning; left as is");
     }
 
     private CaOutcome failed(DomainRegistration d, String reason) {
