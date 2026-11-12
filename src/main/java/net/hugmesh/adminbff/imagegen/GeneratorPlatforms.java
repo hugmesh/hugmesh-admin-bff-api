@@ -47,9 +47,18 @@ public final class GeneratorPlatforms {
     private static final Set<String> IMAGE_SPEC;
 
     static {
-        JsonNode schema = load();
-        ENTRY = readEnum(schema, "worklistEntry");
-        IMAGE_SPEC = readEnum(schema, "imageConfig");
+        Sets sets = read(load());
+        ENTRY = sets.entry();
+        IMAGE_SPEC = sets.imageSpec();
+    }
+
+    /** Both platform sets of one schema tree. */
+    record Sets(Set<String> entry, Set<String> imageSpec) {
+    }
+
+    /** Read both enums, each from the definition that describes its field. */
+    static Sets read(JsonNode schema) {
+        return new Sets(readEnum(schema, "worklistEntry"), readEnum(schema, "imageConfig"));
     }
 
     private GeneratorPlatforms() {

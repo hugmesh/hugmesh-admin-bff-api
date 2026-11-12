@@ -32,6 +32,25 @@ class GeneratorPlatformsLoaderTest {
     }
 
     @Test
+    void eachFieldReadsItsOwnDefinition() throws IOException {
+        // The two enums are identical in today's schema; make them differ so a loader that read
+        // one definition for both fields cannot pass.
+        JsonNode schema = M.readTree("{\"$defs\":{"
+                + "\"worklistEntry\":{\"properties\":{\"platform\":{\"enum\":[\"x86\",\"rpi5\"]}}},"
+                + "\"imageConfig\":{\"properties\":{\"platform\":{\"enum\":[\"x86\",\"frite\"]}}}}}");
+        GeneratorPlatforms.Sets sets = GeneratorPlatforms.read(schema);
+        assertThat(sets.entry()).containsExactly("x86", "rpi5");
+        assertThat(sets.imageSpec()).containsExactly("x86", "frite");
+    }
+
+    @Test
+    void missingImageConfigDefinition_failsClosed() throws IOException {
+        assertThatThrownBy(() -> GeneratorPlatforms.read(schemaWithEntryEnum("[\"x86\"]")))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("$defs.imageConfig.properties.platform.enum is missing or empty");
+    }
+
+    @Test
     void missingDefinition_failsClosed() throws IOException {
         assertThatThrownBy(() -> GeneratorPlatforms.readEnum(M.readTree("{}"), "worklistEntry"))
                 .isInstanceOf(IllegalStateException.class)
