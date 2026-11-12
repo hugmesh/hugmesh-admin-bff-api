@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
+import net.hugmesh.adminbff.imagegen.GeneratorPlatform;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -27,9 +28,9 @@ import org.jspecify.annotations.Nullable;
  *       same allowlist charset as the single-trigger DTO (substituted into a quoted YAML
  *       scalar, so quotes/newlines/controls are rejected).</li>
  *   <li>{@code imageType} — {@code primary} / {@code mesh-extension} / {@code client}.</li>
- *   <li>{@code hardwareClass} — the target PLATFORM, ENUMERATED to the six generator platforms
- *       (replaces the old free-text hardware class): {@code x86|rpi5|frite|jetson|orangepi5|
- *       orangepizero2}.</li>
+ *   <li>{@code hardwareClass} — the target PLATFORM (replaces the old free-text hardware
+ *       class), ENUMERATED by the vendored generator worklist schema
+ *       ({@link net.hugmesh.adminbff.imagegen.GeneratorPlatforms}), not by a hand list here.</li>
  *   <li>{@code sshKeysAllowed} — may this build emit a downloadable non-secret keys bundle?
  *       Absent/null defaults to {@code false} (fail-closed).</li>
  *   <li>{@code imageSpec} — the MATERIALIZED flat ImageConfig for this image (secrets blanked);
@@ -50,11 +51,11 @@ public record BatchImageSpec(
         String imageType,
 
         // The ENUMERATED platform (worklist WorklistEntry.platform), which replaces free-text
-        // hardwareClass. Locked to the six generator platforms — a defence-in-depth twin of the
-        // envelope validator's platform check and the renderManifest yamlSafe() scalar guard.
+        // hardwareClass. Locked to the platforms the vendored generator worklist schema lists —
+        // a defence-in-depth twin of the envelope validator's platform check and the
+        // renderManifest yamlSafe() scalar guard.
         @NotBlank(message = "hardwareClass (platform) is required")
-        @Pattern(regexp = "x86|rpi5|frite|jetson|orangepi5|orangepizero2",
-                message = "hardwareClass must be one of x86, rpi5, frite, jetson, orangepi5, orangepizero2")
+        @GeneratorPlatform
         String hardwareClass,
 
         @Nullable

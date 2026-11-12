@@ -1387,7 +1387,14 @@ checks out the generator and the console at `main` under `.catalog-sibling/` (ne
 catalogs instead of asserting them) and fails by name if either is missing, so
 `ImageCatalogDriftTest` goes red on its own when the generator's `docs/catalog` moves. To
 refresh, copy the generator's `docs/catalog/{image,packages}-catalog.json` into
-`src/main/resources/catalog/` and commit. `scripts/test-ci-workflow.py` pins the parts of
+`src/main/resources/catalog/` and commit. The same checkout also carries the generator's
+`docs/schemas`: `src/main/resources/schema/worklist.v1.schema.json` is a vendored copy of
+its `worklist.v1.schema.json`, and `WorklistSchemaDriftTest` goes red when it moves. That
+schema is where the batch image-build channel gets its platform list
+(`GeneratorPlatforms`): a batch entry's `hardwareClass` and an `imageSpec.platform` are
+accepted exactly when the schema lists them, and refused with a 400 that names the accepted
+platforms. A new generator platform therefore arrives by copying that one file over and
+committing; there is no hand list to edit. `scripts/test-ci-workflow.py` pins the parts of
 that file that keep the guards armed and runs as its first step.
 
 `.github/workflows/release.yml` ("Release image") checks that the four private

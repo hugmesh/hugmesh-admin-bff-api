@@ -80,8 +80,10 @@ jobs:
             exit 1
           fi
 
-      # The generator owns the CANONICAL catalogs; src/main/resources/catalog/*.json here are a
-      # vendored copy that ImageCatalogDriftTest compares against this checkout.
+      # The generator owns the CANONICAL catalogs and the worklist schema;
+      # src/main/resources/catalog/*.json and src/main/resources/schema/worklist.v1.schema.json
+      # here are vendored copies that ImageCatalogDriftTest and WorklistSchemaDriftTest compare
+      # against this checkout.
       - name: Check out hugmesh-generator at main (catalog source)
         id: generator
         uses: actions/checkout@v4
@@ -90,7 +92,9 @@ jobs:
           ref: main
           path: .catalog-sibling/hugmesh-generator
           fetch-depth: 1
-          sparse-checkout: docs/catalog
+          sparse-checkout: |
+            docs/catalog
+            docs/schemas
           persist-credentials: false
 
       # The CONSOLE half of the app-profile schema contract (AppProfileSchemaMirrorTest).
@@ -117,6 +121,7 @@ jobs:
           for f in \
             "${CATALOG_SIBLING_ROOT}/hugmesh-generator/docs/catalog/image-catalog.json" \
             "${CATALOG_SIBLING_ROOT}/hugmesh-generator/docs/catalog/packages-catalog.json" \
+            "${CATALOG_SIBLING_ROOT}/hugmesh-generator/docs/schemas/worklist.v1.schema.json" \
             "${CATALOG_SIBLING_ROOT}/hugmesh-superadmin-service-catalog-ui/schemas/app-profile.schema.json"; do
             test -f "${f}" || { echo "::error::SIBLING SOURCE MISSING: ${f}. The guard that reads it would SKIP and this job would be green while blind."; rc=1; }
           done
@@ -127,7 +132,7 @@ jobs:
           {
             echo '## Drift sources'
             echo
-            echo "- hugmesh-generator main @ \`${GENERATOR_SHA}\` (docs/catalog)"
+            echo "- hugmesh-generator main @ \`${GENERATOR_SHA}\` (docs/catalog, docs/schemas)"
             echo "- hugmesh-superadmin-service-catalog-ui main @ \`${CONSOLE_SHA}\` (schemas)"
           } >> "$GITHUB_STEP_SUMMARY"
           exit ${rc}

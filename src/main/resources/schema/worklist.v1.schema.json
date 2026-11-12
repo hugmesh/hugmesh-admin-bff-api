@@ -1,0 +1,152 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hugmesh.net/schemas/worklist.v1.schema.json",
+  "title": "HugMesh worklist envelope (v1)",
+  "description": "The frozen wire format for a mesh build worklist: an envelope around one base ImageConfig plus a list of per-image entries (one per role x platform). Emitted by the Studio (core/worklist.py WorklistConfig.to_dict) and the web admin-ui; validated by a Studio test AND the admin-bff bean validator (spec item 10). The `schema` key is the mandatory discriminator: ImageConfig.load rejects any JSON carrying it, and worklist.load_any routes it here. Anything WITHOUT a top-level `schema` key is a flat single-image ImageConfig and is NOT described by this schema.",
+  "type": "object",
+  "required": ["schema", "base", "entries"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {
+      "description": "Version discriminator. MUST be present and exact for the envelope to be recognized.",
+      "const": "hugmesh-worklist/v1"
+    },
+    "base": {
+      "$ref": "#/$defs/imageConfig"
+    },
+    "entries": {
+      "description": "One entry per image the worklist builds (one per role x platform combo).",
+      "type": "array",
+      "items": { "$ref": "#/$defs/worklistEntry" }
+    }
+  },
+  "$defs": {
+    "worklistEntry": {
+      "type": "object",
+      "description": "A single image: a role x platform pair plus its per-image axes. `id` is the STABLE identity `f\"{role}.{platform}\"` used for domain attachment (Domain.images) and the derived per-image build_subdir `wl-<id>` (build_subdir is NOT stored on the wire). additionalProperties is FALSE on purpose: every key WorklistEntry.to_dict writes must be declared here, so a new per-image axis cannot reach the wire without this contract being updated with it — that is what studio/tests/test_worklist.py::test_envelope_conforms_to_frozen_schema gates.",
+      "required": ["role", "platform"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Stable entry id `{role}.{platform}`. Derived from role/platform when omitted; honored verbatim on load for an exact round-trip.",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._+-]*\\.[A-Za-z0-9._+-]+$"
+        },
+        "role": { "type": "string", "minLength": 1 },
+        "platform": {
+          "type": "string",
+          "enum": ["x86", "rpi5", "frite", "jetson", "orangepi5", "orangepizero2", "orangepizero2w", "orangepizero3", "orangepi3-lts", "orangepi4-lts"]
+        },
+        "board": { "type": "string", "default": "" },
+        "flavor": { "type": "string", "default": "" },
+        "desktop": { "type": "string", "default": "" },
+        "encrypt_root": {
+          "description": "Per-image root-encryption override. `default` inherits the worklist-wide Home-page default; jetson rows are forced off in materialize regardless.",
+          "enum": ["default", "on", "off"],
+          "default": "default"
+        },
+        "packages_add": {
+          "type": "string",
+          "description": "Space-separated Portage atoms added to this image on top of the builder-derived default set. Each atom MUST match ^[a-z0-9][a-z0-9+._-]*/[A-Za-z0-9+._-]+$ (validate_package_atoms).",
+          "default": ""
+        },
+        "packages_drop": {
+          "type": "string",
+          "description": "Space-separated Portage atoms removed from this image's default set (honoring the mandatory-payload floor). Same per-atom charset as packages_add.",
+          "default": ""
+        },
+        "infra_services": {
+          "type": "array",
+          "description": "Per-node scope:node infra services (core/worklist.py WORKLIST_INFRA_SERVICES), ADDITIVE to the mesh-wide Network-page default. materialize() folds each onto the image through that platform's REAL builder mechanism (x86 tor -> --with-tor; rpi5 tor/egress-vpn -> --optional-services) and drops a slug the platform cannot express, so a per-node toggle never becomes a flag the builder ignores. The vocabulary is closed: WORKLIST_INFRA_SERVICES is the enum below.",
+          "items": { "type": "string", "enum": ["tor", "egress-vpn"] },
+          "default": []
+        },
+        "desktop_user": {
+          "type": "string",
+          "description": "The PERSON on a desktop-class entry. materialize() stamps desktop_user_role as --person-role on this entry's own image and derives a manifest User (carrying desktop_user_roles) on the internal Tailscale root domain. Node entries always leave this blank.",
+          "default": ""
+        },
+        "desktop_user_role": {
+          "type": "string",
+          "description": "That person's TIER (config.py PERSON_ROLE_CHOICES) — the one value --person-role takes. Meaningful only alongside a non-blank desktop_user. Multi-role (issue #228): the highest tier in desktop_user_roles; a reader that knows only this key loses nothing it read before.",
+          "enum": ["user", "mod", "admin", "superadmin"],
+          "default": "user"
+        },
+        "desktop_user_roles": {
+          "type": "array",
+          "description": "ALL the roles the person's account holds (issue #228): the tier plus any grants, in config.py USER_ROLE_CHOICES precedence order (grants are games / games-services). OMITTED when the account holds exactly its tier, so absent == [desktop_user_role] and a one-tier entry keeps its pre-#228 bytes; when present it always contains the tier, hence at least two items. desktop_users() hands the whole set to the derived manifest User's `roles`; the image itself takes only the tier.",
+          "minItems": 2,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "hostname": {
+          "type": "string",
+          "description": "PER-IMAGE hostname (issue #229) — this image's -H/--hostname. \"\" inherits base.hostname, and a blank base lets the builder derive the role name. materialize() fails loudly when two entries would bake the same explicit name. Timezone and the default account stay mesh-wide on the base.",
+          "default": ""
+        }
+      }
+    },
+    "imageConfig": {
+      "type": "object",
+      "description": "A serialized ImageConfig (core/config.py ImageConfig.to_dict). The single-image plane — identity, network, domains, users, system, disk-encryption default. Only the load-bearing shared fields are pinned here; the full field set evolves with the dataclass, so unknown keys are tolerated (from_dict drops them). Plaintext SECRET_FIELDS (local_pass/luks_pass/user_password/root_password) are ALWAYS blanked on the wire.",
+      "additionalProperties": true,
+      "properties": {
+        "mode": { "enum": ["standalone", "cloud", "mesh"] },
+        "role": { "type": "string" },
+        "platform": {
+          "enum": ["x86", "rpi5", "frite", "jetson", "orangepi5", "orangepizero2", "orangepizero2w", "orangepizero3", "orangepi3-lts", "orangepi4-lts"]
+        },
+        "brand": { "type": "string" },
+        "brand_title": { "type": "string" },
+        "org": { "type": "string" },
+        "cluster_domain": { "type": "string" },
+        "superdomain": {
+          "type": "string",
+          "description": "Tailscale root domain all mesh nodes join; \"\" = derived <brand>.internal. NON_ARGV: manifest + KEYS channel, never a builder flag; permanently internal (I7)."
+        },
+        "domains": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/domain" }
+        },
+        "users": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/user" }
+        }
+      }
+    },
+    "domain": {
+      "type": "object",
+      "description": "A cluster domain. `images` holds worklist entry-id refs this domain attaches to (empty = every eligible image). The legacy `games: bool` field was DROPPED — from_dict migrates a truthy value into optional_services += [\"games\"].",
+      "additionalProperties": true,
+      "properties": {
+        "name": { "type": "string" },
+        "title": { "type": "string" },
+        "images": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "optional_services": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "user": {
+      "type": "object",
+      "description": "One provisioning account. `role` is the PRIMARY role every consumer reads (the highest tier the account holds: superadmin > admin > mod > user, then games / games-services). `roles` (issue #228) is the FULL set the account holds, in that precedence order; it is OMITTED when the account holds exactly one role, so absent == [role] and a single-role row keeps its pre-#228 bytes. A reader that knows only `role` loses nothing it read before.",
+      "additionalProperties": true,
+      "properties": {
+        "username": { "type": "string" },
+        "domain": { "type": "string" },
+        "role": { "type": "string" },
+        "roles": {
+          "type": "array",
+          "minItems": 2,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "email": { "type": "string" }
+      }
+    }
+  }
+}
