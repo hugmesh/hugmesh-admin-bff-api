@@ -5,6 +5,8 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.reactive.function.client.WebClient;
 
+import java.time.Duration;
+
 /**
  * Wires the announcement collaborators: the always-on {@link AnnouncementSanitizer}
  * (server-side body_html allowlist) and the SAFE GATED akkoma propagation
@@ -39,8 +41,11 @@ public class AnnouncementConfig {
             @Value("${external.mastodon.admin-token:}") String adminToken,
             // The @system account's OWN akkoma token (the same property SystemChannelTokens
             // reads) — bearer for the per-user notice leg only. Blank → that leg stays stubbed.
-            @Value("${notification.system-account.channel.akkoma.token:}") String systemToken) {
+            @Value("${notification.system-account.channel.akkoma.token:}") String systemToken,
+            // How long the per-user notice leg waits for a reply: the same property the
+            // notify.akkoma.notice.wired transport reads (ExternalChannelConfig).
+            @Value("${notify.akkoma.timeout-ms:10000}") long noticeTimeoutMs) {
         return new AnnouncementMastodonClient(builder.baseUrl(baseUrl).build(), enabled, adminToken,
-                systemToken);
+                systemToken, Duration.ofMillis(noticeTimeoutMs));
     }
 }

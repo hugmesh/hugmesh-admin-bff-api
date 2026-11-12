@@ -5,6 +5,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 
@@ -93,6 +94,8 @@ import java.util.Map;
 public class AnnouncementMastodonClient {
 
     private static final Logger log = LoggerFactory.getLogger(AnnouncementMastodonClient.class);
+    /** How long the notice leg waits for Akkoma when no timeout is given. */
+    private static final Duration DEFAULT_NOTICE_TIMEOUT = Duration.ofSeconds(10);
 
     private final WebClient http;
     private final boolean enabled;
@@ -110,6 +113,14 @@ public class AnnouncementMastodonClient {
      * account. Blank → the notice leg stays {@link AkkomaOutcome#stubbed()}.
      */
     private final String systemToken;
+    /**
+     * The longest the per-user notice leg waits for Akkoma's reply ({@code
+     * notify.akkoma.timeout-ms}, the property the {@code notify.akkoma.notice.wired}
+     * transport uses too). The reconciler ticks every few seconds and does not wait for the
+     * previous tick, so a POST that never returns would hold its row and let later ticks
+     * post the same notice again.
+     */
+    private final Duration noticeTimeout;
 
     public AnnouncementMastodonClient(WebClient http, boolean enabled) {
         this(http, enabled, null, null);
@@ -120,10 +131,16 @@ public class AnnouncementMastodonClient {
     }
 
     public AnnouncementMastodonClient(WebClient http, boolean enabled, String adminToken, String systemToken) {
+        this(http, enabled, adminToken, systemToken, DEFAULT_NOTICE_TIMEOUT);
+    }
+
+    public AnnouncementMastodonClient(WebClient http, boolean enabled, String adminToken, String systemToken,
+                                      Duration noticeTimeout) {
         this.http = http;
         this.enabled = enabled;
         this.adminToken = adminToken;
         this.systemToken = systemToken;
+        this.noticeTimeout = noticeTimeout == null ? DEFAULT_NOTICE_TIMEOUT : noticeTimeout;
     }
 
     public boolean enabled() {
@@ -187,7 +204,8 @@ public class AnnouncementMastodonClient {
      * extension that addresses exactly the listed nicknames and ignores mentions in the
      * text (read from the Akkoma source, not observed live; other servers ignore the
      * field). Every non-2xx — including 3xx, which the default WebClient handlers pass
-     * through — and every transport error resolves DEGRADED, never a false OK.
+     * through — every transport error, and no reply within the notice timeout resolve
+     * DEGRADED, never a false OK.
      *
      * <p>Unlike {@code AkkomaSystemNoticeClient} (the {@code notify.akkoma.notice.wired}
      * transport) this seam does no {@code accounts/lookup} existence probe and sends no
@@ -212,6 +230,7 @@ public class AnnouncementMastodonClient {
                         org.springframework.web.reactive.function.client.ClientResponse::createException)
                 .toBodilessEntity()
                 .thenReturn(AkkomaOutcome.ok())
+                .timeout(noticeTimeout)
                 .onErrorResume(e -> noticeDegraded(localpart, e));
     }
 

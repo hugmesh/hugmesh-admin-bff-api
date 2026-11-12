@@ -20,8 +20,11 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.time.Duration;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
@@ -48,6 +51,8 @@ class AnnouncementMastodonClientNoticeTest {
     private final List<Seen> requests = Collections.synchronizedList(new ArrayList<>());
     private volatile int status = 200;
     private volatile String replyBody = "{\"id\":\"9\",\"visibility\":\"direct\"}";
+    /** Non-null while the fake must take the request and then say nothing. */
+    private volatile CountDownLatch silent;
 
     @BeforeEach
     void up() throws IOException {
@@ -58,6 +63,10 @@ class AnnouncementMastodonClientNoticeTest {
 
     @AfterEach
     void down() {
+        CountDownLatch held = silent;
+        if (held != null) {
+            held.countDown();
+        }
         server.stop(0);
     }
 
@@ -66,6 +75,12 @@ class AnnouncementMastodonClientNoticeTest {
         requests.add(new Seen(ex.getRequestMethod(), ex.getRequestURI().getPath(),
                 ex.getRequestHeaders().getFirst("Authorization"),
                 raw.isBlank() ? MAPPER.createObjectNode() : MAPPER.readTree(raw)));
+        CountDownLatch held = silent;
+        if (held != null) {
+            awaitQuietly(held);
+            ex.close();
+            return;
+        }
         if (status >= 300 && status < 400) {
             ex.getResponseHeaders().add("Location", "https://akkoma.invalid" + ex.getRequestURI());
             ex.sendResponseHeaders(status, -1);
@@ -77,6 +92,14 @@ class AnnouncementMastodonClientNoticeTest {
         ex.sendResponseHeaders(status, b.length);
         ex.getResponseBody().write(b);
         ex.close();
+    }
+
+    private static void awaitQuietly(CountDownLatch latch) {
+        try {
+            latch.await(30, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     private AnnouncementMastodonClient client(boolean enabled, String adminToken, String systemToken) {
@@ -175,7 +198,7 @@ class AnnouncementMastodonClientNoticeTest {
     void configBean_passesTheSystemTokenThrough_notTheAdminToken() {
         AnnouncementMastodonClient bean = new AnnouncementConfig().announcementMastodonClient(
                 WebClient.builder(), "http://127.0.0.1:" + server.getAddress().getPort(), true,
-                ADMIN_TOKEN, SYSTEM_TOKEN);
+                ADMIN_TOKEN, SYSTEM_TOKEN, 10_000L);
         assertThat(bean.postLocalUserNotice("alice", "x").block().isOk()).isTrue();
         assertThat(requests.get(0).authorization()).isEqualTo("Bearer " + SYSTEM_TOKEN);
     }
@@ -317,5 +340,45 @@ class AnnouncementMastodonClientNoticeTest {
         client(true, null, SYSTEM_TOKEN).postLocalUserNotice("alice", "y".repeat(9000)).block();
 
         assertThat(onlyStatus()).hasSize(4000).startsWith("@alice yyy").endsWith("\u2026");
+    }
+
+    // ── a server that never answers ──────────────────────────────────────────
+
+    @Test
+    void aServerThatNeverAnswers_isDegradedAfterTheTimeout_notAHangingSend() {
+        silent = new CountDownLatch(1);
+        AnnouncementMastodonClient impatient = new AnnouncementMastodonClient(
+                WebClient.builder().baseUrl("http://127.0.0.1:" + server.getAddress().getPort()).build(),
+                true, null, SYSTEM_TOKEN, Duration.ofMillis(300));
+
+        long started = System.nanoTime();
+        // block(5 s) so that a send with no timeout fails this test and does not hang it.
+        AkkomaOutcome out = impatient.postLocalUserNotice("alice", "x").block(Duration.ofSeconds(5));
+
+        assertThat(out.result()).startsWith("degraded:");
+        assertThat(out.isOk()).isFalse();
+        assertThat(Duration.ofNanos(System.nanoTime() - started)).isLessThan(Duration.ofSeconds(4));
+        assertThat(requests).hasSize(1);
+    }
+
+    @Test
+    void configBean_passesTheNoticeTimeoutThrough() {
+        silent = new CountDownLatch(1);
+        AnnouncementMastodonClient bean = new AnnouncementConfig().announcementMastodonClient(
+                WebClient.builder(), "http://127.0.0.1:" + server.getAddress().getPort(), true,
+                ADMIN_TOKEN, SYSTEM_TOKEN, 300L);
+
+        AkkomaOutcome out = bean.postLocalUserNotice("alice", "x").block(Duration.ofSeconds(5));
+
+        assertThat(out.result()).startsWith("degraded:");
+    }
+
+    @Test
+    void aNullTimeout_fallsBackToTheDefault_andStillSends() {
+        AkkomaOutcome out = new AnnouncementMastodonClient(
+                WebClient.builder().baseUrl("http://127.0.0.1:" + server.getAddress().getPort()).build(),
+                true, null, SYSTEM_TOKEN, null).postLocalUserNotice("alice", "x").block(Duration.ofSeconds(5));
+
+        assertThat(out.isOk()).isTrue();
     }
 }
