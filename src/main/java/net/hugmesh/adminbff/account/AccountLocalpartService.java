@@ -130,16 +130,12 @@ public class AccountLocalpartService {
         if (fromUsername == null || fromUsername.equals(fallback)) {
             return checkAndPersist(accountId, fallback, ServiceTokenBroker.mastodonLocalpart(fallback));
         }
-        String fromUsernameMastodon = ServiceTokenBroker.mastodonLocalpart(fromUsername);
-        return repo.existsByLocalpartAndIdNot(fromUsername, accountId)
-                .zipWith(repo.existsByMastodonLocalpartAndIdNot(fromUsernameMastodon, accountId))
-                .flatMap(taken -> Boolean.TRUE.equals(taken.getT1()) || Boolean.TRUE.equals(taken.getT2())
-                        ? checkAndPersist(accountId, fallback, ServiceTokenBroker.mastodonLocalpart(fallback))
-                        : checkAndPersist(accountId, fromUsername, fromUsernameMastodon)
-                                // Lost a concurrent race for the username: the UUID-derived
-                                // candidate is unique per account, so fall back to it.
-                                .onErrorResume(CollisionException.class, e -> checkAndPersist(
-                                        accountId, fallback, ServiceTokenBroker.mastodonLocalpart(fallback))));
+        // checkAndPersist refuses (CollisionException) when either fold of the username is
+        // held by another row, sequentially or by a lost concurrent race; the UUID-derived
+        // candidate is unique per account, so fall back to it.
+        return checkAndPersist(accountId, fromUsername, ServiceTokenBroker.mastodonLocalpart(fromUsername))
+                .onErrorResume(CollisionException.class, e -> checkAndPersist(
+                        accountId, fallback, ServiceTokenBroker.mastodonLocalpart(fallback)));
     }
 
     /** Shape of a Casdoor user {@code sub}: the account handle of an email-less user. */

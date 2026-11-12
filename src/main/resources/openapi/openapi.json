@@ -11419,6 +11419,9 @@
           },
           "mastodonLocalpart" : {
             "type" : "string"
+          },
+          "displayName" : {
+            "type" : "string"
           }
         }
       },
