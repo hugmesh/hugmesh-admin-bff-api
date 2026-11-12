@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+      service_deployment_route_rule — WHICH gateway_route_access rows a service_deployment's
+      provision wrote (AddServiceEffector). One row per written rule. Teardown removes exactly
+      the rows recorded here for its deployment, by id, so it never has to guess a rule's owner
+      from its pattern and role: two deployments that write the same (pattern, role) each own
+      their own row, and a hand-made rule is in nobody's record.
+
+      rule_id       the gateway_route_access.id the provision wrote. PRIMARY KEY: a rule has at
+                    most one owner (every provision inserts its own rows, none is shared).
+      deployment_id the service_deployment.id that wrote it.
+      recorded_at   when the provision wrote it.
+      removed_at    NULL while the rule is the deployment's; stamped when teardown (or a later
+                    provision of the same deployment, which replaces its rule set) removed the
+                    rule. The row is KEPT: it is the audit trail, and it is what tells a
+                    deployment that has been torn down apart from one that was provisioned before
+                    this table existed (see AddServiceEffector, "no recorded rules").
+
+      NO FOREIGN KEYS, on purpose.
+        * rule_id: an ADMIN can delete any rule in their brand through the route-access API, and
+          the gateway and the generator's seed own that table's shape too. A RESTRICT key would
+          refuse those deletes and a CASCADE key would silently erase the record. A record whose
+          rule is already gone is harmless: teardown deletes by id, finds nothing, and stamps it.
+        * deployment_id: service_deployment rows are never deleted, so there is nothing to
+          cascade from, and the effector is handed the deployment as a value (it never reads the
+          table).
+
+      Portable DDL like 102 (the tests run it on Testcontainers Postgres). The PG-only GRANT is
+      gated dbms=postgresql (onFail/onError=MARK_RAN). It is SELECT, INSERT, UPDATE to
+      adminbff_app (the role admin-bff connects as; never admin_bff): UPDATE stamps removed_at,
+      and there is no DELETE because a record is never removed.
+
+      Band 400: 390 (mesh-token-issued) is the last band on main; appended LAST.
+    -->
+
+    <changeSet id="400-service-deployment-route-rule" author="hugmesh">
+        <comment>service_deployment_route_rule — the route-access rows each deployment's
+                 provision wrote, so teardown removes exactly those and nothing else.</comment>
+        <createTable tableName="service_deployment_route_rule">
+            <!-- The gateway_route_access.id the provision wrote. One owner per rule. -->
+            <column name="rule_id" type="uuid">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <!-- The service_deployment.id whose provision wrote the rule. -->
+            <column name="deployment_id" type="varchar(36)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="recorded_at" type="timestamp with time zone" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+            <!-- NULL = still the deployment's rule. Stamped when the rule was removed. -->
+            <column name="removed_at" type="timestamp with time zone"/>
+        </createTable>
+    </changeSet>
+
+    <changeSet id="400-service-deployment-route-rule-deployment-index" author="hugmesh">
+        <comment>Index on (deployment_id): every read is "the rules of this deployment".</comment>
+        <createIndex tableName="service_deployment_route_rule"
+                     indexName="idx_service_deployment_route_rule_deployment">
+            <column name="deployment_id"/>
+        </createIndex>
+        <rollback>
+            <dropIndex tableName="service_deployment_route_rule"
+                       indexName="idx_service_deployment_route_rule_deployment"/>
+        </rollback>
+    </changeSet>
+
+    <changeSet id="400-service-deployment-route-rule-grant" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>GRANT SELECT, INSERT, UPDATE on service_deployment_route_rule to adminbff_app
+                 (provision = INSERT, teardown = SELECT + UPDATE removed_at). No DELETE: the row
+                 is the audit trail.</comment>
+        <sql>GRANT SELECT, INSERT, UPDATE ON service_deployment_route_rule TO adminbff_app</sql>
+        <rollback>REVOKE SELECT, INSERT, UPDATE ON service_deployment_route_rule FROM adminbff_app</rollback>
+    </changeSet>
+</databaseChangeLog>

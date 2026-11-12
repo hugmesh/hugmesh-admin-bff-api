@@ -36,8 +36,14 @@ import java.util.Map;
  *       stored — a row written before the schema existed (the flat {@code {"cpu","memory"}} form)
  *       stays readable and editable. They only WARN, once per offending row, so a superadmin read
  *       reports the rows a human has to move rather than hiding them.</li>
- *   <li>It does not RESOLVE the values. Nothing reads resources/roles/certs/exposure yet — that is
- *       the effector, still open on catalog-ui#3.</li>
+ *   <li>It does not RESOLVE the values. {@link AddServiceEffector#provision} does, through
+ *       {@link AppProfileRepository#findByName} and {@link ResolvedAppProfile} (catalog-ui#3,
+ *       first slice): {@code exposure.routes}, {@code roles[]} and {@code exposure.mfaRequired}
+ *       become route-access rules; {@code resources.*}, {@code certs.*} and
+ *       {@code exposure.ports} are parsed but not yet consumed (no ArgoCD / ExternalSecret
+ *       parameter channel exists), only logged. The effector re-checks the schema itself, so a
+ *       legacy row a READ here returns is refused (422) at provision rather than resolved as
+ *       empty.</li>
  * </ul>
  */
 @Service

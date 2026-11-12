@@ -14,9 +14,10 @@ import java.time.Instant;
  * {@link ServiceDeployment}, app_profile carries NO per-row tenant discriminator: the
  * templates are a shared, superadmin-owned library reused ACROSS brands. It is therefore
  * inherently CROSS-DOMAIN and only ever read/written by the cross-domain SUPERADMIN role.
- * {@link #name()} is the UNIQUE natural key. {@link #profileJson()} is stored verbatim and is
- * still not RESOLVED by anything (that is the effector, open on catalog-ui#3) — but since issue
- * #55 it is no longer stored unchecked: {@link AppProfileService} validates it against
+ * {@link #name()} is the UNIQUE natural key. {@link #profileJson()} is stored verbatim; it is
+ * RESOLVED at provision time by {@link AddServiceEffector} into a {@link ResolvedAppProfile}
+ * (routes, roles and mfaRequired applied; resources/certs/ports recorded only — catalog-ui#3,
+ * first slice). Since issue #55 it is no longer stored unchecked: {@link AppProfileService} validates it against
  * {@link AppProfileSchema} before every write. Reads are never validated and never rewritten, so
  * a row written before the schema existed stays readable and fixable in the console.
  */

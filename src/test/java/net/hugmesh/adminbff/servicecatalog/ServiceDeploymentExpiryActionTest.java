@@ -153,7 +153,7 @@ class ServiceDeploymentExpiryActionTest {
                 new net.hugmesh.adminbff.routeaccess.RouteAccessService(
                         new net.hugmesh.adminbff.routeaccess.RouteAccessRepository(net.hugmesh.adminbff.testutil.R2dbcRepos.of(db, net.hugmesh.adminbff.routeaccess.RouteAccessRowRepository.class)),
                         new RecordingRouteMirror()),
-                /*builder*/ null);
+                /*builder*/ null, EffectorFixture.ruleRecords(db), EffectorFixture.tx(db));
         EnforceActionEmitter emitter = new EnforceActionEmitter(effector);
 
         // effector reports DARK (the structural ships-dark signal the controller/test reads).
