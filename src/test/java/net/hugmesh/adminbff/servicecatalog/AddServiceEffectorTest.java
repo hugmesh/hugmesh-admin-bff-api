@@ -69,6 +69,16 @@ class AddServiceEffectorTest {
         return new RouteAccessService(new RouteAccessRepository(net.hugmesh.adminbff.testutil.R2dbcRepos.of(db, net.hugmesh.adminbff.routeaccess.RouteAccessRowRepository.class)), new NoopMirror());
     }
 
+    /** The REAL rule-record store: every effector here records the rules it writes. */
+    private DeploymentRouteRuleRepository ruleRecords() {
+        return EffectorFixture.ruleRecords(db);
+    }
+
+    /** A real R2DBC transaction over the same ConnectionFactory the stores use. */
+    private org.springframework.transaction.reactive.TransactionalOperator tx() {
+        return EffectorFixture.tx(db);
+    }
+
     private ServiceDeployment deployment(String domain, String service) {
         return new ServiceDeployment("dep-1", domain, service, null,
                 ServiceDeployment.STATE_ACTIVE, Instant.now(), null, "teardown",
@@ -77,14 +87,14 @@ class AddServiceEffectorTest {
 
     @org.junit.jupiter.api.BeforeEach
     void clear() {
-        db.sql("DELETE FROM gateway_route_access").fetch().rowsUpdated().block();
+        EffectorFixture.clear(db);   // the rules AND the record of who wrote them
     }
 
     @Test
     void provision_gitSource_createsApplication_andAddsBrandScopedRouteRule() {
         RecordingArgoCd argo = new RecordingArgoCd();
         RouteAccessService ra = routeAccess();
-        AddServiceEffector effector = new AddServiceEffector(argo, /*casdoor*/ null, ra, /*builder*/ null);
+        AddServiceEffector effector = new AddServiceEffector(argo, /*casdoor*/ null, ra, /*builder*/ null, ruleRecords(), tx());
 
         assertThat(effector.effectorEnabled()).isFalse();   // ships dark (noop-equivalent)
 
@@ -109,7 +119,7 @@ class AddServiceEffectorTest {
     @Test
     void provision_dockerfileSource_isGuarded_noEffect() {
         RecordingArgoCd argo = new RecordingArgoCd();
-        AddServiceEffector effector = new AddServiceEffector(argo, null, routeAccess(), /*builder*/ null);
+        AddServiceEffector effector = new AddServiceEffector(argo, null, routeAccess(), /*builder*/ null, ruleRecords(), tx());
 
         assertThatThrownBy(() -> effector.provision(deployment("acme.test", "owncast"),
                 new ServiceSource(ServiceSource.Kind.DOCKERFILE, "https://forgejo/acme/owncast",
@@ -123,7 +133,7 @@ class AddServiceEffectorTest {
 
     @Test
     void provision_zipSource_isGuarded() {
-        AddServiceEffector effector = new AddServiceEffector(new RecordingArgoCd(), null, routeAccess(), /*builder*/ null);
+        AddServiceEffector effector = new AddServiceEffector(new RecordingArgoCd(), null, routeAccess(), /*builder*/ null, ruleRecords(), tx());
         assertThatThrownBy(() -> effector.provision(deployment("acme.test", "x"),
                 new ServiceSource(ServiceSource.Kind.ZIP, "r", null, null)).block())
                 .isInstanceOf(ApiException.class)
@@ -139,7 +149,7 @@ class AddServiceEffectorTest {
     void provision_hostileRepoUrl_isRejected_beforeAnyArgoCdCall(String hostileRepoUrl) {
         RecordingArgoCd argo = new RecordingArgoCd();
         RouteAccessService ra = routeAccess();
-        AddServiceEffector effector = new AddServiceEffector(argo, /*casdoor*/ null, ra, /*builder*/ null);
+        AddServiceEffector effector = new AddServiceEffector(argo, /*casdoor*/ null, ra, /*builder*/ null, ruleRecords(), tx());
 
         // LIVE (SELECT/GIT) path: the symmetric structural SSRF re-check fails CLOSED with the
         // same 400 the build path throws — BEFORE argoCd.createApplication() is ever invoked.
@@ -156,7 +166,7 @@ class AddServiceEffectorTest {
     @Test
     void provision_validHttpsRepoUrl_stillProvisions() {
         RecordingArgoCd argo = new RecordingArgoCd();
-        AddServiceEffector effector = new AddServiceEffector(argo, /*casdoor*/ null, routeAccess(), /*builder*/ null);
+        AddServiceEffector effector = new AddServiceEffector(argo, /*casdoor*/ null, routeAccess(), /*builder*/ null, ruleRecords(), tx());
 
         // A valid https repo passes the structural SSRF re-check and provisions normally.
         String app = effector.provision(deployment("acme.test", "owncast"),
@@ -170,7 +180,7 @@ class AddServiceEffectorTest {
 
     @Test
     void provision_missingRepoUrl_isBadRequest() {
-        AddServiceEffector effector = new AddServiceEffector(new RecordingArgoCd(), null, routeAccess(), /*builder*/ null);
+        AddServiceEffector effector = new AddServiceEffector(new RecordingArgoCd(), null, routeAccess(), /*builder*/ null, ruleRecords(), tx());
         assertThatThrownBy(() -> effector.provision(deployment("acme.test", "owncast"),
                 new ServiceSource(ServiceSource.Kind.SELECT, null, null, null)).block())
                 .isInstanceOf(ApiException.class)
@@ -181,7 +191,7 @@ class AddServiceEffectorTest {
     void teardown_deletesApplication_andRemovesMatchingRouteRule() {
         RecordingArgoCd argo = new RecordingArgoCd();
         RouteAccessService ra = routeAccess();
-        AddServiceEffector effector = new AddServiceEffector(argo, null, ra, /*builder*/ null);
+        AddServiceEffector effector = new AddServiceEffector(argo, null, ra, /*builder*/ null, ruleRecords(), tx());
 
         // provision then tear down the SAME deployment.
         ServiceDeployment d = deployment("acme.test", "owncast");
@@ -192,7 +202,7 @@ class AddServiceEffectorTest {
         effector.teardown(d).block();
 
         assertThat(argo.deleted).containsExactly("acme-test-owncast");
-        // the per-service route rule is gone (matched by role + url pattern + brand).
+        // the per-service route rule is gone (the one this deployment's provision recorded).
         assertThat(new RouteAccessRepository(net.hugmesh.adminbff.testutil.R2dbcRepos.of(db, net.hugmesh.adminbff.routeaccess.RouteAccessRowRepository.class)).list().collectList().block()).isEmpty();
     }
 
@@ -221,7 +231,7 @@ class AddServiceEffectorTest {
     void provision_dockerfileSource_withBuilder_callsBuildThenCreateApplication() {
         RecordingArgoCd argo = new RecordingArgoCd();
         RecordingBuilder builder = new RecordingBuilder();
-        AddServiceEffector effector = new AddServiceEffector(argo, /*casdoor*/ null, routeAccess(), builder);
+        AddServiceEffector effector = new AddServiceEffector(argo, /*casdoor*/ null, routeAccess(), builder, ruleRecords(), tx());
 
         String app = effector.provision(deployment("acme.test", "tube"),
                 new ServiceSource(ServiceSource.Kind.DOCKERFILE, "https://forgejo/acme/tube",
@@ -288,7 +298,7 @@ class AddServiceEffectorTest {
     void noProfileRef_isByteIdenticalToTheDerivedRule_andNeverTouchesTheProfileStore(String ref) {
         RecordingArgoCd argo = new RecordingArgoCd();
         AppProfileRepository profiles = org.mockito.Mockito.mock(AppProfileRepository.class);
-        AddServiceEffector effector = new AddServiceEffector(argo, null, routeAccess(), null, profiles);
+        AddServiceEffector effector = new AddServiceEffector(argo, null, routeAccess(), null, profiles, ruleRecords(), tx());
 
         ServiceDeployment d = deploymentWithProfile(ref);
         String app = effector.provision(d, gitSource()).block();
@@ -311,7 +321,7 @@ class AddServiceEffectorTest {
         AppProfileRepository profiles = org.mockito.Mockito.mock(AppProfileRepository.class);
         org.mockito.Mockito.when(profiles.findByName("streaming"))
                 .thenReturn(Mono.just(profile("streaming", FULL_PROFILE)));
-        AddServiceEffector effector = new AddServiceEffector(argo, null, routeAccess(), null, profiles);
+        AddServiceEffector effector = new AddServiceEffector(argo, null, routeAccess(), null, profiles, ruleRecords(), tx());
 
         String app = effector.provision(deploymentWithProfile("streaming"), gitSource()).block();
 
@@ -336,7 +346,7 @@ class AddServiceEffectorTest {
         AppProfileRepository profiles = org.mockito.Mockito.mock(AppProfileRepository.class);
         org.mockito.Mockito.when(profiles.findByName("plain")).thenReturn(Mono.just(profile("plain",
                 "{\"roles\":[\"ROLE_MESH\"],\"exposure\":{\"routes\":[\"/ws/owncast/**\"]}}")));
-        AddServiceEffector effector = new AddServiceEffector(new RecordingArgoCd(), null, routeAccess(), null, profiles);
+        AddServiceEffector effector = new AddServiceEffector(new RecordingArgoCd(), null, routeAccess(), null, profiles, ruleRecords(), tx());
 
         effector.provision(deploymentWithProfile("plain"), gitSource()).block();
 
@@ -359,7 +369,7 @@ class AddServiceEffectorTest {
         AppProfileRepository profiles = org.mockito.Mockito.mock(AppProfileRepository.class);
         org.mockito.Mockito.when(profiles.findByName("streaming"))
                 .thenReturn(Mono.just(profile("streaming", FULL_PROFILE)));
-        AddServiceEffector effector = new AddServiceEffector(argo, null, ra, null, profiles);
+        AddServiceEffector effector = new AddServiceEffector(argo, null, ra, null, profiles, ruleRecords(), tx());
         ServiceDeployment d = deploymentWithProfile("streaming");
 
         effector.provision(d, gitSource()).block();
@@ -372,23 +382,23 @@ class AddServiceEffectorTest {
     }
 
     @Test
-    void teardown_profileDeletedSinceProvision_stillRemovesTheDerivedRuleAndApplication() {
+    void teardown_profileDeletedSinceProvision_stillRemovesEveryRuleAndTheApplication() {
         RecordingArgoCd argo = new RecordingArgoCd();
         AppProfileRepository profiles = org.mockito.Mockito.mock(AppProfileRepository.class);
         org.mockito.Mockito.when(profiles.findByName("streaming"))
                 .thenReturn(Mono.just(profile("streaming", FULL_PROFILE)))
                 .thenReturn(Mono.empty());
-        AddServiceEffector effector = new AddServiceEffector(argo, null, routeAccess(), null, profiles);
+        AddServiceEffector effector = new AddServiceEffector(argo, null, routeAccess(), null, profiles, ruleRecords(), tx());
         ServiceDeployment d = deploymentWithProfile("streaming");
         effector.provision(d, gitSource()).block();
+        assertThat(allRules()).hasSize(6);
 
         effector.teardown(d).block();   // does not fail: an expired lease must still come down
 
         assertThat(argo.deleted).containsExactly("acme-test-owncast");
-        assertThat(allRules()).noneSatisfy(r -> assertThat(r.urlPattern() + r.role())
-                .isEqualTo("/api/owncast/ROLE_OWNCAST"));
-        // the documented limit: profile-derived rules stay behind (WARN-logged).
-        assertThat(allRules()).hasSize(5);
+        // teardown removes what provision RECORDED, so the six rules go although the profile
+        // that produced them no longer exists.
+        assertThat(allRules()).isEmpty();
     }
 
     @Test
@@ -396,7 +406,7 @@ class AddServiceEffectorTest {
         RecordingArgoCd argo = new RecordingArgoCd();
         AppProfileRepository profiles = org.mockito.Mockito.mock(AppProfileRepository.class);
         org.mockito.Mockito.when(profiles.findByName("nope")).thenReturn(Mono.empty());
-        AddServiceEffector effector = new AddServiceEffector(argo, null, routeAccess(), null, profiles);
+        AddServiceEffector effector = new AddServiceEffector(argo, null, routeAccess(), null, profiles, ruleRecords(), tx());
 
         assertThatThrownBy(() -> effector.provision(deploymentWithProfile("nope"), gitSource()).block())
                 .isInstanceOf(ApiException.class)
@@ -416,7 +426,7 @@ class AddServiceEffectorTest {
         AppProfileRepository profiles = org.mockito.Mockito.mock(AppProfileRepository.class);
         org.mockito.Mockito.when(profiles.findByName("legacy"))
                 .thenReturn(Mono.just(profile("legacy", "{\"cpu\":\"500m\",\"memory\":\"512Mi\"}")));
-        AddServiceEffector effector = new AddServiceEffector(argo, null, routeAccess(), null, profiles);
+        AddServiceEffector effector = new AddServiceEffector(argo, null, routeAccess(), null, profiles, ruleRecords(), tx());
 
         assertThatThrownBy(() -> effector.provision(deploymentWithProfile("legacy"), gitSource()).block())
                 .isInstanceOf(ApiException.class)
@@ -430,7 +440,7 @@ class AddServiceEffectorTest {
     @Test
     void profileRef_withNoProfileStoreWired_failsClosedWith422() {
         RecordingArgoCd argo = new RecordingArgoCd();
-        AddServiceEffector effector = new AddServiceEffector(argo, null, routeAccess(), /*builder*/ null);
+        AddServiceEffector effector = new AddServiceEffector(argo, null, routeAccess(), /*builder*/ null, ruleRecords(), tx());
 
         assertThatThrownBy(() -> effector.provision(deploymentWithProfile("streaming"), gitSource()).block())
                 .isInstanceOf(ApiException.class)

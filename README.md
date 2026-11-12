@@ -797,7 +797,7 @@ These surfaces are the unscoped infra control plane. An ADMIN never reaches them
   `AppProfileController` (`/bff/superadmin/app-profiles`) and `ServiceDeploymentController`
   (`/bff/superadmin/service-store/{domain}/deployments`, now in the `servicecatalog`
   package). Changelogs: `100-service-curation`, `101-app-profile`,
-  `102-service-deployment`.
+  `102-service-deployment`, `400-service-deployment-route-rule`.
   > **`profileJson` is validated on save (#55).** `POST`/`PUT /bff/superadmin/app-profiles`
   > check the body against `src/main/resources/schema/app-profile.schema.json` before the
   > write. That file is a **byte-identical** copy of the Service Catalog console's
@@ -818,13 +818,35 @@ These surfaces are the unscoped infra control plane. An ADMIN never reaches them
   >   (the legacy flat form), fails the provision with a 422 and no effect. `resources.*`,
   >   `certs.*` and `exposure.ports` are **recorded only**: they are logged as not consumed,
   >   because no ArgoCD parameter channel or ExternalSecret parameter channel exists yet.
-  >   Teardown re-resolves the profile and removes the same rules. Nothing records which
-  >   rules a provision wrote, so a profile edited before teardown is torn down by its
-  >   current contents, and a deleted one leaves its profile-derived rules behind (WARN).
-  >   For the same reason a rule that already existed in the brand with exactly the shape a
-  >   profile grant writes (same gateway, pattern and role, role-based, allow) cannot be told
-  >   apart from it and is removed at teardown too; a per-user or deny rule is never swept.
   >   A deployment with no `profileRef` writes exactly the one derived rule it always did.
+  > - **Teardown removes what provision recorded.** Provision records the id of every
+  >   route-access row it writes against the deployment (`service_deployment_route_rule`,
+  >   changelog `400`), in the same transaction as the row, so a rule never exists without
+  >   its record. Teardown removes exactly the recorded rows, by id, scoped to the
+  >   deployment's brand. It never matches on pattern and role and it does not read the
+  >   profile again, so, for every deployment that has recorded rules (the one exception
+  >   is the next point):
+  >   - a per-user or deny rule on the same pattern and role is never removed;
+  >   - another deployment's rule is never removed. Two deployments that use the same
+  >     profile write the same (pattern, role) as two rows, and each owns its own;
+  >   - a rule that already existed with exactly the shape of a grant is never removed;
+  >   - a profile edited or deleted after provision changes nothing.
+  >
+  >   Provisioning the same deployment again replaces its recorded rule set in one
+  >   transaction: a retry does not stack duplicates, and after a profile edit the grants
+  >   the profile no longer names are dropped. A record is stamped `removed_at`, never
+  >   deleted.
+  > - **A deployment with no recorded rules** (provisioned before rules were recorded, or
+  >   never provisioned) is the one case that still removes by shape: its single derived
+  >   rule, matched as exactly the row that provision wrote (this brand's be-gateway, the
+  >   derived pattern and role, role-based, allow, `mfa_required=false`), skipping any row
+  >   recorded for a deployment. A per-user or deny rule is left alone here too. Two limits
+  >   remain on this path only. An unrecorded rule of exactly that shape that is not this
+  >   deployment's (a hand-made one, or one written by another unrecorded deployment of the
+  >   same service in the same brand) cannot be told apart and is removed with it (each
+  >   removal is a WARN). And if such a deployment is
+  >   provisioned again, it then has records and teardown removes only those, so the
+  >   unrecorded rule its first provision wrote stays until someone deletes it.
   > - `AppProfileSchemaMirrorTest` guards the copy twice. A local sha256 pin makes an edit
   >   deliberate but proves nothing about the other repo: moving the schema and the literal
   >   together in one repo satisfies it, and when measured that left both suites green with

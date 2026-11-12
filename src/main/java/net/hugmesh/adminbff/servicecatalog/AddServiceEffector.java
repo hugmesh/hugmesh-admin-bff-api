@@ -6,12 +6,15 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.reactive.TransactionalOperator;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import net.hugmesh.adminbff.argocd.ArgoCdClient;
 import net.hugmesh.adminbff.routeaccess.RouteAccessService;
 import net.hugmesh.adminbff.routeaccess.RouteRule;
 import net.hugmesh.adminbff.servicecatalog.repourl.RepoUrlValidator;
 import net.hugmesh.authcore.casdoor.CasdoorAdminClient;
+import net.hugmesh.commons.security.PrincipalDomain;
 import net.hugmesh.commons.web.ApiException;
 
 import java.util.ArrayList;
@@ -41,7 +44,8 @@ import java.util.Set;
  * <h3>Ordering (the V7 note)</h3>
  * The Casdoor role is created BEFORE the route-access rule that references it, and both
  * BEFORE the ArgoCD Application; teardown reverses (delete Application → revoke route rule →
- * delete role). Each leg is idempotent so a re-run / retry is safe.
+ * delete role). Each leg is idempotent so a re-run / retry is safe: the route-access leg
+ * REPLACES the rule set an earlier provision of the same deployment recorded (see below).
  *
  * <h3>App-profile resolution (catalog-ui#3, first slice)</h3>
  * When the deployment carries a {@link ServiceDeployment#profileRef()}, the named
@@ -64,14 +68,45 @@ import java.util.Set;
  * they are logged as not consumed. A deployment with NO profileRef never touches the profile
  * store and writes exactly the one derived rule (mfa_required=false) it always did.
  *
- * <p>Teardown re-resolves the profile and removes the same rule set. It does NOT fail closed: an
- * expired lease must still lose its Application, its derived rule and its role even if the
- * profile has since been deleted or broken — that case is logged as a WARN, because any
- * profile-derived rules then stay behind. Nothing records which rules a provision wrote, so a
- * profile EDITED between provision and teardown is torn down by its current contents, and a rule
- * that already existed in the brand with exactly the shape a profile grant writes (this gateway,
- * same pattern and role, role-based, allow) is indistinguishable from it and removed too. A
- * per-user or deny rule on the same pattern is never swept.
+ * <h3>Which rules teardown removes: the ones provision recorded</h3>
+ * Provision RECORDS every route-access row it writes against the deployment
+ * ({@code service_deployment_route_rule}, {@link DeploymentRouteRuleRepository}), in the SAME
+ * transaction as the rows themselves — a rule is never written without its record. Teardown
+ * removes exactly the recorded rows, by id, and nothing else. It never matches on a rule's
+ * pattern or role and it does not read the profile again, so, for every deployment that has
+ * recorded rules (the one exception is the next section):
+ * <ul>
+ *   <li>a per-user or deny rule on the same pattern and role is never removed (it is in nobody's
+ *       record);</li>
+ *   <li>another deployment's rule is never removed, even when both deployments use the same
+ *       profile and so wrote the same (pattern, role): each one owns its own row;</li>
+ *   <li>a rule that already existed with exactly the shape of a grant is never removed;</li>
+ *   <li>a profile EDITED or DELETED after provision changes nothing: the rules the provision
+ *       actually wrote are the ones removed, and an expired lease never waits on a profile.</li>
+ * </ul>
+ * Provisioning the same deployment AGAIN replaces its recorded rule set — the new rows are
+ * written and recorded and the earlier ones removed, in one transaction — so a retry does not
+ * stack duplicates and a re-provision after a profile edit drops the grants the profile no longer
+ * names.
+ *
+ * <h3>A deployment with NO recorded rules</h3>
+ * A deployment that never recorded a rule was provisioned before rules were recorded, or was
+ * never provisioned. For it, and only for it, teardown falls back to what the effector did
+ * before records existed: it removes the ONE derived rule by shape. The shape is exactly what
+ * that provision wrote (this brand, this brand's be-gateway, the derived pattern and role,
+ * role-based, allow, mfa_required=false), and a row recorded for any deployment is skipped, so
+ * here too a per-user or deny rule is left alone. Two limits remain on this path only:
+ * <ul>
+ *   <li>an unrecorded rule of exactly that shape that is not this deployment's (a hand-made
+ *       one, or one written by ANOTHER unrecorded deployment of the same service in the same
+ *       brand) cannot be told apart from the one the old provision wrote, and is removed with
+ *       it (WARN-logged, as every removal on this path is);</li>
+ *   <li>if such a deployment is provisioned AGAIN, it records its new rules and from then on
+ *       teardown removes only those: the unrecorded rule its first provision wrote stays until
+ *       someone deletes it.</li>
+ * </ul>
+ * A deployment that HAS recorded rules never takes this path, not even on a repeated teardown:
+ * its records are stamped, never deleted.
  */
 @Service
 @SuppressFBWarnings(value = "EI_EXPOSE_REP2",
@@ -102,6 +137,12 @@ public class AddServiceEffector {
      *  then REFUSED (fail closed) rather than provisioned without its profile. */
     @Nullable
     private final AppProfileRepository profiles;
+    /** The record of which route-access rows each deployment's provision wrote. Teardown removes
+     *  exactly the rows recorded here for its deployment. */
+    private final DeploymentRouteRuleRepository ruleRecords;
+    /** Wraps the route-access leg of a provision, so every rule and its record commit together
+     *  or not at all. */
+    private final TransactionalOperator tx;
 
     @org.springframework.beans.factory.annotation.Autowired
     public AddServiceEffector(ArgoCdClient argoCd,
@@ -109,13 +150,17 @@ public class AddServiceEffector {
                               RouteAccessService routeAccess,
                               @Nullable KanikoBuildLauncher builder,
                               @Value("${app.appstore.repo-host-allowlist:}") String repoHostAllowlistCsv,
-                              @Nullable AppProfileRepository profiles) {
+                              @Nullable AppProfileRepository profiles,
+                              DeploymentRouteRuleRepository ruleRecords,
+                              TransactionalOperator tx) {
         this.argoCd = argoCd;
         this.casdoor = casdoor;
         this.routeAccess = routeAccess;
         this.builder = builder;
         this.repoHostAllowlist = RepoUrlValidator.parseHostAllowlist(repoHostAllowlistCsv);
         this.profiles = profiles;
+        this.ruleRecords = ruleRecords;
+        this.tx = tx;
     }
 
 
@@ -127,8 +172,10 @@ public class AddServiceEffector {
     public AddServiceEffector(ArgoCdClient argoCd,
                               @Nullable CasdoorAdminClient casdoor,
                               RouteAccessService routeAccess,
-                              @Nullable KanikoBuildLauncher builder) {
-        this(argoCd, casdoor, routeAccess, builder, "", null);
+                              @Nullable KanikoBuildLauncher builder,
+                              DeploymentRouteRuleRepository ruleRecords,
+                              TransactionalOperator tx) {
+        this(argoCd, casdoor, routeAccess, builder, "", null, ruleRecords, tx);
     }
 
     /** Test/wiring convenience: no host allowlist, with a profile store. */
@@ -136,8 +183,10 @@ public class AddServiceEffector {
                               @Nullable CasdoorAdminClient casdoor,
                               RouteAccessService routeAccess,
                               @Nullable KanikoBuildLauncher builder,
-                              @Nullable AppProfileRepository profiles) {
-        this(argoCd, casdoor, routeAccess, builder, "", profiles);
+                              @Nullable AppProfileRepository profiles,
+                              DeploymentRouteRuleRepository ruleRecords,
+                              TransactionalOperator tx) {
+        this(argoCd, casdoor, routeAccess, builder, "", profiles, ruleRecords, tx);
     }
 
     /** True when the ArgoCD leg would make a real mutation (the effector is enabled). A
@@ -162,7 +211,8 @@ public class AddServiceEffector {
      *       client is wired;</li>
      *   <li>add the per-service route-access rule(s) (role → the service's URL pattern(s))
      *       scoped to the deployment's brand — one rule without a profile, the profile's
-     *       routes × roles product with one;</li>
+     *       routes × roles product with one — and record each written rule against the
+     *       deployment, replacing the rules an earlier provision of it recorded;</li>
      *   <li>create the ArgoCD Application that registers the descriptor repo (ships dark
      *       unless the effector is enabled).</li>
      * </ol>
@@ -172,6 +222,12 @@ public class AddServiceEffector {
     public Mono<String> provision(ServiceDeployment deployment, ServiceSource source) {
         if (deployment == null || source == null) {
             return Mono.error(ApiException.badRequest("deployment and source are required"));
+        }
+        if (!hasId(deployment)) {
+            // The rules a provision writes are recorded against the deployment's id; without
+            // one they could never be removed again, so nothing is written at all.
+            return Mono.error(ApiException.badRequest("deployment id is required: the"
+                    + " route-access rules a provision writes are recorded against it"));
         }
         if (source.kind().requiresBuilder() && builder == null) {
             // DOCKERFILE / ZIP: no in-cluster builder wired — guard with a clear message.
@@ -242,9 +298,11 @@ public class AddServiceEffector {
 
     /**
      * TEARDOWN the service for an ENDED {@code deployment} — the reverse of {@link #provision}:
-     * delete the ArgoCD Application, revoke the route-access rule, delete the Casdoor role.
-     * Each leg tolerates already-absent (idempotent). This is the real effect the App-Store
-     * expiry loop emits via {@link EnforceActionEmitter} once the effector is enabled.
+     * delete the ArgoCD Application, remove the route-access rules the deployment's provision
+     * recorded, delete the Casdoor role. Each leg tolerates already-absent (idempotent). This is
+     * the real effect the App-Store expiry loop emits via {@link EnforceActionEmitter} once the
+     * effector is enabled. The app_profile store is NOT read: what is removed is what was
+     * recorded, whatever the profile says now.
      */
     public Mono<Void> teardown(ServiceDeployment deployment) {
         if (deployment == null) {
@@ -252,14 +310,13 @@ public class AddServiceEffector {
         }
         PerServiceIdentity identity = new PerServiceIdentity(deployment.domain(), deployment.serviceKey());
         String appName = identity.vaultPkiRole();
-        return resolveForTeardown(deployment)
-                .flatMap(profile -> argoCd.deleteApplication(appName)
-                        .then(removeRouteRules(deployment, identity, profile))
-                        .then(deleteRole(identity))
-                        .doOnSuccess(v -> log.info(
-                                "[appstore-effector] tore down {} in {} (app='{}', role='{}', enabled={})",
-                                deployment.serviceKey(), deployment.domain(), appName, identity.casdoorRole(),
-                                effectorEnabled())))
+        return argoCd.deleteApplication(appName)
+                .then(removeRouteRules(deployment, identity))
+                .then(deleteRole(identity))
+                .doOnSuccess(v -> log.info(
+                        "[appstore-effector] tore down {} in {} (app='{}', role='{}', enabled={})",
+                        deployment.serviceKey(), deployment.domain(), appName, identity.casdoorRole(),
+                        effectorEnabled()))
                 .then();
     }
 
@@ -267,6 +324,10 @@ public class AddServiceEffector {
 
     private static boolean hasProfileRef(ServiceDeployment deployment) {
         return deployment.profileRef() != null && !deployment.profileRef().isBlank();
+    }
+
+    private static boolean hasId(ServiceDeployment deployment) {
+        return deployment.id() != null && !deployment.id().isBlank();
     }
 
     /** Provision-side resolution: NONE when there is no profileRef (the profile store is not
@@ -287,39 +348,6 @@ public class AddServiceEffector {
                         + "', which does not exist; create the profile or clear profileRef,"
                         + " then provision again")))
                 .map(p -> ResolvedAppProfile.parse(p.name(), p.profileJson()));
-    }
-
-    /** Teardown-side resolution: like provision, but a missing / unresolvable profile degrades
-     *  to NONE with a WARN instead of blocking the teardown of an expired lease. A store ERROR
-     *  still propagates, so the expiry loop retries rather than half-tearing-down. */
-    private Mono<ResolvedAppProfile> resolveForTeardown(ServiceDeployment deployment) {
-        if (!hasProfileRef(deployment)) {
-            return Mono.just(ResolvedAppProfile.NONE);
-        }
-        String ref = deployment.profileRef();
-        if (profiles == null) {
-            log.warn("[appstore-effector] teardown of {} in {}: no app_profile store wired to resolve"
-                    + " profileRef '{}' - removing only the derived rule; profile-derived rules may"
-                    + " remain", deployment.serviceKey(), deployment.domain(), ref);
-            return Mono.just(ResolvedAppProfile.NONE);
-        }
-        return profiles.findByName(ref)
-                .map(p -> {
-                    try {
-                        return ResolvedAppProfile.parse(p.name(), p.profileJson());
-                    } catch (ApiException e) {
-                        log.warn("[appstore-effector] teardown of {} in {}: {} - removing only the"
-                                + " derived rule; profile-derived rules may remain",
-                                deployment.serviceKey(), deployment.domain(), e.getMessage());
-                        return ResolvedAppProfile.NONE;
-                    }
-                })
-                .switchIfEmpty(Mono.fromSupplier(() -> {
-                    log.warn("[appstore-effector] teardown of {} in {}: app_profile '{}' no longer"
-                            + " exists - removing only the derived rule; profile-derived rules may"
-                            + " remain", deployment.serviceKey(), deployment.domain(), ref);
-                    return ResolvedAppProfile.NONE;
-                }));
     }
 
     private static void logRecordedOnly(ServiceDeployment deployment, ResolvedAppProfile profile) {
@@ -371,49 +399,125 @@ public class AddServiceEffector {
         return casdoor.deleteRole(identity.casdoorRole());
     }
 
-    /** The route-access rules: each grant's role may reach its URL pattern from the per-domain
-     *  be-gateway, scoped to the deployment's brand, with the profile's MFA requirement. Written
-     *  in order, one after another. */
+    /**
+     * The route-access leg of a provision, in ONE transaction: write every grant as its own rule
+     * (its role may reach its URL pattern from the per-domain be-gateway, scoped to the
+     * deployment's brand, with the profile's MFA requirement), record each written rule against
+     * the deployment, then remove the rules an EARLIER provision of this same deployment
+     * recorded. New rows first, old rows second, so the mirror the gateways poll never sees the
+     * deployment without its grants; and all of it commits or none of it does, so a rule can
+     * never exist without the record teardown needs to remove it.
+     */
     private Mono<Void> addRouteRules(ServiceDeployment deployment, PerServiceIdentity identity,
                                      ResolvedAppProfile profile) {
-        return reactor.core.publisher.Flux.fromIterable(grants(identity, profile))
-                .concatMap(g -> routeAccess.add(new RouteRule(
-                        null,
-                        identity.domainSlugGateway(),
-                        g.urlPattern(),
-                        g.role(),
-                        null,
-                        true,
-                        deployment.domain(),
-                        profile.mfaRequired())))
+        PrincipalDomain brand = PrincipalDomain.forDomain(deployment.domain());
+        return ruleRecords.liveRuleIds(deployment.id()).collectList()
+                .flatMap(earlier -> writeAndRecordRules(deployment, identity, profile)
+                        .then(removeRecordedRules(earlier, brand)))
+                .as(tx::transactional);
+    }
+
+    private Mono<Void> writeAndRecordRules(ServiceDeployment deployment, PerServiceIdentity identity,
+                                           ResolvedAppProfile profile) {
+        return Flux.fromIterable(grants(identity, profile))
+                .concatMap(g -> routeAccess.add(ruleFor(deployment, identity, profile, g))
+                        .flatMap(written -> ruleRecords.record(deployment.id(), written.id())))
                 .then();
     }
 
-    private Mono<Void> removeRouteRules(ServiceDeployment deployment, PerServiceIdentity identity,
-                                        ResolvedAppProfile profile) {
-        // Internal SYSTEM teardown for an explicit brand: act under an unscoped (superadmin)
-        // scope homed at the deployment's domain so the cross-domain reconcile can read +
-        // drop THIS brand's rule. Sweep the rule(s) matching this service's role + url
-        // pattern, so teardown does not need to have remembered the row id. The derived grant is
-        // matched exactly as before (brand + role + pattern); a PROFILE-derived grant must also
-        // match the shape provision writes (this gateway, role-based, allow) so a hand-made rule
-        // for the same role + pattern - say a per-user deny - is not swept with it.
-        var scope = net.hugmesh.commons.security.PrincipalDomain.superadminFor(deployment.domain());
-        Set<Grant> grants = new LinkedHashSet<>(grants(identity, profile));
-        Grant derived = new Grant(identity.urlPattern(), identity.casdoorRole());
-        return routeAccess.list(scope)
-                .filter(r -> deployment.domain() != null && deployment.domain().equals(r.domain()))
-                .filter(r -> {
-                    Grant g = new Grant(r.urlPattern(), r.role());
-                    if (g.equals(derived)) {
-                        return true;
-                    }
-                    return grants.contains(g)
-                            && identity.domainSlugGateway().equals(r.gateway())
-                            && r.casdoorUser() == null
-                            && r.allow();
-                })
-                .concatMap(r -> routeAccess.remove(r.id(), scope).then())
+    /** The rule one grant becomes: role-based, allow, on the per-domain be-gateway, scoped to
+     *  the deployment's brand, carrying the profile's MFA requirement. */
+    private static RouteRule ruleFor(ServiceDeployment deployment, PerServiceIdentity identity,
+                                     ResolvedAppProfile profile, Grant g) {
+        return new RouteRule(
+                null,
+                identity.domainSlugGateway(),
+                g.urlPattern(),
+                g.role(),
+                null,
+                true,
+                deployment.domain(),
+                profile.mfaRequired());
+    }
+
+    /** Remove the rules with these recorded ids, one after another, stamping each record once
+     *  its rule is gone. The delete is SCOPED to the deployment's brand, so a recorded id can
+     *  only ever remove a row of that brand; an id whose rule is already gone (an admin deleted
+     *  it by hand) removes nothing and is stamped all the same. */
+    private Mono<Void> removeRecordedRules(List<String> ruleIds, PrincipalDomain brand) {
+        return Flux.fromIterable(ruleIds)
+                .concatMap(id -> routeAccess.remove(id, brand).then(ruleRecords.markRemoved(id)))
                 .then();
+    }
+
+    /** The route-access leg of a teardown: remove exactly the rules this deployment's provision
+     *  recorded. Only a deployment with nothing recorded can reach the by-shape fallback. */
+    private Mono<Void> removeRouteRules(ServiceDeployment deployment, PerServiceIdentity identity) {
+        PrincipalDomain brand = PrincipalDomain.forDomain(deployment.domain());
+        if (!hasId(deployment)) {
+            return removeUnrecordedDerivedRule(deployment, identity, brand);
+        }
+        return ruleRecords.liveRuleIds(deployment.id()).collectList()
+                .flatMap(recorded -> recorded.isEmpty()
+                        ? removeDerivedRuleIfNeverRecorded(deployment, identity, brand)
+                        : removeRecordedRules(recorded, brand));
+    }
+
+    /** Nothing live is recorded. If the deployment recorded rules before, they have been removed
+     *  already and there is nothing to do; only one that NEVER recorded a rule falls back. */
+    private Mono<Void> removeDerivedRuleIfNeverRecorded(ServiceDeployment deployment,
+                                                        PerServiceIdentity identity,
+                                                        PrincipalDomain brand) {
+        return ruleRecords.hasEverRecorded(deployment.id())
+                .flatMap(known -> known
+                        ? Mono.<Void>empty()
+                        : removeUnrecordedDerivedRule(deployment, identity, brand));
+    }
+
+    /**
+     * The fallback for a deployment that never recorded a rule (provisioned before rules were
+     * recorded, or never provisioned): remove its ONE derived rule by shape, as teardown did
+     * before records existed. The match is exactly the row that provision wrote, and a row
+     * recorded for any deployment is never taken, so a per-user rule, a deny rule, another
+     * gateway's rule and any rule a deployment RECORDED all stay. An unrecorded rule of exactly
+     * this shape cannot be told apart and goes too, whether it was made by hand or written by
+     * another unrecorded deployment of the same service in the same brand, which is why every
+     * removal here is a WARN.
+     */
+    private Mono<Void> removeUnrecordedDerivedRule(ServiceDeployment deployment,
+                                                   PerServiceIdentity identity,
+                                                   PrincipalDomain brand) {
+        return routeAccess.list(brand)
+                .filter(r -> isUnrecordedProvisionShape(r, identity))
+                .collectList()
+                .flatMapMany(Flux::fromIterable)
+                .filterWhen(r -> ruleRecords.isRecorded(r.id()).map(recorded -> !recorded))
+                .concatMap(r -> routeAccess.remove(r.id(), brand).then(Mono.just(r.id())))
+                .collectList()
+                .doOnNext(removed -> logUnrecordedRemoval(deployment, identity, removed))
+                .then();
+    }
+
+    /** Exactly the one rule a provision wrote before rules were recorded: this brand's
+     *  be-gateway, the derived pattern and role, role-based, allow, no MFA requirement. (The
+     *  brand itself is already fixed by the scoped list this filters.) */
+    private static boolean isUnrecordedProvisionShape(RouteRule r, PerServiceIdentity identity) {
+        return identity.urlPattern().equals(r.urlPattern())
+                && identity.casdoorRole().equals(r.role())
+                && identity.domainSlugGateway().equals(r.gateway())
+                && r.casdoorUser() == null
+                && r.allow()
+                && !r.mfaRequired();
+    }
+
+    private static void logUnrecordedRemoval(ServiceDeployment deployment, PerServiceIdentity identity,
+                                             List<String> removed) {
+        if (!removed.isEmpty()) {
+            log.warn("[appstore-effector] teardown of {} in {}: deployment {} has no recorded"
+                            + " route-access rules (provisioned before rules were recorded?) - removed"
+                            + " {} BY SHAPE ({} -> {} on {}): {}",
+                    deployment.serviceKey(), deployment.domain(), deployment.id(), removed.size(),
+                    identity.casdoorRole(), identity.urlPattern(), identity.domainSlugGateway(), removed);
+        }
     }
 }
