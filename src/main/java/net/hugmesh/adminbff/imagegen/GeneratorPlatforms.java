@@ -66,12 +66,12 @@ public final class GeneratorPlatforms {
 
     /** The platforms a worklist entry may name (a batch entry's {@code hardwareClass}). */
     public static Set<String> entryPlatforms() {
-        return ENTRY;
+        return Collections.unmodifiableSet(new LinkedHashSet<>(ENTRY));
     }
 
     /** The platforms a materialized {@code imageSpec} may name ({@code imageSpec.platform}). */
     public static Set<String> imageSpecPlatforms() {
-        return IMAGE_SPEC;
+        return Collections.unmodifiableSet(new LinkedHashSet<>(IMAGE_SPEC));
     }
 
     public static boolean isEntryPlatform(String value) {

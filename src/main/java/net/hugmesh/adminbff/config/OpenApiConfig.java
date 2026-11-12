@@ -52,20 +52,22 @@ public class OpenApiConfig {
      * same {@link GeneratorPlatforms} set the request validators use.
      */
     @Bean
-    @SuppressWarnings({"rawtypes", "unchecked"})
     OpenApiCustomizer generatorPlatformEnum() {
-        return openApi -> {
-            if (openApi.getComponents() == null || openApi.getComponents().getSchemas() == null) {
-                return;
-            }
-            Schema spec = openApi.getComponents().getSchemas().get("BatchImageSpec");
-            if (spec == null || spec.getProperties() == null) {
-                return;
-            }
-            Object hardwareClass = spec.getProperties().get("hardwareClass");
-            if (hardwareClass instanceof Schema field) {
-                field.setEnum(new ArrayList<>(GeneratorPlatforms.entryPlatforms()));
-            }
-        };
+        return OpenApiConfig::publishGeneratorPlatforms;
+    }
+
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    static void publishGeneratorPlatforms(OpenAPI openApi) {
+        if (openApi.getComponents() == null || openApi.getComponents().getSchemas() == null) {
+            return;
+        }
+        Schema spec = openApi.getComponents().getSchemas().get("BatchImageSpec");
+        if (spec == null || spec.getProperties() == null) {
+            return;
+        }
+        Object hardwareClass = spec.getProperties().get("hardwareClass");
+        if (hardwareClass instanceof Schema field) {
+            field.setEnum(new ArrayList<>(GeneratorPlatforms.entryPlatforms()));
+        }
     }
 }
