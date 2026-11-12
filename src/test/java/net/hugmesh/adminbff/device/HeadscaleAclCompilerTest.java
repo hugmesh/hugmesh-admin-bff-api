@@ -37,7 +37,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  *       10.244/10.96 rule instead of being empty (an empty push blanks cluster networking);</li>
  *   <li>{@link #superadminMeshRule_isAlwaysEmitted_evenForAnEmptyExport()} — the always-on
  *       superadmin reach to the core nodes the export omits;</li>
- *   <li>{@link #tagOwners_declareEveryDstTagControlOwned()} — [FIX-SERVERTAG];</li>
+ *   <li>{@link #tagOwners_securityTagsDeclaredOwnerless_membershipTagsOwned()} and
+ *       {@link #noSecurityTagHasAnOwner_forAnyExport()} — [FIX-SERVERTAG]: every security tag is
+ *       declared with an EMPTY owner list, so no node can self-assign it;</li>
  *   <li>{@link #srcIsTheAdvisoryMembershipTag_noFictionalOperatorGroups()} — no
  *       {@code group:op-*} principals headscale does not know.</li>
  * </ul>
@@ -201,23 +203,92 @@ class HeadscaleAclCompilerTest {
         assertThat(sshBySrc(withNodes, "tag:superadmin")).hasSize(1);
     }
 
-    // ── RECONCILIATION: control-owned dst tags [FIX-SERVERTAG] ───────────────────
+    // ── RECONCILIATION: ownerless security tags [FIX-SERVERTAG] ──────────────────
+
+    /** The security-tag families: assigned only by the force-tagger, never self-advertised. */
+    private static boolean isSecurityTag(String tag) {
+        return tag.equals("tag:superadmin") || tag.startsWith("tag:mesh_")
+                || tag.startsWith("tag:dev_") || tag.startsWith("tag:dom_");
+    }
 
     @Test
-    void tagOwners_declareEveryDstTagControlOwned() throws Exception {
+    void tagOwners_securityTagsDeclaredOwnerless_membershipTagsOwned() throws Exception {
+        // REGRESSION (2026-11-11): tag:superadmin and every tag:dev_<fp> were declared OWNED by
+        // "hugmesh", the user every pre-auth key is minted for. headscale 0.23 grants a node
+        // every advertised tag its user owns, so that shape let any node self-assign the tag.
+        // hugmesh-generator #888/#896 removed it from the live writer; this compiler kept it.
         JsonNode root = mapper.readTree(compiler.compile(body(7,
                 op("alice@x", "FP-AAA", "node-a"))));
         JsonNode owners = root.get("tagOwners");
-        for (String t : List.of("tag:hugmesh", "tag:pki", "tag:be", "tag:fe", "tag:host",
-                "tag:superadmin", "tag:dev_74d1e77ac6a8")) {
+        // Membership tags: self-applied by every node, so owned by the membership user.
+        for (String t : List.of("tag:hugmesh", "tag:pki", "tag:be", "tag:fe", "tag:host")) {
             assertThat(texts(owners.get(t))).as(t).containsExactly("hugmesh");
         }
-        // EVERY ssh dst tag is declared (a dst nobody owns is self-applyable => forgeable).
-        root.get("ssh").forEach(rule -> texts(rule.get("dst")).forEach(dst -> {
-            if (dst.startsWith("tag:dev_")) {
-                assertThat(owners.get(dst)).as(dst).isNotNull();
+        // Security tags: DECLARED (key present, so headscale can build every node's map) with
+        // the EMPTY owner list (so an advertisement lands in invalid_tags).
+        for (String t : List.of("tag:superadmin", "tag:mesh_east-01", "tag:dev_74d1e77ac6a8")) {
+            assertThat(owners.has(t)).as("%s must be declared", t).isTrue();
+            assertThat(owners.get(t).isArray()).as("%s owner list is an array", t).isTrue();
+            assertThat(texts(owners.get(t))).as("%s must have NO owner", t).isEmpty();
+        }
+        // Nothing else is declared: an extra owned key would be a tag someone can self-assign.
+        List<String> keys = new ArrayList<>();
+        owners.fieldNames().forEachRemaining(keys::add);
+        assertThat(keys).containsExactlyInAnyOrder("tag:hugmesh", "tag:pki", "tag:be", "tag:fe",
+                "tag:host", "tag:superadmin", "tag:mesh_east-01", "tag:dev_74d1e77ac6a8");
+        // EVERY tag an ssh rule names (src or dst) is declared, and every one of them is a
+        // security tag or the advisory membership src.
+        root.get("ssh").forEach(rule -> {
+            List<String> named = new ArrayList<>(texts(rule.get("src")));
+            named.addAll(texts(rule.get("dst")));
+            named.forEach(tag -> {
+                assertThat(owners.has(tag)).as("ssh names %s, which must be declared", tag).isTrue();
+                if (isSecurityTag(tag)) {
+                    assertThat(texts(owners.get(tag))).as("ssh tag %s must have NO owner", tag)
+                            .isEmpty();
+                }
+            });
+        });
+    }
+
+    @Test
+    void noSecurityTagHasAnOwner_forAnyExport() throws Exception {
+        // The invariant over every shape the compiler is fed, independent of the shared golden:
+        // empty, null, one node, the de-dup path, many nodes, and the back-compat constructor.
+        List<ExportBody> bodies = new ArrayList<>();
+        bodies.add(null);
+        bodies.add(body(0));
+        bodies.add(body(1, op("alice@x", "FP-A", "na")));
+        bodies.add(body(2, op("alice@x", "FP-DUP", "n"), op("bob@y", "FP-DUP", "n")));
+        AuthorizedOperator[] many = new AuthorizedOperator[12];
+        for (int i = 0; i < many.length; i++) {
+            many[i] = op("op" + i + "@x", "FP-" + i, "n" + i);
+        }
+        bodies.add(body(3, many));
+        for (HeadscaleAclCompiler c : List.of(compiler, new HeadscaleAclCompiler(new ObjectMapper()),
+                new HeadscaleAclCompiler(new ObjectMapper(), "Other Mesh!", "root"))) {
+            for (ExportBody b : bodies) {
+                JsonNode owners = mapper.readTree(c.compile(b)).get("tagOwners");
+                List<String> security = new ArrayList<>();
+                owners.fieldNames().forEachRemaining(tag -> {
+                    if (isSecurityTag(tag)) {
+                        security.add(tag);
+                        assertThat(texts(owners.get(tag))).as("security tag %s has an owner", tag)
+                                .isEmpty();
+                    } else {
+                        // Literals, not the compiler's constants, so the test cannot agree
+                        // with a wrong implementation by construction.
+                        assertThat(List.of("tag:hugmesh", "tag:pki", "tag:be", "tag:fe",
+                                "tag:host")).as("%s is neither a membership nor a security tag",
+                                tag).contains(tag);
+                        assertThat(texts(owners.get(tag))).as(tag).containsExactly("hugmesh");
+                    }
+                });
+                // tag:superadmin and the mesh tag are declared for every export, empty included.
+                assertThat(security).contains(HeadscaleAclCompiler.SUPERADMIN_TAG);
+                assertThat(security).anyMatch(t -> t.startsWith("tag:mesh_"));
             }
-        }));
+        }
     }
 
     // ── RECONCILIATION: advisory src, no fictional operator groups ───────────────
