@@ -1,5 +1,6 @@
 package net.hugmesh.adminbff.meshtoken;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
 import net.hugmesh.commons.security.DomainRegistry;
@@ -143,5 +144,7 @@ public class MeshTokenProperties {
     public void setDefaultLifetimeSeconds(long defaultLifetimeSeconds) { this.defaultLifetimeSeconds = defaultLifetimeSeconds; }
     public long getMaxLifetimeSeconds() { return maxLifetimeSeconds; }
     public void setMaxLifetimeSeconds(long maxLifetimeSeconds) { this.maxLifetimeSeconds = maxLifetimeSeconds; }
+    @SuppressFBWarnings(value = "EI_EXPOSE_REP",
+            justification = "Spring Boot @ConfigurationProperties nested-bean binding: the field is final with no setter, so the binder must reach the live nested Headscale bean through this getter to populate app.mesh-token.headscale.* ; a copy would silently drop the bound values.")
     public Headscale getHeadscale() { return headscale; }
 }

@@ -1,5 +1,6 @@
 package net.hugmesh.adminbff.domainregistry;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -27,6 +28,8 @@ import reactor.core.publisher.Mono;
  * <p>Out of scope here and still manual: live issuance against a real Vault, and distributing
  * the new root into the per-brand and wide trust stores (87b's domain-add hook).
  */
+@SuppressFBWarnings(value = "EI_EXPOSE_REP2",
+        justification = "Spring constructor injection (DomainCaConfig's @Bean): the container owns these singleton collaborators and this class never mutates them after construction; a defensive copy of a bean is meaningless (not caller-owned mutable data).")
 public class DomainCaEffector {
 
     private static final Logger log = LoggerFactory.getLogger(DomainCaEffector.class);
