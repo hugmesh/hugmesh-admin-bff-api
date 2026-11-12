@@ -46,15 +46,15 @@
         ],
         "mesh": [
           {
-            "label": "PKI node \u2014 cluster certificate authority (x86 or Raspberry Pi 4/5)",
+            "label": "PKI node \u2014 cluster certificate authority (x86, Raspberry Pi 4/5, or Orange Pi 5 \u2014 EXPERIMENTAL)",
             "role": "pki"
           },
           {
-            "label": "Backend node (x86 or Raspberry Pi 4/5)",
+            "label": "Backend node (x86, Raspberry Pi 4/5, or Orange Pi 5 \u2014 EXPERIMENTAL)",
             "role": "backend"
           },
           {
-            "label": "Frontend node (x86 or Raspberry Pi 4/5)",
+            "label": "Frontend node (x86, Raspberry Pi 4/5, or Orange Pi 5 / 4 LTS \u2014 EXPERIMENTAL)",
             "role": "frontend"
           },
           {
@@ -62,7 +62,7 @@
             "role": "backend-gpu"
           },
           {
-            "label": "Omnibus \u2014 every cluster role on one node (x86, or Jetson Orin \u2014 EXPERIMENTAL)",
+            "label": "Omnibus \u2014 every cluster role on one node (x86; Raspberry Pi 5 or Orange Pi 5 with 16 GB+ RAM; Jetson Orin / Orange Pi \u2014 EXPERIMENTAL)",
             "role": "omnibus"
           },
           {
@@ -132,15 +132,15 @@
         ],
         "mesh": [
           {
-            "label": "PKI node \u2014 cluster certificate authority (x86 or Raspberry Pi 4/5)",
+            "label": "PKI node \u2014 cluster certificate authority (x86, Raspberry Pi 4/5, or Orange Pi 5 \u2014 EXPERIMENTAL)",
             "role": "pki"
           },
           {
-            "label": "Backend node (x86 or Raspberry Pi 4/5)",
+            "label": "Backend node (x86, Raspberry Pi 4/5, or Orange Pi 5 \u2014 EXPERIMENTAL)",
             "role": "backend"
           },
           {
-            "label": "Frontend node (x86 or Raspberry Pi 4/5)",
+            "label": "Frontend node (x86, Raspberry Pi 4/5, or Orange Pi 5 / 4 LTS \u2014 EXPERIMENTAL)",
             "role": "frontend"
           },
           {
@@ -148,7 +148,7 @@
             "role": "backend-gpu"
           },
           {
-            "label": "Omnibus \u2014 every cluster role on one node (x86, or Jetson Orin \u2014 EXPERIMENTAL)",
+            "label": "Omnibus \u2014 every cluster role on one node (x86; Raspberry Pi 5 or Orange Pi 5 with 16 GB+ RAM; Jetson Orin / Orange Pi \u2014 EXPERIMENTAL)",
             "role": "omnibus"
           },
           {
@@ -233,7 +233,7 @@
       "family": "raspberry-pi",
       "id": "rpi5",
       "label": "Raspberry Pi 5",
-      "notes": "desktop client + cluster node (pki/be/fe) + plain generic server",
+      "notes": "desktop client + cluster node (pki/be/fe; omnibus on a 16 GB Pi 5 only) + plain generic server",
       "reason": "",
       "roles": {
         "cloud": [
@@ -244,16 +244,20 @@
         ],
         "mesh": [
           {
-            "label": "PKI node \u2014 cluster certificate authority (x86 or Raspberry Pi 4/5)",
+            "label": "PKI node \u2014 cluster certificate authority (x86, Raspberry Pi 4/5, or Orange Pi 5 \u2014 EXPERIMENTAL)",
             "role": "pki"
           },
           {
-            "label": "Backend node (x86 or Raspberry Pi 4/5)",
+            "label": "Backend node (x86, Raspberry Pi 4/5, or Orange Pi 5 \u2014 EXPERIMENTAL)",
             "role": "backend"
           },
           {
-            "label": "Frontend node (x86 or Raspberry Pi 4/5)",
+            "label": "Frontend node (x86, Raspberry Pi 4/5, or Orange Pi 5 / 4 LTS \u2014 EXPERIMENTAL)",
             "role": "frontend"
+          },
+          {
+            "label": "Omnibus \u2014 every cluster role on one node (x86; Raspberry Pi 5 or Orange Pi 5 with 16 GB+ RAM; Jetson Orin / Orange Pi \u2014 EXPERIMENTAL)",
+            "role": "omnibus"
           },
           {
             "label": "Raspberry Pi 5 / 4 / 3 desktop \u2014 arm64 client (compose with --standalone for FDE, no mesh)",
@@ -279,7 +283,7 @@
       "family": "raspberry-pi",
       "id": "rpi4",
       "label": "Raspberry Pi 4 Model B",
-      "notes": "desktop client + cluster node (pki/be/fe) + plain generic server",
+      "notes": "desktop client + cluster node (pki/be/fe; omnibus on a 16 GB Pi 5 only) + plain generic server",
       "reason": "",
       "roles": {
         "cloud": [
@@ -290,15 +294,15 @@
         ],
         "mesh": [
           {
-            "label": "PKI node \u2014 cluster certificate authority (x86 or Raspberry Pi 4/5)",
+            "label": "PKI node \u2014 cluster certificate authority (x86, Raspberry Pi 4/5, or Orange Pi 5 \u2014 EXPERIMENTAL)",
             "role": "pki"
           },
           {
-            "label": "Backend node (x86 or Raspberry Pi 4/5)",
+            "label": "Backend node (x86, Raspberry Pi 4/5, or Orange Pi 5 \u2014 EXPERIMENTAL)",
             "role": "backend"
           },
           {
-            "label": "Frontend node (x86 or Raspberry Pi 4/5)",
+            "label": "Frontend node (x86, Raspberry Pi 4/5, or Orange Pi 5 / 4 LTS \u2014 EXPERIMENTAL)",
             "role": "frontend"
           },
           {
@@ -451,7 +455,7 @@
             "role": "backend-gpu"
           },
           {
-            "label": "Omnibus \u2014 every cluster role on one node (x86, or Jetson Orin \u2014 EXPERIMENTAL)",
+            "label": "Omnibus \u2014 every cluster role on one node (x86; Raspberry Pi 5 or Orange Pi 5 with 16 GB+ RAM; Jetson Orin / Orange Pi \u2014 EXPERIMENTAL)",
             "role": "omnibus"
           },
           {
@@ -487,7 +491,7 @@
             "role": "backend-gpu"
           },
           {
-            "label": "Omnibus \u2014 every cluster role on one node (x86, or Jetson Orin \u2014 EXPERIMENTAL)",
+            "label": "Omnibus \u2014 every cluster role on one node (x86; Raspberry Pi 5 or Orange Pi 5 with 16 GB+ RAM; Jetson Orin / Orange Pi \u2014 EXPERIMENTAL)",
             "role": "omnibus"
           },
           {
@@ -523,7 +527,7 @@
             "role": "backend-gpu"
           },
           {
-            "label": "Omnibus \u2014 every cluster role on one node (x86, or Jetson Orin \u2014 EXPERIMENTAL)",
+            "label": "Omnibus \u2014 every cluster role on one node (x86; Raspberry Pi 5 or Orange Pi 5 with 16 GB+ RAM; Jetson Orin / Orange Pi \u2014 EXPERIMENTAL)",
             "role": "omnibus"
           },
           {
@@ -559,7 +563,7 @@
             "role": "backend-gpu"
           },
           {
-            "label": "Omnibus \u2014 every cluster role on one node (x86, or Jetson Orin \u2014 EXPERIMENTAL)",
+            "label": "Omnibus \u2014 every cluster role on one node (x86; Raspberry Pi 5 or Orange Pi 5 with 16 GB+ RAM; Jetson Orin / Orange Pi \u2014 EXPERIMENTAL)",
             "role": "omnibus"
           },
           {
@@ -585,8 +589,8 @@
       "family": "orange-pi",
       "id": "orange-pi-5-plus",
       "label": "Orange Pi 5 Plus",
-      "notes": "single 'orangepi5' role (FDE local desktop; board + flavor axes)",
-      "reason": "hardware validation pending (specs-orangepi5/README.md) \u2014 fail-loud preflight; single client-desktop role: the orangepi5 builder has no cluster-node role axis (extending it is a builder change, not a selection)",
+      "notes": "the 'orangepi5' light desktop (board + flavor axes) + cluster node pki/backend/frontend/omnibus (installer; RAM 4/8/16/32 GB; omnibus 16 GB+, backend 8 GB+)",
+      "reason": "hardware validation pending (specs-orangepi5/README.md) \u2014 fail-loud preflight; the light desktop plus the pki/backend/frontend/omnibus cluster node roles (EXPERIMENTAL; nodes are installer-only; omnibus needs 16 GB+ RAM, backend 8 GB+)",
       "roles": {
         "cloud": [
           {
@@ -594,7 +598,24 @@
             "role": "orangepi5"
           }
         ],
-        "mesh": [],
+        "mesh": [
+          {
+            "label": "PKI node \u2014 cluster certificate authority (x86, Raspberry Pi 4/5, or Orange Pi 5 \u2014 EXPERIMENTAL)",
+            "role": "pki"
+          },
+          {
+            "label": "Backend node (x86, Raspberry Pi 4/5, or Orange Pi 5 \u2014 EXPERIMENTAL)",
+            "role": "backend"
+          },
+          {
+            "label": "Frontend node (x86, Raspberry Pi 4/5, or Orange Pi 5 / 4 LTS \u2014 EXPERIMENTAL)",
+            "role": "frontend"
+          },
+          {
+            "label": "Omnibus \u2014 every cluster role on one node (x86; Raspberry Pi 5 or Orange Pi 5 with 16 GB+ RAM; Jetson Orin / Orange Pi \u2014 EXPERIMENTAL)",
+            "role": "omnibus"
+          }
+        ],
         "standalone": [
           {
             "label": "Orange Pi 5 / 5 Plus arm64 standalone \u2014 EXPERIMENTAL (FDE local desktop; board + flavor)",
@@ -614,8 +635,8 @@
       "family": "orange-pi",
       "id": "orange-pi-5",
       "label": "Orange Pi 5",
-      "notes": "single 'orangepi5' role (FDE local desktop; board + flavor axes)",
-      "reason": "hardware validation pending (specs-orangepi5/README.md) \u2014 fail-loud preflight; single client-desktop role: the orangepi5 builder has no cluster-node role axis (extending it is a builder change, not a selection)",
+      "notes": "the 'orangepi5' light desktop (board + flavor axes) + cluster node pki/backend/frontend/omnibus (installer; RAM 4/8/16/32 GB; omnibus 16 GB+, backend 8 GB+)",
+      "reason": "hardware validation pending (specs-orangepi5/README.md) \u2014 fail-loud preflight; the light desktop plus the pki/backend/frontend/omnibus cluster node roles (EXPERIMENTAL; nodes are installer-only; omnibus needs 16 GB+ RAM, backend 8 GB+)",
       "roles": {
         "cloud": [
           {
@@ -623,7 +644,24 @@
             "role": "orangepi5"
           }
         ],
-        "mesh": [],
+        "mesh": [
+          {
+            "label": "PKI node \u2014 cluster certificate authority (x86, Raspberry Pi 4/5, or Orange Pi 5 \u2014 EXPERIMENTAL)",
+            "role": "pki"
+          },
+          {
+            "label": "Backend node (x86, Raspberry Pi 4/5, or Orange Pi 5 \u2014 EXPERIMENTAL)",
+            "role": "backend"
+          },
+          {
+            "label": "Frontend node (x86, Raspberry Pi 4/5, or Orange Pi 5 / 4 LTS \u2014 EXPERIMENTAL)",
+            "role": "frontend"
+          },
+          {
+            "label": "Omnibus \u2014 every cluster role on one node (x86; Raspberry Pi 5 or Orange Pi 5 with 16 GB+ RAM; Jetson Orin / Orange Pi \u2014 EXPERIMENTAL)",
+            "role": "omnibus"
+          }
+        ],
         "standalone": [
           {
             "label": "Orange Pi 5 / 5 Plus arm64 standalone \u2014 EXPERIMENTAL (FDE local desktop; board + flavor)",
@@ -759,7 +797,7 @@
       "family": "orange-pi",
       "id": "orange-pi-4-lts",
       "label": "Orange Pi 4 LTS",
-      "notes": "single 'orangepi4-lts' light-desktop role (flavor axis only)",
+      "notes": "the 'orangepi4-lts' light desktop (flavor axis) + the frontend cluster node role (installer; EXPERIMENTAL). 4 GB RAM / 16 GB eMMC: no pki, backend or omnibus",
       "reason": "hardware validation pending (specs-orangepi4-lts/README.md) \u2014 fail-loud preflight; LIGHT DESKTOP (not an appliance: the mainline rk3399-orangepi DTB it boots has an enabled Mali-T860 GPU, enabled HDMI and both VOPs); no board axis (single-board platform \u2014 mainline ships one Orange Pi RK3399 DTB/defconfig for the whole 4/4B/4 LTS family); onboard GbE works via the SoC GMAC, and the boot chain is blob-free (mainline U-Boot TPL + mainline TF-A BL31)",
       "roles": {
         "cloud": [
@@ -768,7 +806,12 @@
             "role": "orangepi4-lts"
           }
         ],
-        "mesh": [],
+        "mesh": [
+          {
+            "label": "Frontend node (x86, Raspberry Pi 4/5, or Orange Pi 5 / 4 LTS \u2014 EXPERIMENTAL)",
+            "role": "frontend"
+          }
+        ],
         "standalone": [
           {
             "label": "Orange Pi 4 LTS arm64 standalone LIGHT DESKTOP \u2014 EXPERIMENTAL (FDE local desktop; flavor only, single board)",
@@ -799,15 +842,15 @@
         ],
         "mesh": [
           {
-            "label": "PKI node \u2014 cluster certificate authority (x86 or Raspberry Pi 4/5)",
+            "label": "PKI node \u2014 cluster certificate authority (x86, Raspberry Pi 4/5, or Orange Pi 5 \u2014 EXPERIMENTAL)",
             "role": "pki"
           },
           {
-            "label": "Backend node (x86 or Raspberry Pi 4/5)",
+            "label": "Backend node (x86, Raspberry Pi 4/5, or Orange Pi 5 \u2014 EXPERIMENTAL)",
             "role": "backend"
           },
           {
-            "label": "Frontend node (x86 or Raspberry Pi 4/5)",
+            "label": "Frontend node (x86, Raspberry Pi 4/5, or Orange Pi 5 / 4 LTS \u2014 EXPERIMENTAL)",
             "role": "frontend"
           },
           {
@@ -845,15 +888,15 @@
         ],
         "mesh": [
           {
-            "label": "PKI node \u2014 cluster certificate authority (x86 or Raspberry Pi 4/5)",
+            "label": "PKI node \u2014 cluster certificate authority (x86, Raspberry Pi 4/5, or Orange Pi 5 \u2014 EXPERIMENTAL)",
             "role": "pki"
           },
           {
-            "label": "Backend node (x86 or Raspberry Pi 4/5)",
+            "label": "Backend node (x86, Raspberry Pi 4/5, or Orange Pi 5 \u2014 EXPERIMENTAL)",
             "role": "backend"
           },
           {
-            "label": "Frontend node (x86 or Raspberry Pi 4/5)",
+            "label": "Frontend node (x86, Raspberry Pi 4/5, or Orange Pi 5 / 4 LTS \u2014 EXPERIMENTAL)",
             "role": "frontend"
           },
           {
@@ -891,16 +934,20 @@
         ],
         "mesh": [
           {
-            "label": "PKI node \u2014 cluster certificate authority (x86 or Raspberry Pi 4/5)",
+            "label": "PKI node \u2014 cluster certificate authority (x86, Raspberry Pi 4/5, or Orange Pi 5 \u2014 EXPERIMENTAL)",
             "role": "pki"
           },
           {
-            "label": "Backend node (x86 or Raspberry Pi 4/5)",
+            "label": "Backend node (x86, Raspberry Pi 4/5, or Orange Pi 5 \u2014 EXPERIMENTAL)",
             "role": "backend"
           },
           {
-            "label": "Frontend node (x86 or Raspberry Pi 4/5)",
+            "label": "Frontend node (x86, Raspberry Pi 4/5, or Orange Pi 5 / 4 LTS \u2014 EXPERIMENTAL)",
             "role": "frontend"
+          },
+          {
+            "label": "Omnibus \u2014 every cluster role on one node (x86; Raspberry Pi 5 or Orange Pi 5 with 16 GB+ RAM; Jetson Orin / Orange Pi \u2014 EXPERIMENTAL)",
+            "role": "omnibus"
           },
           {
             "label": "Raspberry Pi 5 / 4 / 3 desktop \u2014 arm64 client (compose with --standalone for FDE, no mesh)",
@@ -937,16 +984,20 @@
         ],
         "mesh": [
           {
-            "label": "PKI node \u2014 cluster certificate authority (x86 or Raspberry Pi 4/5)",
+            "label": "PKI node \u2014 cluster certificate authority (x86, Raspberry Pi 4/5, or Orange Pi 5 \u2014 EXPERIMENTAL)",
             "role": "pki"
           },
           {
-            "label": "Backend node (x86 or Raspberry Pi 4/5)",
+            "label": "Backend node (x86, Raspberry Pi 4/5, or Orange Pi 5 \u2014 EXPERIMENTAL)",
             "role": "backend"
           },
           {
-            "label": "Frontend node (x86 or Raspberry Pi 4/5)",
+            "label": "Frontend node (x86, Raspberry Pi 4/5, or Orange Pi 5 / 4 LTS \u2014 EXPERIMENTAL)",
             "role": "frontend"
+          },
+          {
+            "label": "Omnibus \u2014 every cluster role on one node (x86; Raspberry Pi 5 or Orange Pi 5 with 16 GB+ RAM; Jetson Orin / Orange Pi \u2014 EXPERIMENTAL)",
+            "role": "omnibus"
           },
           {
             "label": "Raspberry Pi 5 / 4 / 3 desktop \u2014 arm64 client (compose with --standalone for FDE, no mesh)",
@@ -1599,7 +1650,7 @@
     "mesh": [
       {
         "image_class": "node",
-        "label": "PKI node \u2014 cluster certificate authority (x86 or Raspberry Pi 4/5)",
+        "label": "PKI node \u2014 cluster certificate authority (x86, Raspberry Pi 4/5, or Orange Pi 5 \u2014 EXPERIMENTAL)",
         "platforms": [
           {
             "axes": {},
@@ -1613,13 +1664,25 @@
               ]
             },
             "platform": "rpi5"
+          },
+          {
+            "axes": {
+              "board": [
+                "orange-pi-5-plus",
+                "orange-pi-5"
+              ],
+              "flavor": [
+                "installer"
+              ]
+            },
+            "platform": "orangepi5"
           }
         ],
         "role": "pki"
       },
       {
         "image_class": "node",
-        "label": "Backend node (x86 or Raspberry Pi 4/5)",
+        "label": "Backend node (x86, Raspberry Pi 4/5, or Orange Pi 5 \u2014 EXPERIMENTAL)",
         "platforms": [
           {
             "axes": {},
@@ -1633,13 +1696,25 @@
               ]
             },
             "platform": "rpi5"
+          },
+          {
+            "axes": {
+              "board": [
+                "orange-pi-5-plus",
+                "orange-pi-5"
+              ],
+              "flavor": [
+                "installer"
+              ]
+            },
+            "platform": "orangepi5"
           }
         ],
         "role": "backend"
       },
       {
         "image_class": "node",
-        "label": "Frontend node (x86 or Raspberry Pi 4/5)",
+        "label": "Frontend node (x86, Raspberry Pi 4/5, or Orange Pi 5 / 4 LTS \u2014 EXPERIMENTAL)",
         "platforms": [
           {
             "axes": {},
@@ -1653,6 +1728,26 @@
               ]
             },
             "platform": "rpi5"
+          },
+          {
+            "axes": {
+              "board": [
+                "orange-pi-5-plus",
+                "orange-pi-5"
+              ],
+              "flavor": [
+                "installer"
+              ]
+            },
+            "platform": "orangepi5"
+          },
+          {
+            "axes": {
+              "flavor": [
+                "installer"
+              ]
+            },
+            "platform": "orangepi4-lts"
           }
         ],
         "role": "frontend"
@@ -1681,7 +1776,7 @@
       },
       {
         "image_class": "node",
-        "label": "Omnibus \u2014 every cluster role on one node (x86, or Jetson Orin \u2014 EXPERIMENTAL)",
+        "label": "Omnibus \u2014 every cluster role on one node (x86; Raspberry Pi 5 or Orange Pi 5 with 16 GB+ RAM; Jetson Orin / Orange Pi \u2014 EXPERIMENTAL)",
         "platforms": [
           {
             "axes": {},
@@ -1697,6 +1792,26 @@
               ]
             },
             "platform": "jetson"
+          },
+          {
+            "axes": {
+              "board": [
+                "rpi5"
+              ]
+            },
+            "platform": "rpi5"
+          },
+          {
+            "axes": {
+              "board": [
+                "orange-pi-5-plus",
+                "orange-pi-5"
+              ],
+              "flavor": [
+                "installer"
+              ]
+            },
+            "platform": "orangepi5"
           }
         ],
         "role": "omnibus"

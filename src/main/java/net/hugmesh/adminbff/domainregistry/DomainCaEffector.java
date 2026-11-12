@@ -1,5 +1,6 @@
 package net.hugmesh.adminbff.domainregistry;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -27,6 +28,8 @@ import reactor.core.publisher.Mono;
  * <p>Out of scope here and still manual: live issuance against a real Vault, and distributing
  * the new root into the per-brand and wide trust stores (87b's domain-add hook).
  */
+@SuppressFBWarnings(value = "EI_EXPOSE_REP2",
+        justification = "Spring constructor injection (DomainCaConfig's @Bean): the container owns these singleton collaborators and this class never mutates them after construction; a defensive copy of a bean is meaningless (not caller-owned mutable data).")
 public class DomainCaEffector {
 
     private static final Logger log = LoggerFactory.getLogger(DomainCaEffector.class);
@@ -94,19 +97,22 @@ public class DomainCaEffector {
                 // Deferred: the row is written only AFTER Vault holds the root, never assembled
                 // (and so never timestamped or invoked) on a path where Vault failed.
                 .then(Mono.defer(() -> repo.markCaProvisioned(d.id(), mount)))
-                .map(updated -> {
-                    if (updated) {
-                        log.info("[domain-ca] {}: per-domain root ready at Vault PKI mount '{}', ca_provisioned=true",
-                                d.clusterDomain(), mount);
-                        return new CaOutcome(d.clusterDomain(), Status.PROVISIONED, mount, "root ready");
-                    }
-                    log.warn("[domain-ca] {}: root ready at '{}' but the row changed underneath "
-                            + "(ca_ref re-pointed or already provisioned) — not overwritten",
-                            d.clusterDomain(), mount);
-                    return new CaOutcome(d.clusterDomain(), Status.SKIPPED, d.caRef(),
-                            "row changed while provisioning; left as is");
-                })
+                .map(updated -> recorded(d, mount, updated))
                 .onErrorResume(e -> Mono.just(failed(d, describe(e))));
+    }
+
+    /** The outcome once Vault holds the root: {@code updated} is the compare-and-set result. */
+    private CaOutcome recorded(DomainRegistration d, String mount, boolean updated) {
+        if (updated) {
+            log.info("[domain-ca] {}: per-domain root ready at Vault PKI mount '{}', ca_provisioned=true",
+                    d.clusterDomain(), mount);
+            return new CaOutcome(d.clusterDomain(), Status.PROVISIONED, mount, "root ready");
+        }
+        log.warn("[domain-ca] {}: root ready at '{}' but the row changed underneath "
+                + "(ca_ref re-pointed or already provisioned) — not overwritten",
+                d.clusterDomain(), mount);
+        return new CaOutcome(d.clusterDomain(), Status.SKIPPED, d.caRef(),
+                "row changed while provisioning; left as is");
     }
 
     private CaOutcome failed(DomainRegistration d, String reason) {

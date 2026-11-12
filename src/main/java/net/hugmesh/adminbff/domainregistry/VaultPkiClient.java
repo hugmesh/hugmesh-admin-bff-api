@@ -126,23 +126,26 @@ public class VaultPkiClient {
     /** Step 1: true when a PKI engine is already mounted there, false when nothing is. */
     private Mono<Boolean> mountState(String mountPath) {
         return http.get().uri("/v1/sys/mounts/{mount}", mountPath)
-                .exchangeToMono(r -> {
-                    int code = r.statusCode().value();
-                    if (r.statusCode().is2xxSuccessful()) {
-                        return r.bodyToMono(String.class).defaultIfEmpty("{}").flatMap(body -> {
-                            String type = engineType(body);
-                            return "pki".equals(type)
-                                    ? Mono.just(true)
-                                    : Mono.<Boolean>error(new VaultPkiException(Step.READ_MOUNT, code,
-                                            "path is already mounted as a '" + type + "' engine, not pki"));
-                        });
-                    }
-                    if (code == 400 || code == 404) {
-                        return r.releaseBody().thenReturn(false);
-                    }
-                    return failure(r, Step.READ_MOUNT);
-                })
+                .exchangeToMono(VaultPkiClient::mountStateFrom)
                 .timeout(timeout);
+    }
+
+    /** Step 1's answer: 200 names the engine there, 400/404 means nothing is mounted. */
+    private static Mono<Boolean> mountStateFrom(ClientResponse r) {
+        int code = r.statusCode().value();
+        if (r.statusCode().is2xxSuccessful()) {
+            return r.bodyToMono(String.class).defaultIfEmpty("{}").flatMap(body -> {
+                String type = engineType(body);
+                return "pki".equals(type)
+                        ? Mono.just(true)
+                        : Mono.<Boolean>error(new VaultPkiException(Step.READ_MOUNT, code,
+                                "path is already mounted as a '" + type + "' engine, not pki"));
+            });
+        }
+        if (code == 400 || code == 404) {
+            return r.releaseBody().thenReturn(false);
+        }
+        return failure(r, Step.READ_MOUNT);
     }
 
     /** Step 2: enable a PKI engine at the mount path. */

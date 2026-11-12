@@ -1328,7 +1328,7 @@ test-runner and image-gen Job manifests and RBAC.
 
 ### CI & pen-test stages
 
-CI is GitLab, plus one manual GitHub Actions workflow (below). `.gitlab-ci.yml` runs on
+CI is GitLab, plus two GitHub Actions workflows (below). `.gitlab-ci.yml` runs on
 push and mirror-sync (the GitHub repo is pull-mirrored into the in-cluster GitLab) on
 the privileged x86 runner. Stages are **`test`, `security`, `pentest`, `build`**:
 
@@ -1343,6 +1343,16 @@ the privileged x86 runner. Stages are **`test`, `security`, `pentest`, `build`**
 - **`pentest:sca`** (security) — OWASP **Dependency-Check** SCA, `allow_failure: true`.
 - **`pentest:dast`** (pentest) — authenticated **ZAP** baseline, custom probes and
   **nuclei** against the running service, `allow_failure: true`.
+
+`.github/workflows/ci.yml` ("CI") runs `./mvnw clean verify` on every pull request and
+once a day on GitHub-hosted `ubuntu-latest`, with the same drift flags as `test:mvn`: it
+checks out the generator and the console at `main` under `.catalog-sibling/` (never
+`../hugmesh-generator`, where the `catalog-copy` profile would refresh the vendored
+catalogs instead of asserting them) and fails by name if either is missing, so
+`ImageCatalogDriftTest` goes red on its own when the generator's `docs/catalog` moves. To
+refresh, copy the generator's `docs/catalog/{image,packages}-catalog.json` into
+`src/main/resources/catalog/` and commit. `scripts/test-ci-workflow.py` pins the parts of
+that file that keep the guards armed and runs as its first step.
 
 `.github/workflows/release.yml` ("Release image") checks that the four private
 libraries are readable, builds the same `Dockerfile`, and pushes
