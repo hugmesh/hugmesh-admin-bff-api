@@ -5,6 +5,7 @@ import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import reactor.core.publisher.Mono;
+import net.hugmesh.adminbff.SubjectRevocationTtl;
 import net.hugmesh.authcore.casdoor.CasdoorAdminClient;
 import net.hugmesh.authcore.provision.GatewayRevocationClient;
 
@@ -27,10 +28,12 @@ import net.hugmesh.authcore.provision.GatewayRevocationClient;
  * <h3>Stale-session leg (parity with AdminController role grant/revoke)</h3>
  * After a successful membership write this posts a best-effort {@code subject:<subject>}
  * gateway revocation ({@link GatewayRevocationClient#revokeSubject}, itself gated on
- * {@code broker.gateway-revocation.enabled} and error-swallowing) so a live custody JWT is
- * re-minted with the NEW role set instead of riding out its natural TTL (~1 h) — the SAME
+ * {@code broker.gateway-revocation.enabled} and error-swallowing) so a live token is
+ * re-minted with the NEW role set instead of riding out its natural lifetime — the SAME
  * treatment {@code AdminController.grantRole}/{@code revokeRole} give every direct role
- * change. The kept-membership branch skips it (nothing about the token changed). There is
+ * change, with the SAME two TTLs ({@link SubjectRevocationTtl}): a REMOVE is a cut-off and
+ * uses the cut-off TTL (the {@code hugmesh-desktop} client issues 168 h tokens, so a 1 h key
+ * let a revoked sudo claim ride for up to ~7 more days), an ADD uses the short grant TTL. The kept-membership branch skips it (nothing about the token changed). There is
  * deliberately NO desktop session-kill: see the {@link DesktopSudoGrantService} javadoc for
  * the platform's honest refresh-time revocation model.
  *
@@ -50,9 +53,10 @@ public class CasdoorDesktopSudoClaimSync implements DesktopSudoClaimSync {
      *  is the wire name, exactly as {@code AdminController.grantRole} passes seeded names. */
     public static final String CASDOOR_ROLE = "desktop-sudo";
 
-    /** TTL for the subject revocation key — ≥ the custody JWT lifetime (default 3 600 s),
-     *  the same value AdminController's role grant/revoke uses. */
-    private static final long SUBJECT_REVOKE_TTL_SECONDS = 3_600L;
+    /** Cut-off TTL for the subject key on a REMOVE ({@link SubjectRevocationTtl#CUTOFF_PROPERTY}). */
+    private final long cutoffTtlSeconds;
+    /** Short TTL for the subject key on an ADD ({@link SubjectRevocationTtl#GRANT_PROPERTY}). */
+    private final long grantTtlSeconds;
 
     @Nullable
     private final CasdoorAdminClient casdoor;
@@ -61,10 +65,16 @@ public class CasdoorDesktopSudoClaimSync implements DesktopSudoClaimSync {
 
     public CasdoorDesktopSudoClaimSync(@Nullable CasdoorAdminClient casdoor,
                                        DesktopSudoGrantRepository repo,
-                                       GatewayRevocationClient revocations) {
+                                       GatewayRevocationClient revocations,
+                                       long cutoffTtlSeconds,
+                                       long grantTtlSeconds) {
         this.casdoor = casdoor;
         this.repo = repo;
         this.revocations = revocations;
+        this.cutoffTtlSeconds = SubjectRevocationTtl.require(
+                SubjectRevocationTtl.CUTOFF_PROPERTY, cutoffTtlSeconds);
+        this.grantTtlSeconds = SubjectRevocationTtl.require(
+                SubjectRevocationTtl.GRANT_PROPERTY, grantTtlSeconds);
     }
 
     @Override
@@ -80,7 +90,7 @@ public class CasdoorDesktopSudoClaimSync implements DesktopSudoClaimSync {
         if (grant.isActive()) {
             return casdoor.addUserToRole(CASDOOR_ROLE, memberIdOf(grant.subject()))
                     .then(revocations.revokeSubject(grant.subject(), "desktop-sudo-grant",
-                            SUBJECT_REVOKE_TTL_SECONDS))
+                            grantTtlSeconds))
                     .doOnSuccess(v -> log.info("[desktop-sudo-claim] ADDED {} to Casdoor role {} "
                             + "(grant id={})", grant.subject(), CASDOOR_ROLE, grant.id()))
                     .thenReturn(DesktopSudoGrant.PROP_APPLIED)
@@ -103,11 +113,11 @@ public class CasdoorDesktopSudoClaimSync implements DesktopSudoClaimSync {
     }
 
     /** No active grant remains for the subject — drop the role membership + best-effort
-     *  invalidate the live custody JWT so the stale role cannot ride out its TTL. */
+     *  invalidate the live token (cut-off TTL) so the stale role cannot ride out its lifetime. */
     private Mono<String> removeMembership(DesktopSudoGrant grant) {
         return casdoor.removeUserFromRole(CASDOOR_ROLE, memberIdOf(grant.subject()))
                 .then(revocations.revokeSubject(grant.subject(), "desktop-sudo-revoke",
-                        SUBJECT_REVOKE_TTL_SECONDS))
+                        cutoffTtlSeconds))
                 .doOnSuccess(v -> log.info("[desktop-sudo-claim] REMOVED {} from Casdoor role {} "
                         + "(grant id={})", grant.subject(), CASDOOR_ROLE, grant.id()))
                 .thenReturn(DesktopSudoGrant.PROP_APPLIED);

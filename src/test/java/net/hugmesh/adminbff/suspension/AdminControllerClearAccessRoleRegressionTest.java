@@ -107,7 +107,9 @@ class AdminControllerClearAccessRoleRegressionTest extends AdminBffPostgresTestS
                 mock(GatewayRevocationClient.class),
                 mock(net.hugmesh.adminbff.capability.DomainCapabilityService.class),
                 new net.hugmesh.adminbff.account.RegistrationDomainResolver(REGISTRY, ""),
-                mock(CasdoorAdminClient.class));
+                mock(CasdoorAdminClient.class),
+                net.hugmesh.adminbff.SubjectRevocationTtl.DEFAULT_CUTOFF_SECONDS,
+                net.hugmesh.adminbff.SubjectRevocationTtl.DEFAULT_GRANT_SECONDS);
     }
 
     private static JwtAuthenticationToken adminAuth(String issuer) {

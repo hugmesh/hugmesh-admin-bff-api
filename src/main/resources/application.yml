@@ -122,6 +122,22 @@ broker:
   # reachable from admin-bff.
   gateway-revocation:
     enabled: "${BROKER_GATEWAY_REVOCATION_ENABLED:false}"
+    # TTL of a subject:<user> key (net.hugmesh.adminbff.SubjectRevocationTtl). The gateway
+    # refuses EVERY token for the subject while the key lives (set membership, no iat
+    # comparison), so the TTL is both the cut-off window and a lock-out.
+    #   cut-off (account-disable, role revoke, desktop-sudo revoke): must outlive the
+    #     longest token Casdoor issues — the seeded app-* clients and hugmesh-desktop set
+    #     expireInHours: 168 (hugmesh-generator casdoor/init-job.yaml). It used to be a 1 h
+    #     literal, so a revoked token worked again for up to ~7 days once the key lapsed.
+    #     hugmesh-generator tests/scripts/test-subject-revocation-ttl.sh pins the cluster
+    #     value >= the largest seeded expireInHours x 3600.
+    #   grant (role grant, desktop-sudo grant): only nudges a re-mint; stays 1 h because a
+    #     longer key would lock the grantee out for no security gain.
+    # All of these (and the suspension reconcile) write the SAME subject:<user> key. The
+    # gateway keeps the later expiry (hugmesh-gateway#69), so a grant after a revoke cannot
+    # shorten the cut-off; enable the flag above only against gateways that carry it.
+    subject-cutoff-ttl-seconds: "${BROKER_GATEWAY_REVOCATION_SUBJECT_CUTOFF_TTL_SECONDS:604800}"
+    subject-grant-ttl-seconds: "${BROKER_GATEWAY_REVOCATION_SUBJECT_GRANT_TTL_SECONDS:3600}"
 
 # Homeserver account-state admin (akkoma suspend/unsuspend + tuwunel deactivate/
 # activate) — the shared GATED STUB-SEAM the access_suspension reconcile loop calls.
