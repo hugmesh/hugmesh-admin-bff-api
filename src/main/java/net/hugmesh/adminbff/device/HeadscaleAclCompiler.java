@@ -22,7 +22,8 @@ import java.util.TreeSet;
  * {@link AuthorizedOperator} entry into a permitted headscale SSH edge. The READ side
  * ({@code HeadscaleNodesClient}) reads enrolled nodes; the export
  * ({@code DeviceRegistryExportService}) compiles the AUTH PREDICATE into authorized operators;
- * THIS compiler emits the headscale policy that grants SSH to exactly the licensed nodes.
+ * THIS compiler emits the headscale policy that carries one SSH edge per licensed node. Every
+ * edge's source is {@code tag:superadmin} and nothing else (see SSH SOURCE below).
  *
  * <h3>⚠ THE NODE-SIDE RENDERER IS THE LIVE WRITER — THIS COMPILER MIRRORS IT</h3>
  * Layer-A already ships and RUNS on every control node: {@code hugmesh-generator}
@@ -65,12 +66,35 @@ import java.util.TreeSet;
  *       there let a node self-assign the tag. See {@link #MEMBERSHIP_OWNER}.)</li>
  *   <li><b>FICTIONAL SRC IDENTITY.</b> It emitted {@code src:["group:op-<operator>"]} with the
  *       Casdoor subject as the group member. headscale has NO per-operator tailnet identity yet
- *       — [FIX-OIDC-USERS] is explicitly DEFERRED and the renderer uses the ADVISORY
- *       {@code src:["tag:hugmesh"]}. Per-operator src was precision the tailnet cannot enforce,
- *       naming principals headscale does not know. The load-bearing per-operator/per-key cut is
- *       Layer-B (the per-node sshd {@code AuthorizedKeysCommand}, which pins {@code %f}); Layer-A
- *       is REAL on the destination side and ADVISORY on the source side, and now says so.</li>
+ *       — [FIX-OIDC-USERS] is explicitly DEFERRED — so per-operator src was precision the
+ *       tailnet cannot enforce, naming principals headscale does not know. (Corrected again
+ *       2026-11-11: the first fix sourced each per-node edge from the membership tag
+ *       {@code tag:hugmesh}, as the renderer then did. See SSH SOURCE below.)</li>
  * </ol>
+ *
+ * <h3>SSH SOURCE: {@code tag:superadmin} only (2026-11-11, hugmesh-generator #1018)</h3>
+ * Every {@code ssh} rule this compiler emits names {@link #SUPERADMIN_TAG} as its only source,
+ * the mesh rule and every per-node edge alike. Until 2026-11-11 the per-node edges were sourced
+ * from {@code tag:hugmesh} and described as "advisory", on the assumption that the per-node sshd
+ * (Layer-B) still checked the operator's key. It does not on this path: Tailscale SSH
+ * ({@code tailscale up --ssh}, on by default) answers {@code :22} itself, so whoever an
+ * {@code ssh} rule names as source gets a session as the privileged user and nothing else
+ * stands in the way. {@code tag:hugmesh} is self-applied by every node that holds a pre-auth
+ * key, so that source was every member. {@code tag:superadmin} has no owner and only the
+ * force-tagger assigns it, from the control node's superadmin machine list.
+ *
+ * <p>Consequences, all mirrored from the renderer:
+ * <ul>
+ *   <li>a licensed operator who is only a member gets NO Tailscale SSH session until
+ *       per-operator identities land; the per-node edges keep the export-driven shape an
+ *       operator source will later slot into, and until then open nothing the mesh rule does
+ *       not;</li>
+ *   <li>{@code acls[]} carries one {@code :22} accept, {@code tag:superadmin ->
+ *       tag:hugmesh:22}. A Tailscale SSH session is a TCP connection to {@code :22}, so the
+ *       packet filter must pass it before the {@code ssh} block is consulted; without the accept
+ *       the superadmin rule was unreachable. Its source is {@code tag:superadmin} only. Which
+ *       node accepts a SESSION is still decided by the {@code ssh} rule's destination.</li>
+ * </ul>
  *
  * <h3>Pure + deterministic (so the push is IDEMPOTENT)</h3>
  * No IO; given the same export body it emits BYTE-IDENTICAL policy text (fingerprints sorted,
@@ -79,15 +103,18 @@ import java.util.TreeSet;
  *
  * <h3>Conservative, default-DENY shape</h3>
  * The export is ALREADY the default-deny compiled allow-set (no entry → no access). This
- * compiler invents exactly ONE rule the export did not carry — the SUPERADMIN mesh rule — and it
- * does so because the node renderer does (parity, not widening; the export CANNOT carry it, see
+ * compiler adds exactly TWO rules the export did not carry — the SUPERADMIN mesh rule and the
+ * superadmin-only {@code :22} accept that makes it reachable — and it does so because the node
+ * renderer does (parity, not widening; the export CANNOT carry them, see
  * {@link AuthorizedOperator}'s POST-VERIFY CORRECTION note). Otherwise:
  * <ul>
- *   <li>only nodes named by {@code operators[]} get an {@code ssh} accept — never a wildcard;</li>
- *   <li>an EMPTY export compiles to the SUPERADMIN mesh rule alone plus the CIDR data-plane rule
- *       — exactly what the renderer emits for an empty export (see the gate's "EMPTY export
- *       still emits the SUPERADMIN mesh rule" scenario). Neither a wildcard nor a cleared
- *       policy, so pushing it neither widens nor blanks the mesh.</li>
+ *   <li>only nodes named by {@code operators[]} get a per-node {@code ssh} accept — never a
+ *       wildcard, and never a member source;</li>
+ *   <li>an EMPTY export compiles to the SUPERADMIN mesh rule alone plus the two {@code acls}
+ *       rules (the CIDR data-plane rule and the superadmin {@code :22} accept) — exactly what
+ *       the renderer emits for an empty export (see the gate's "EMPTY export still emits the
+ *       SUPERADMIN mesh rule" scenario). Neither a wildcard nor a cleared policy, so pushing it
+ *       neither widens nor blanks the mesh.</li>
  * </ul>
  * The {@code machine_key_fp} canonical-field caveat is inherited from the export (see
  * {@code docs/CANONICAL-FP.md}) — which is WHY the whole leg ships dark.
@@ -121,11 +148,28 @@ public final class HeadscaleAclCompiler {
      */
     static final String NODE_TAG_PREFIX = TAG_PREFIX + DEV_TAG_PREFIX;
 
-    /** The advisory SSH source tag (self-applied membership) — [FIX-OIDC-USERS] deferred. */
-    static final String ADVISORY_SRC_TAG = "tag:hugmesh";
+    /**
+     * The self-applied MEMBERSHIP tag: every node holding a pre-auth key advertises it. It is
+     * the source of the data-plane rule, the route auto-approver and the destination of the one
+     * {@code :22} accept. It is NEVER an {@code ssh} or {@code :22} SOURCE: Tailscale SSH has no
+     * other gate, so a member source is a privileged session for every member.
+     */
+    static final String MEMBERSHIP_TAG = "tag:hugmesh";
 
-    /** The superadmin OPERATOR tag; owned by NO user (empty owner list) + force-assigned. */
+    /**
+     * The superadmin OPERATOR tag; owned by NO user (empty owner list) + force-assigned. The
+     * ONLY source any emitted {@code ssh} rule names, and the only source of the {@code :22}
+     * accept (the renderer's {@code SSH_SRC}).
+     */
     static final String SUPERADMIN_TAG = "tag:superadmin";
+
+    /**
+     * The destination of the one {@code :22} accept: the membership tag, port 22. The renderer's
+     * template spells it statically as {@code tag:hugmesh:22} (not {@code tag:mesh_<id>:22}), so
+     * a node must validly hold {@link #MEMBERSHIP_TAG} for the superadmin to reach its
+     * {@code :22}.
+     */
+    static final String SSH_PORT_DST = MEMBERSHIP_TAG + ":22";
 
     /** The k8s pod CIDR of the data-plane rule the node policy KEEPS. */
     static final String POD_CIDR = "10.244.0.0/16";
@@ -137,7 +181,8 @@ public final class HeadscaleAclCompiler {
      * The MEMBERSHIP tags of the static tagOwners head — mirrors {@code policy.hujson.tmpl}.
      * Every node self-applies these with {@code --advertise-tags} (data-plane membership: the
      * CIDR rule and route auto-approval), so they stay owned by {@link #MEMBERSHIP_OWNER}.
-     * None of them is an ssh dst; {@code tag:hugmesh} is only the ADVISORY ssh src.
+     * None of them is an ssh src or dst; {@code tag:hugmesh} is the {@code :22} accept's
+     * destination and never a source of it.
      */
     private static final List<String> MEMBERSHIP_TAGS =
             List.of("tag:hugmesh", "tag:pki", "tag:be", "tag:fe", "tag:host");
@@ -184,8 +229,8 @@ public final class HeadscaleAclCompiler {
      * Compile {@code body} into the headscale ACL policy text (HuJSON: JSON plus a leading
      * {@code //} audit header, the SAME dialect {@code policy.hujson.tmpl} is written in and
      * headscale parses natively). Stable for a stable body. Never null; an empty/whitespace-only
-     * export yields the renderer-equivalent minimum: the CIDR data-plane rule plus the SUPERADMIN
-     * mesh rule.
+     * export yields the renderer-equivalent minimum: the CIDR data-plane rule, the superadmin-only
+     * {@code :22} accept and the SUPERADMIN mesh rule.
      */
     public String compile(ExportBody body) {
         ObjectNode root = mapper.createObjectNode();
@@ -241,7 +286,7 @@ public final class HeadscaleAclCompiler {
         ObjectNode routes = mapper.createObjectNode();
         for (String cidr : List.of(POD_CIDR, SERVICE_CIDR)) {
             ArrayNode approvers = mapper.createArrayNode();
-            approvers.add(ADVISORY_SRC_TAG);
+            approvers.add(MEMBERSHIP_TAG);
             routes.set(cidr, approvers);
         }
         ObjectNode autoApprovers = mapper.createObjectNode();
@@ -255,7 +300,7 @@ public final class HeadscaleAclCompiler {
         ObjectNode dataPlane = mapper.createObjectNode();
         dataPlane.put("action", "accept");
         ArrayNode dpSrc = mapper.createArrayNode();
-        dpSrc.add(ADVISORY_SRC_TAG);
+        dpSrc.add(MEMBERSHIP_TAG);
         dataPlane.set("src", dpSrc);
         ArrayNode dpDst = mapper.createArrayNode();
         dpDst.add(POD_CIDR + ":*");
@@ -263,13 +308,30 @@ public final class HeadscaleAclCompiler {
         dataPlane.set("dst", dpDst);
         acls.add(dataPlane);
 
+        // The ONLY way to :22. A Tailscale SSH session is a TCP connection to :22, so the packet
+        // filter must pass it before ssh[] is consulted; without this accept the superadmin rule
+        // below is unreachable. src is tag:superadmin and nothing else: a member src here would
+        // open :22 to every pre-auth key holder. dst is the membership tag on port 22 only.
+        ObjectNode sshPort = mapper.createObjectNode();
+        sshPort.put("action", "accept");
+        ArrayNode spSrc = mapper.createArrayNode();
+        spSrc.add(SUPERADMIN_TAG);
+        sshPort.set("src", spSrc);
+        ArrayNode spDst = mapper.createArrayNode();
+        spDst.add(SSH_PORT_DST);
+        sshPort.set("dst", spDst);
+        acls.add(sshPort);
+
         // ── ssh[]: headscale SSH is itself default-deny [FIX-DENY22], so these accepts ARE the
-        // whole :22 surface. The SUPERADMIN mesh rule is FIRST and ALWAYS emitted (core nodes
+        // whole SSH surface. The SUPERADMIN mesh rule is FIRST and ALWAYS emitted (core nodes
         // the export omits are reachable ONLY this way); then one accept per licensed node.
+        // EVERY rule's src is tag:superadmin (see SSH SOURCE in the class comment): there is no
+        // per-operator tailnet identity to name, and the membership tag is every member. So a
+        // per-node edge opens nothing the mesh rule does not, until an operator source exists.
         ArrayNode ssh = mapper.createArrayNode();
         ssh.add(sshRule(SUPERADMIN_TAG, meshTag));
         for (String fp : fingerprints) {
-            ssh.add(sshRule(ADVISORY_SRC_TAG, nodeTagFor(fp)));
+            ssh.add(sshRule(SUPERADMIN_TAG, nodeTagFor(fp)));
         }
 
         root.set("tagOwners", tagOwners);
@@ -303,8 +365,8 @@ public final class HeadscaleAclCompiler {
         d.add(dst);
         rule.set("dst", d);
         // The node-local unix account the session opens AS (NOT the Casdoor operator). headscale
-        // checks the tailnet identity; the per-node sshd (Layer-B) still independently re-derives
-        // the role and pins the exact key fingerprints — this rule only opens the headscale edge.
+        // checks the tailnet identity (src) and NOTHING else does: Tailscale SSH answers :22
+        // itself, so the per-node sshd (Layer-B) and its key pinning are not on this path.
         ArrayNode users = mapper.createArrayNode();
         users.add(sshUser);
         rule.set("users", users);

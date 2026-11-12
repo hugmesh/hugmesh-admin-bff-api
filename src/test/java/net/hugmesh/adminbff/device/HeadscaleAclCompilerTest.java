@@ -40,13 +40,32 @@ import static org.assertj.core.api.Assertions.assertThat;
  *   <li>{@link #tagOwners_securityTagsDeclaredOwnerless_membershipTagsOwned()} and
  *       {@link #noSecurityTagHasAnOwner_forAnyExport()} — [FIX-SERVERTAG]: every security tag is
  *       declared with an EMPTY owner list, so no node can self-assign it;</li>
- *   <li>{@link #srcIsTheAdvisoryMembershipTag_noFictionalOperatorGroups()} — no
- *       {@code group:op-*} principals headscale does not know.</li>
+ *   <li>{@link #noFictionalOperatorGroups_noCasdoorSubjects()} — no {@code group:op-*}
+ *       principals headscale does not know.</li>
+ * </ul>
+ *
+ * <h3>The SSH SOURCE assertions (2026-11-11, hugmesh-generator #1018)</h3>
+ * Tailscale SSH answers {@code :22} itself, so an {@code ssh} rule's source is the whole gate.
+ * <ul>
+ *   <li>{@link #everySshSource_isTagSuperadmin_forAnyExport()} — every emitted {@code ssh} rule
+ *       names {@code tag:superadmin} and nothing else, over every export shape;</li>
+ *   <li>{@link #perNodeEdges_areNotSourcedFromTheMembershipTag()} — the old rule
+ *       ({@code src:[tag:hugmesh]} on each per-node edge) is gone;</li>
+ *   <li>{@link #theOnlyPort22Accept_isFromTagSuperadmin()} — {@code acls[]} opens {@code :22}
+ *       once, to {@code tag:superadmin} only.</li>
  * </ul>
  * The pre-existing contract (deny-by-default, no wildcard, determinism, blank-entry drop) is
  * still asserted alongside.
  */
 class HeadscaleAclCompilerTest {
+
+    /**
+     * Sources that would hand a session to every member. Literals, not the compiler's
+     * constants, so the test cannot agree with a wrong implementation by construction.
+     */
+    private static final List<String> MEMBER_SOURCES = List.of("tag:hugmesh", "tag:pki", "tag:be",
+            "tag:fe", "tag:host", "autogroup:member", "autogroup:tagged", "*", "hugmesh",
+            "hugmesh@");
 
     /** The compiler emits HuJSON (JSON + a leading {@code //} audit header) — parse it as such. */
     private final ObjectMapper mapper = JsonMapper.builder()
@@ -82,6 +101,43 @@ class HeadscaleAclCompilerTest {
             }
         });
         return out;
+    }
+
+    /**
+     * The per-node ssh edges: every rule whose dst is one {@code tag:dev_*} tag. Selected by
+     * DESTINATION, because every rule shares one source (the mesh rule's dst is
+     * {@code tag:mesh_<id>}).
+     */
+    private static List<JsonNode> nodeEdges(JsonNode root) {
+        List<JsonNode> out = new ArrayList<>();
+        root.get("ssh").forEach(r -> {
+            List<String> dst = texts(r.get("dst"));
+            if (dst.size() == 1 && dst.get(0).startsWith("tag:dev_")) {
+                out.add(r);
+            }
+        });
+        return out;
+    }
+
+    /** Every export shape the invariants are checked over: null, empty, one, de-dup, many. */
+    private static List<ExportBody> everyBodyShape() {
+        List<ExportBody> bodies = new ArrayList<>();
+        bodies.add(null);
+        bodies.add(body(0));
+        bodies.add(body(1, op("alice@x", "FP-A", "na")));
+        bodies.add(body(2, op("alice@x", "FP-DUP", "n"), op("bob@y", "FP-DUP", "n")));
+        AuthorizedOperator[] many = new AuthorizedOperator[12];
+        for (int i = 0; i < many.length; i++) {
+            many[i] = op("op" + i + "@x", "FP-" + i, "n" + i);
+        }
+        bodies.add(body(3, many));
+        return bodies;
+    }
+
+    /** The compilers the invariants are checked over, both constructors included. */
+    private List<HeadscaleAclCompiler> everyCompiler() {
+        return List.of(compiler, new HeadscaleAclCompiler(new ObjectMapper()),
+                new HeadscaleAclCompiler(new ObjectMapper(), "Other Mesh!", "root"));
     }
 
     // ── RECONCILIATION: tag shape ────────────────────────────────────────────────
@@ -120,8 +176,12 @@ class HeadscaleAclCompilerTest {
         JsonNode root = mapper.readTree(policy);
 
         List<String> nodeDst = new ArrayList<>();
-        sshBySrc(root, HeadscaleAclCompiler.ADVISORY_SRC_TAG)
-                .forEach(r -> nodeDst.addAll(texts(r.get("dst"))));
+        root.get("ssh").forEach(r -> {
+            // Everything but the mesh rule, so a tag that lost the prefix is still collected.
+            if (!texts(r.get("dst")).equals(List.of("tag:mesh_east-01"))) {
+                nodeDst.addAll(texts(r.get("dst")));
+            }
+        });
 
         // 1. Every per-node ssh dst carries the constant as its prefix...
         assertThat(nodeDst).hasSize(2).allSatisfy(
@@ -168,7 +228,9 @@ class HeadscaleAclCompilerTest {
         for (ExportBody b : List.of(body(0), body(7, op("alice@x", "FP-AAA", "node-a")))) {
             JsonNode root = mapper.readTree(compiler.compile(b));
             JsonNode acls = root.get("acls");
-            assertThat(acls).hasSize(1);
+            // The data-plane rule FIRST, then the superadmin :22 accept and nothing else
+            // (theOnlyPort22Accept_isFromTagSuperadmin pins the second rule).
+            assertThat(acls).hasSize(2);
             JsonNode rule = acls.get(0);
             assertThat(rule.get("action").asText()).isEqualTo("accept");
             assertThat(texts(rule.get("src"))).containsExactly("tag:hugmesh");
@@ -200,7 +262,17 @@ class HeadscaleAclCompilerTest {
                 op("alice@x", "FP-A", "na"), op("bob@y", "FP-B", "nb"))));
         assertThat(texts(withNodes.get("ssh").get(0).get("src")))
                 .containsExactly("tag:superadmin");
-        assertThat(sshBySrc(withNodes, "tag:superadmin")).hasSize(1);
+        assertThat(texts(withNodes.get("ssh").get(0).get("dst")))
+                .containsExactly("tag:mesh_east-01");
+        // Exactly one mesh rule; the two per-node edges share its src and follow it.
+        List<JsonNode> meshRules = new ArrayList<>();
+        withNodes.get("ssh").forEach(r -> {
+            if (texts(r.get("dst")).stream().anyMatch(d -> d.startsWith("tag:mesh_"))) {
+                meshRules.add(r);
+            }
+        });
+        assertThat(meshRules).hasSize(1);
+        assertThat(sshBySrc(withNodes, "tag:superadmin")).hasSize(3);
     }
 
     // ── RECONCILIATION: ownerless security tags [FIX-SERVERTAG] ──────────────────
@@ -237,16 +309,17 @@ class HeadscaleAclCompilerTest {
         assertThat(keys).containsExactlyInAnyOrder("tag:hugmesh", "tag:pki", "tag:be", "tag:fe",
                 "tag:host", "tag:superadmin", "tag:mesh_east-01", "tag:dev_74d1e77ac6a8");
         // EVERY tag an ssh rule names (src or dst) is declared, and every one of them is a
-        // security tag or the advisory membership src.
+        // SECURITY tag with no owner. No membership tag appears in ssh[] at all: a tag a node
+        // can give itself must not be able to open or receive a session.
         root.get("ssh").forEach(rule -> {
             List<String> named = new ArrayList<>(texts(rule.get("src")));
             named.addAll(texts(rule.get("dst")));
             named.forEach(tag -> {
                 assertThat(owners.has(tag)).as("ssh names %s, which must be declared", tag).isTrue();
-                if (isSecurityTag(tag)) {
-                    assertThat(texts(owners.get(tag))).as("ssh tag %s must have NO owner", tag)
-                            .isEmpty();
-                }
+                assertThat(isSecurityTag(tag)).as("ssh names %s, which is not a security tag", tag)
+                        .isTrue();
+                assertThat(texts(owners.get(tag))).as("ssh tag %s must have NO owner", tag)
+                        .isEmpty();
             });
         });
     }
@@ -255,19 +328,8 @@ class HeadscaleAclCompilerTest {
     void noSecurityTagHasAnOwner_forAnyExport() throws Exception {
         // The invariant over every shape the compiler is fed, independent of the shared golden:
         // empty, null, one node, the de-dup path, many nodes, and the back-compat constructor.
-        List<ExportBody> bodies = new ArrayList<>();
-        bodies.add(null);
-        bodies.add(body(0));
-        bodies.add(body(1, op("alice@x", "FP-A", "na")));
-        bodies.add(body(2, op("alice@x", "FP-DUP", "n"), op("bob@y", "FP-DUP", "n")));
-        AuthorizedOperator[] many = new AuthorizedOperator[12];
-        for (int i = 0; i < many.length; i++) {
-            many[i] = op("op" + i + "@x", "FP-" + i, "n" + i);
-        }
-        bodies.add(body(3, many));
-        for (HeadscaleAclCompiler c : List.of(compiler, new HeadscaleAclCompiler(new ObjectMapper()),
-                new HeadscaleAclCompiler(new ObjectMapper(), "Other Mesh!", "root"))) {
-            for (ExportBody b : bodies) {
+        for (HeadscaleAclCompiler c : everyCompiler()) {
+            for (ExportBody b : everyBodyShape()) {
                 JsonNode owners = mapper.readTree(c.compile(b)).get("tagOwners");
                 List<String> security = new ArrayList<>();
                 owners.fieldNames().forEachRemaining(tag -> {
@@ -291,10 +353,10 @@ class HeadscaleAclCompilerTest {
         }
     }
 
-    // ── RECONCILIATION: advisory src, no fictional operator groups ───────────────
+    // ── RECONCILIATION: no fictional operator groups ─────────────────────────────
 
     @Test
-    void srcIsTheAdvisoryMembershipTag_noFictionalOperatorGroups() throws Exception {
+    void noFictionalOperatorGroups_noCasdoorSubjects() throws Exception {
         String policy = compiler.compile(body(3,
                 op("alice@x", "FP-A", "na"), op("bob@y", "FP-B", "nb")));
         JsonNode root = mapper.readTree(policy);
@@ -303,9 +365,93 @@ class HeadscaleAclCompilerTest {
         assertThat(root.get("groups")).isNull();
         assertThat(policy).doesNotContain("group:op-");
         assertThat(policy).doesNotContain("alice@x").doesNotContain("bob@y");
+    }
 
-        // Every node edge is src=tag:hugmesh (advisory; FIX-OIDC-USERS deferred).
-        assertThat(sshBySrc(root, "tag:hugmesh")).hasSize(2);
+    // ── SSH SOURCE: tag:superadmin only (hugmesh-generator #1018) ────────────────
+
+    @Test
+    void everySshSource_isTagSuperadmin_forAnyExport() throws Exception {
+        // REGRESSION (2026-11-11): each per-node edge was sourced from tag:hugmesh, the tag every
+        // holder of a pre-auth key self-applies. Tailscale SSH answers :22 itself, so the
+        // per-node sshd key checks are not on that path: the source is the only gate, and that
+        // source was every member. The invariant, over every export shape and both
+        // constructors: ssh[] is never empty and every rule's src is exactly [tag:superadmin].
+        for (HeadscaleAclCompiler c : everyCompiler()) {
+            for (ExportBody b : everyBodyShape()) {
+                JsonNode root = mapper.readTree(c.compile(b));
+                assertThat(root.get("ssh")).isNotEmpty();
+                root.get("ssh").forEach(rule -> {
+                    assertThat(rule.get("src").isArray()).as("src is an array: %s", rule).isTrue();
+                    assertThat(texts(rule.get("src"))).as("ssh rule %s", rule)
+                            .containsExactly("tag:superadmin");
+                    assertThat(texts(rule.get("src"))).as("ssh rule %s", rule)
+                            .doesNotContainAnyElementsOf(MEMBER_SOURCES);
+                    assertThat(rule.get("action").asText()).isEqualTo("accept");
+                });
+            }
+        }
+    }
+
+    @Test
+    void perNodeEdges_areNotSourcedFromTheMembershipTag() throws Exception {
+        // The old rule, named directly: {src:[tag:hugmesh], dst:[tag:dev_<fp>]} per licensed
+        // node. A licensed operator who is only a member gets NO edge until per-operator
+        // identities exist; the per-node edge keeps its export-driven shape with the superadmin
+        // source.
+        JsonNode root = mapper.readTree(compiler.compile(body(3,
+                op("alice@x", "FP-A", "na"), op("bob@y", "FP-B", "nb"))));
+
+        assertThat(sshBySrc(root, "tag:hugmesh")).as("ssh rules sourced from the membership tag")
+                .isEmpty();
+        List<JsonNode> edges = nodeEdges(root);
+        assertThat(edges).hasSize(2);
+        for (JsonNode edge : edges) {
+            assertThat(texts(edge.get("src"))).containsExactly("tag:superadmin");
+            assertThat(texts(edge.get("users"))).containsExactly("superadmin");
+        }
+        assertThat(texts(edges.get(0).get("dst"))).containsExactly("tag:dev_250fb2ed2cb3");
+        assertThat(texts(edges.get(1).get("dst"))).containsExactly("tag:dev_de2fb9fcfb97");
+        // tag:hugmesh is not an ssh destination either.
+        root.get("ssh").forEach(rule ->
+                assertThat(texts(rule.get("dst"))).doesNotContainAnyElementsOf(MEMBER_SOURCES));
+    }
+
+    @Test
+    void theOnlyPort22Accept_isFromTagSuperadmin() throws Exception {
+        // A Tailscale SSH session is a TCP connection to :22, so the packet filter must pass it
+        // before ssh[] is consulted: without a :22 accept the superadmin rule is unreachable.
+        // With one whose src is a member tag, every member reaches :22. So acls[] is EXACTLY the
+        // CIDR data-plane rule and {src:[tag:superadmin], dst:[tag:hugmesh:22]}, in that order,
+        // for every export shape.
+        for (HeadscaleAclCompiler c : everyCompiler()) {
+            for (ExportBody b : everyBodyShape()) {
+                JsonNode acls = mapper.readTree(c.compile(b)).get("acls");
+                assertThat(acls).hasSize(2);
+
+                JsonNode port22 = acls.get(1);
+                assertThat(port22.get("action").asText()).isEqualTo("accept");
+                assertThat(texts(port22.get("src"))).containsExactly("tag:superadmin");
+                assertThat(texts(port22.get("dst"))).containsExactly("tag:hugmesh:22");
+                // An acl rule has no `users`; exactly these three members, like the template.
+                List<String> members = new ArrayList<>();
+                port22.fieldNames().forEachRemaining(members::add);
+                assertThat(members).containsExactly("action", "src", "dst");
+
+                // No OTHER rule reaches a tag, :22 or every port of a tag: the data-plane rule's
+                // destinations are the two CIDRs only.
+                assertThat(texts(acls.get(0).get("dst")))
+                        .containsExactly("10.244.0.0/16:*", "10.96.0.0/12:*");
+                // And no member source can reach :22 through any rule.
+                acls.forEach(rule -> {
+                    boolean reaches22 = texts(rule.get("dst")).stream()
+                            .anyMatch(d -> d.startsWith("tag:") || d.endsWith(":22"));
+                    if (reaches22) {
+                        assertThat(texts(rule.get("src"))).as("acl rule %s", rule)
+                                .containsExactly("tag:superadmin");
+                    }
+                });
+            }
+        }
     }
 
     // ── Pre-existing contract, still enforced ────────────────────────────────────
@@ -317,7 +463,7 @@ class HeadscaleAclCompilerTest {
 
         assertThat(root.get("ssh").isArray()).isTrue();
         assertThat(root.get("ssh")).hasSize(1);              // the superadmin mesh rule only
-        assertThat(root.get("acls")).hasSize(1);             // the CIDR data-plane rule only
+        assertThat(root.get("acls")).hasSize(2);             // CIDR data-plane + superadmin :22
         // No tag wildcard anywhere; the only "*" is the CIDR port wildcard.
         assertThat(policy).doesNotContain("\"*\"");
         assertThat(policy).doesNotContain("tag:hugmesh:*");
@@ -331,7 +477,7 @@ class HeadscaleAclCompilerTest {
                 new AuthorizedOperator("alice@x", "FP-DUP", "n", List.of("SHA256:k2"),
                         AuthorizedOperator.VIA_DOMAIN_LICENSE),
                 op("bob@y", "FP-DUP", "n"))));
-        List<JsonNode> nodeEdges = sshBySrc(root, "tag:hugmesh");
+        List<JsonNode> nodeEdges = nodeEdges(root);
         assertThat(nodeEdges).hasSize(1);
         assertThat(texts(nodeEdges.get(0).get("dst"))).containsExactly("tag:dev_d6c17646745a");
     }
@@ -341,7 +487,7 @@ class HeadscaleAclCompilerTest {
         JsonNode root = mapper.readTree(compiler.compile(body(3,
                 op("alice@x", "FP-A", "na"),
                 op("bob@y", "FP-B", "nb"))));
-        List<JsonNode> nodeEdges = sshBySrc(root, "tag:hugmesh");
+        List<JsonNode> nodeEdges = nodeEdges(root);
         assertThat(nodeEdges).hasSize(2);
         List<String> dst = new ArrayList<>();
         nodeEdges.forEach(r -> dst.addAll(texts(r.get("dst"))));
@@ -362,7 +508,7 @@ class HeadscaleAclCompilerTest {
                 new AuthorizedOperator("", "FP-X", "n", List.of("k"), AuthorizedOperator.VIA_DEVICE_LICENSE),
                 new AuthorizedOperator("alice@x", "", "n", List.of("k"), AuthorizedOperator.VIA_DEVICE_LICENSE),
                 op("real@x", "FP-OK", "n"))));
-        List<JsonNode> nodeEdges = sshBySrc(root, "tag:hugmesh");
+        List<JsonNode> nodeEdges = nodeEdges(root);
         assertThat(nodeEdges).hasSize(1);
         assertThat(texts(nodeEdges.get(0).get("dst"))).containsExactly("tag:dev_e2bd7072e18f");
     }
@@ -378,7 +524,7 @@ class HeadscaleAclCompilerTest {
     void nullBody_compilesToRendererMinimum_neverThrows() throws Exception {
         JsonNode root = mapper.readTree(compiler.compile(null));
         assertThat(root.get("ssh")).hasSize(1);      // superadmin mesh rule survives a null body
-        assertThat(root.get("acls")).hasSize(1);     // and so does the data-plane rule
+        assertThat(root.get("acls")).hasSize(2);     // and so do the data-plane rule + the :22 accept
     }
 
     @Test
