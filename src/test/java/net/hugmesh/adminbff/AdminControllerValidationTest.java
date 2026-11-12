@@ -47,7 +47,7 @@ import static org.springframework.security.test.web.reactive.server.SecurityMock
  * AdminControllerRouteAccessTest / AdminControllerAllowlistTest.
  */
 @WebFluxTest(controllers = AdminController.class)
-@Import({SecurityConfig.class, DomainRegistry.class, ValidationExceptionHandler.class})
+@Import({SecurityConfig.class, DomainRegistry.class, ValidationExceptionHandler.class, net.hugmesh.adminbff.account.RegistrationDomainResolver.class})
 class AdminControllerValidationTest {
 
     @Autowired ApplicationContext context;

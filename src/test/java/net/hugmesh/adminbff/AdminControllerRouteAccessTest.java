@@ -41,7 +41,7 @@ import static org.springframework.security.test.web.reactive.server.SecurityMock
  * POST/DELETE need no token.
  */
 @WebFluxTest(controllers = AdminController.class)
-@Import({SecurityConfig.class, DomainRegistry.class})
+@Import({SecurityConfig.class, DomainRegistry.class, net.hugmesh.adminbff.account.RegistrationDomainResolver.class})
 class AdminControllerRouteAccessTest {
 
     @Autowired ApplicationContext context;

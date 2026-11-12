@@ -1,5 +1,6 @@
 package net.hugmesh.adminbff.domainregistry;
 
+import org.springframework.data.r2dbc.repository.Modifying;
 import org.springframework.data.r2dbc.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.data.repository.reactive.ReactiveCrudRepository;
@@ -77,4 +78,32 @@ public interface DomainRegistryRowRepository extends ReactiveCrudRepository<Doma
      * service's clean 409; the constraint remains the race backstop.
      */
     Mono<DomainRegistryRow> findByNsPrefix(String nsPrefix);
+
+    /**
+     * The rows still waiting on their per-domain CA: {@code ca_ref} equal to the given value
+     * (the CA effector passes the literal {@code generate}) and {@code ca_provisioned} still
+     * false. Natural-key ordered so one reconcile pass works through them deterministically.
+     */
+    @Query("SELECT * FROM domain_registry WHERE ca_ref = :ca_ref AND ca_provisioned = false "
+            + "ORDER BY cluster_domain")
+    Flux<DomainRegistryRow> findCaPending(@Param("ca_ref") String caRef);
+
+    /**
+     * The CA effector's ONLY write (hugmesh-admin-bff-api#99, decision 87a = B): record the
+     * Vault PKI mount that now holds this domain's root in {@code ca_ref} and flip
+     * {@code ca_provisioned} to true. Compare-and-set on the row still reading
+     * {@code ca_ref = :expected_ref} with {@code ca_provisioned = false}, so a SUPERADMIN
+     * re-pointing {@code ca_ref} while Vault was being called is never overwritten: that race
+     * updates 0 rows and the caller reports it rather than clobbering the operator's edit.
+     *
+     * @return the number of rows updated (1, or 0 when the row changed underneath)
+     */
+    @Modifying
+    @Query("UPDATE domain_registry SET ca_ref = :ca_ref, ca_provisioned = true, "
+            + "updated_at = :updated_at "
+            + "WHERE id = :id AND ca_ref = :expected_ref AND ca_provisioned = false")
+    Mono<Long> markCaProvisioned(@Param("id") String id,
+                                 @Param("expected_ref") String expectedRef,
+                                 @Param("ca_ref") String caRef,
+                                 @Param("updated_at") Instant updatedAt);
 }

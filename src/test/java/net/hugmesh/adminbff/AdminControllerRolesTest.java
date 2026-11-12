@@ -45,7 +45,7 @@ import static org.springframework.security.test.web.reactive.server.SecurityMock
  * </ul>
  */
 @WebFluxTest(controllers = AdminController.class)
-@Import({SecurityConfig.class, DomainRegistry.class, ValidationExceptionHandler.class})
+@Import({SecurityConfig.class, DomainRegistry.class, ValidationExceptionHandler.class, net.hugmesh.adminbff.account.RegistrationDomainResolver.class})
 class AdminControllerRolesTest {
 
     @Autowired ApplicationContext context;
@@ -148,8 +148,12 @@ class AdminControllerRolesTest {
         asAdmin().post().uri("/bff/admin/roles/ROLE_GAMES/dave")
                 .exchange().expectStatus().isOk();
 
-        verify(revocations).revokeSubject(
-                eq("dave"), eq("role-grant"), longThat(ttl -> ttl >= 3600L));
+        // EXACTLY the short grant TTL (1 h), NOT the revoke cut-off TTL. The gateway's
+        // subject: key denies EVERY token for the subject until it expires (set membership,
+        // no iat comparison), so on a GRANT the key's lifetime is pure lock-out: a stale
+        // token here is UNDER-privileged, nothing is cut off by a longer key. Pinned exact so
+        // a swap of the grant and cut-off TTLs at this call site fails here.
+        verify(revocations).revokeSubject(eq("dave"), eq("role-grant"), eq(3_600L));
     }
 
     @Test
@@ -203,9 +207,13 @@ class AdminControllerRolesTest {
         asAdmin().delete().uri("/bff/admin/roles/ROLE_MATRIX/carol")
                 .exchange().expectStatus().isOk();
 
-        // subject: key stamped with the grantee's casdoor user id and TTL >= custody JWT lifetime.
+        // subject: key stamped with the grantee's casdoor user id, and a TTL that outlives the
+        // LONGEST token Casdoor issues for this platform: the seeded app-* clients and
+        // hugmesh-desktop carry expireInHours=168 (hugmesh-generator
+        // specs/cluster/manifests/casdoor/init-job.yaml). A 1 h key lapses while a raw
+        // 168 h JWT still carries the revoked role, and the token works again for ~7 days.
         verify(revocations).revokeSubject(
-                eq("carol"), eq("role-revoke"), longThat(ttl -> ttl >= 3600L));
+                eq("carol"), eq("role-revoke"), longThat(ttl -> ttl >= 168L * 3_600L));
     }
 
     @Test

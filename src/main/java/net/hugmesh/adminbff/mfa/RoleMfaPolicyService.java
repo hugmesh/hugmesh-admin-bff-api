@@ -124,18 +124,22 @@ public class RoleMfaPolicyService {
         }
         return repo.findByDomainAndRoleIn(domain, wanted)
                 .collectList()
-                .map(rows -> {
-                    Map<String, RoleMfaPolicy> effective = new LinkedHashMap<>();
-                    for (String role : wanted) {
-                        effective.put(role, defaultFor(domain, role));
-                    }
-                    for (RoleMfaPolicyRow row : rows) {
-                        if (wanted.contains(row.role())) {
-                            effective.put(row.role(), fromRow(row));
-                        }
-                    }
-                    return MfaRequirement.merge(effective.values());
-                });
+                .map(rows -> mergedRequirement(domain, wanted, rows));
+    }
+
+    /** Each wanted role's stored row, else its default, merged into one requirement. */
+    private static MfaRequirement mergedRequirement(String domain, Set<String> wanted,
+                                                    List<RoleMfaPolicyRow> rows) {
+        Map<String, RoleMfaPolicy> effective = new LinkedHashMap<>();
+        for (String role : wanted) {
+            effective.put(role, defaultFor(domain, role));
+        }
+        for (RoleMfaPolicyRow row : rows) {
+            if (wanted.contains(row.role())) {
+                effective.put(row.role(), fromRow(row));
+            }
+        }
+        return MfaRequirement.merge(effective.values());
     }
 
     /**

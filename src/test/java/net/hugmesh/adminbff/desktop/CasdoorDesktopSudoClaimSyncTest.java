@@ -38,8 +38,12 @@ class CasdoorDesktopSudoClaimSyncTest {
     private final DesktopSudoGrantRepository repo = mock(DesktopSudoGrantRepository.class);
     private final GatewayRevocationClient revocations = mock(GatewayRevocationClient.class);
 
+    /** Distinct, non-default TTLs so a swap of the two at either call site is visible. */
+    private static final long CUTOFF_TTL = 700_000L;
+    private static final long GRANT_TTL = 1_800L;
+
     private final CasdoorDesktopSudoClaimSync sync =
-            new CasdoorDesktopSudoClaimSync(casdoor, repo, revocations);
+            new CasdoorDesktopSudoClaimSync(casdoor, repo, revocations, CUTOFF_TTL, GRANT_TTL);
 
     private static DesktopSudoGrant grant(String subject, String state) {
         return new DesktopSudoGrant("g-1", subject, "dev-1", state, "root", Instant.now(),
@@ -59,8 +63,9 @@ class CasdoorDesktopSudoClaimSyncTest {
 
         // the generator-seeded wire name + the org-qualified member id
         verify(casdoor).addUserToRole("desktop-sudo", "hugmesh/alice");
-        // AdminController.grantRole parity: re-mint the live custody JWT with the new role.
-        verify(revocations).revokeSubject("alice", "desktop-sudo-grant", 3_600L);
+        // AdminController.grantRole parity: re-mint the live token with the new role, under the
+        // SHORT grant TTL (the key locks the subject out while it lives; a grant cuts nothing off).
+        verify(revocations).revokeSubject("alice", "desktop-sudo-grant", GRANT_TTL);
     }
 
     @Test
@@ -106,8 +111,9 @@ class CasdoorDesktopSudoClaimSyncTest {
                 .expectNext(DesktopSudoGrant.PROP_APPLIED).verifyComplete();
 
         verify(casdoor).removeUserFromRole("desktop-sudo", "hugmesh/alice");
-        // AdminController.revokeRole parity: deny the stale sudo-bearing custody JWT.
-        verify(revocations).revokeSubject("alice", "desktop-sudo-revoke", 3_600L);
+        // AdminController.revokeRole parity: deny the stale sudo-bearing token for the CUT-OFF
+        // TTL — hugmesh-desktop tokens live 168 h, so a 1 h key let the claim ride ~7 more days.
+        verify(revocations).revokeSubject("alice", "desktop-sudo-revoke", CUTOFF_TTL);
     }
 
     @Test
@@ -145,12 +151,26 @@ class CasdoorDesktopSudoClaimSyncTest {
 
     @Test
     void nullCasdoorClient_isLoggedDryRun_staysPending_dialsNothing() {
-        CasdoorDesktopSudoClaimSync dark = new CasdoorDesktopSudoClaimSync(null, repo, revocations);
+        CasdoorDesktopSudoClaimSync dark =
+                new CasdoorDesktopSudoClaimSync(null, repo, revocations, CUTOFF_TTL, GRANT_TTL);
 
         StepVerifier.create(dark.propagate(grant("alice", DesktopSudoGrant.STATE_ACTIVE)))
                 .expectNext(DesktopSudoGrant.PROP_PENDING).verifyComplete();
 
         verifyNoInteractions(repo, revocations);
+    }
+
+    @Test
+    void nonPositiveTtl_isRefusedAtConstruction() {
+        // <= 0 would mean the gateway table's 30-day default: a month-long lock-out on a grant.
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+                        () -> new CasdoorDesktopSudoClaimSync(casdoor, repo, revocations, CUTOFF_TTL, 0L))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("subject-grant-ttl-seconds");
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+                        () -> new CasdoorDesktopSudoClaimSync(casdoor, repo, revocations, -1L, GRANT_TTL))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("subject-cutoff-ttl-seconds");
     }
 
     @Test
