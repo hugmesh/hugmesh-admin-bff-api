@@ -239,7 +239,7 @@ class AuthControllerTest {
                 .expectBody().jsonPath("$.registrationComplete").isEqualTo(true);
 
         // Now provision brokers a real token (mocked).
-        when(broker.matrixToken(anyString())).thenReturn(Mono.just(
+        when(broker.matrixToken(anyString(), anyString())).thenReturn(Mono.just(
                 Map.of("access_token", "mx_tok", "user_id", "@flow:hugmesh.net")));
         web.mutateWith(asFlow).post().uri("/bff/provision/matrix").exchange()
                 .expectStatus().isOk()
@@ -277,14 +277,15 @@ class AuthControllerTest {
         web.mutateWith(asFlow).post().uri("/bff/register/complete").exchange()
                 .expectStatus().isOk();
 
-        when(broker.mastodonToken(anyString(), anyString()))
+        when(broker.mastodonToken(anyString(), anyString(), anyString()))
                 .thenReturn(Mono.just(Map.of("access_token", "mstdn_tok")));
         web.mutateWith(asFlow).post().uri("/bff/provision/mastodon").exchange()
                 .expectStatus().isOk()
                 .expectBody().jsonPath("$.access_token").isEqualTo("mstdn_tok");
 
         // Row key = the Matrix-style username; homeserver localpart = the persisted Mastodon fold.
-        org.mockito.Mockito.verify(broker).mastodonToken("flow.dev", "flow_dev");
+        // A google account has no Casdoor username, so no display name is passed ("").
+        org.mockito.Mockito.verify(broker).mastodonToken("flow.dev", "flow_dev", "");
     }
 
     @Test

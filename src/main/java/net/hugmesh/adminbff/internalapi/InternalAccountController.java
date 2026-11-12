@@ -273,17 +273,26 @@ public class InternalAccountController {
      * the residual half of the fix: {@code john.doe}/{@code john-doe} are DISTINCT under the
      * Matrix fold but collapse to one Mastodon localpart, so the Mastodon-mint call sites read
      * THIS field, not a re-fold of {@code localpart}. Same blank-means-"resolve it" contract.
+     *
+     * <p>{@code displayName} (Liquibase changeset 410) is the Casdoor username behind a
+     * native-login account (the id_token {@code name} claim), the name a token broker sets as
+     * the homeserver display name while the current one is still a default. Blank when unknown
+     * (google/discord accounts, or a row that has not signed in since the column landed); a
+     * caller then leaves the homeserver display name alone. It is a display value only, never
+     * an identity key.
      */
     public record AccountOut(String id, String provider, String handle, boolean registrationComplete,
-                             List<String> roles, String localpart, String mastodonLocalpart) {
+                             List<String> roles, String localpart, String mastodonLocalpart,
+                             String displayName) {
 
         public AccountOut {
             roles = roles == null ? null : Collections.unmodifiableList(new ArrayList<>(roles));
         }
-        static AccountOut of(Account a, String localpart, String mastodonLocalpart) {
+        static AccountOut of(Account a, AccountLocalpartService.ResolvedLocalparts lp) {
             return new AccountOut(a.id(), a.provider(), a.handle(), a.registrationComplete(),
-                    a.roles(), localpart == null ? "" : localpart,
-                    mastodonLocalpart == null ? "" : mastodonLocalpart);
+                    a.roles(), lp.localpart() == null ? "" : lp.localpart(),
+                    lp.mastodonLocalpart() == null ? "" : lp.mastodonLocalpart(),
+                    lp.displayName() == null ? "" : lp.displayName());
         }
     }
 
@@ -385,12 +394,19 @@ public class InternalAccountController {
             // trusted-issuer set and otherwise no-ops (never fails the login, never clears a
             // previously-verified value, degrades to the pre-301 fail-closed deny).
             String issuer = issClaimFromIdToken(body.handle());
+            // Changeset 410: the Casdoor username. The hugmesh-realm JWT-Custom token carries
+            // it as `name` and (by design) never as preferred_username, so for an email-less
+            // user the account handle above is the `sub` UUID. The username is NOT folded into
+            // the account key (that would re-key every existing account); it is passed on as
+            // the display-name hint and, for a row with no localpart yet, as the localpart
+            // candidate. Same unverified-claim trust level as the handle itself.
+            String casdoorUsername = nameClaimFromIdToken(body.handle());
             return accounts.ensureAccount(provider, handle, roles)
                     .flatMap(a -> casdoorSubs.stamp(a.id(), casdoorSub).thenReturn(a))
                     .flatMap(a -> accountIssuers.stamp(a.id(), issuer).thenReturn(a))
-                    .flatMap(this::withLocalpart);
+                    .flatMap(a -> withLocalpart(a, casdoorUsername));
         }
-        return accounts.ensureAccount(provider, body.handle()).flatMap(this::withLocalpart);
+        return accounts.ensureAccount(provider, body.handle()).flatMap(a -> withLocalpart(a, null));
     }
 
     /**
@@ -402,10 +418,10 @@ public class InternalAccountController {
      * DIFFERENT account already holds this localpart — is surfaced as 409, matching this
      * controller's existing {@link ResponseStatusException} idiom (see {@link #subjectFromIdToken}).
      */
-    private Mono<AccountOut> withLocalpart(Account a) {
-        return localparts.resolveAndPersist(a.id(), a.handle())
+    private Mono<AccountOut> withLocalpart(Account a, @Nullable String casdoorUsername) {
+        return localparts.resolveAndPersist(a.id(), a.handle(), casdoorUsername)
                 .then(localparts.localpartsOf(a.id()))
-                .map(lp -> AccountOut.of(a, lp.localpart(), lp.mastodonLocalpart()))
+                .map(lp -> AccountOut.of(a, lp))
                 .onErrorMap(AccountLocalpartService.CollisionException.class,
                         e -> new ResponseStatusException(HttpStatus.CONFLICT, e.getMessage()));
     }
@@ -572,6 +588,33 @@ public class InternalAccountController {
     }
 
     /**
+     * Extract the Casdoor username ({@code name} claim) from an OIDC {@code id_token}, for
+     * the changeset-410 display-name hint. Same degrade posture as {@link
+     * #subClaimFromIdToken}: null (never throws) on a non-JWT handle, an undecodable token,
+     * or a missing/blank claim, and the caller then leaves everything as it was.
+     */
+    @Nullable
+    static String nameClaimFromIdToken(String idToken) {
+        if (idToken == null) {
+            return null;
+        }
+        String[] parts = idToken.split("\\.");
+        if (parts.length != 3) {
+            return null;
+        }
+        try {
+            byte[] payload = java.util.Base64.getUrlDecoder().decode(parts[1]);
+            com.fasterxml.jackson.databind.JsonNode name = ID_TOKEN_MAPPER.readTree(payload).path("name");
+            if (!name.isTextual() || name.asText().isBlank()) {
+                return null;
+            }
+            return name.asText().trim();
+        } catch (IllegalArgumentException | java.io.IOException e) {
+            return null;
+        }
+    }
+
+    /**
      * Extract the raw {@code iss} claim from an OIDC {@code id_token}, for the
      * changeset-301 brand stamp.
      *
@@ -680,7 +723,7 @@ public class InternalAccountController {
      */
     private Mono<AccountOut> readWithLocalpart(Account a) {
         return localparts.localpartsOf(a.id())
-                .map(lp -> AccountOut.of(a, lp.localpart(), lp.mastodonLocalpart()));
+                .map(lp -> AccountOut.of(a, lp));
     }
 
     /**

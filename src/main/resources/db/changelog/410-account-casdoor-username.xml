@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+      410 — account.casdoor_username: the Casdoor username behind a native-login account,
+      used as the default homeserver DISPLAY NAME.
+
+      GAP: the hugmesh-realm Casdoor apps issue JWT-Custom tokens that carry the username
+      as `name` and deliberately never carry `preferred_username` (the account-takeover
+      lock in generator tests/scripts/test-casdoor-jwt-no-preferred-username.sh). For a
+      Casdoor user with no email, InternalAccountController's email > preferred_username
+      > sub ladder therefore lands on `sub` (the Casdoor user UUID), and that UUID became
+      the account handle, the Matrix localpart and the Mastodon/Akkoma localpart. Nothing
+      ever set a display name, so Matrix showed "<uuid> 💕" (tuwunel's default) and
+      Mastodon/Akkoma showed the 30-character underscore fold of the UUID.
+
+      FIX: capture the `name` claim at the same one decode point as casdoor_sub (292) and
+      keep it here. The token brokers read it back and set it as the homeserver display
+      name when the current one is still a default; user-bff gets it over the internal
+      account API as AccountOut.displayName.
+
+      Nullable, no default, no backfill: the username is not derivable from any existing
+      column, so legacy rows fill in on their next native sign-in (ensureAccount runs on
+      every login). NOT unique: it is a display hint, never an identity key (uniqueness of
+      the homeserver identity stays with uq_account_localpart / uq_account_mastodon_localpart).
+      varchar(255): Casdoor's own user.name width. Band 410: next free above 400.
+    -->
+
+    <changeSet id="410-account-casdoor-username-add-column" author="hugmesh">
+        <comment>account.casdoor_username — the Casdoor username (id_token `name` claim)
+                 captured at InternalAccountController#ensureAccount; nullable, not unique,
+                 the seed for the Matrix and Mastodon/Akkoma display name.</comment>
+        <addColumn tableName="account">
+            <column name="casdoor_username" type="varchar(255)"/>
+        </addColumn>
+        <rollback>
+            <dropColumn tableName="account" columnName="casdoor_username"/>
+        </rollback>
+    </changeSet>
+
+</databaseChangeLog>

@@ -200,6 +200,145 @@ class AccountLocalpartServiceTest extends AdminBffPostgresTestSupport {
         StepVerifier.create(localparts.mastodonLocalpartOf(a.id())).expectNext("dotted_mona").verifyComplete();
     }
 
+    // ── Casdoor username as localpart + display-name hint (changeset 410) ──────────────
+
+    /** A fresh Casdoor UUID, unique per test so rows never collide across tests. */
+    private static String freshUuid() {
+        return java.util.UUID.randomUUID().toString();
+    }
+
+    /** A username no other test row uses (the Testcontainers DB is shared per class). */
+    private static String freshUsername(String prefix) {
+        return prefix + "-" + Long.toHexString(System.nanoTime()).substring(4);
+    }
+
+    /**
+     * The reported defect: an email-less Casdoor user (hugmesh-realm JWT-Custom token, the
+     * username only in `name`) is keyed on the `sub` UUID, and that UUID became the Matrix
+     * and Mastodon/Akkoma handle. A NEW such account now takes its localparts from the
+     * username, and the username is stored as the display-name hint.
+     */
+    @Test
+    void resolveAndPersist_newCasdoorUuidAccount_takesLocalpartsFromUsername() {
+        AccountStore accounts = newAccountStore();
+        AccountLocalpartService localparts = newLocalparts();
+        String uuid = freshUuid();
+        String username = freshUsername("Neo.Name");
+
+        Account a = accounts.ensureAccount("casdoor", uuid, java.util.List.of("user")).block();
+        String expected = username.toLowerCase(java.util.Locale.ROOT);
+        StepVerifier.create(localparts.resolveAndPersist(a.id(), a.handle(), username))
+                .expectNext(expected).verifyComplete();
+
+        StepVerifier.create(localparts.localpartOf(a.id())).expectNext(expected).verifyComplete();
+        StepVerifier.create(localparts.mastodonLocalpartOf(a.id()))
+                .expectNext(net.hugmesh.adminbff.provision.ServiceTokenBroker.mastodonLocalpart(expected))
+                .verifyComplete();
+        StepVerifier.create(localparts.casdoorUsernameOf(a.id())).expectNext(username).verifyComplete();
+        StepVerifier.create(localparts.localpartsOf(a.id()))
+                .assertNext(lp -> assertThat(lp.displayName()).isEqualTo(username))
+                .verifyComplete();
+    }
+
+    /**
+     * Existing rows are PINNED: an account whose homeserver identity is already keyed on the
+     * UUID keeps it (renaming an mxid is unsafe, and a re-derived localpart would move the
+     * user onto a different homeserver account). Only the display-name hint is recorded.
+     */
+    @Test
+    void resolveAndPersist_existingUuidLocalpart_isPinned_onlyUsernameStamped() {
+        AccountStore accounts = newAccountStore();
+        AccountLocalpartService localparts = newLocalparts();
+        String uuid = freshUuid();
+        String username = freshUsername("pinned");
+
+        Account a = accounts.ensureAccount("casdoor", uuid, java.util.List.of("user")).block();
+        // The pre-fix sign-in: no username known, localpart = the UUID.
+        localparts.resolveAndPersist(a.id(), a.handle()).block();
+        StepVerifier.create(localparts.localpartOf(a.id())).expectNext(uuid).verifyComplete();
+
+        // Next sign-in carries the `name` claim.
+        StepVerifier.create(localparts.resolveAndPersist(a.id(), a.handle(), username))
+                .expectNext(uuid).verifyComplete();
+        StepVerifier.create(localparts.localpartOf(a.id())).expectNext(uuid).verifyComplete();
+        StepVerifier.create(localparts.mastodonLocalpartOf(a.id()))
+                .expectNext(net.hugmesh.adminbff.provision.ServiceTokenBroker.mastodonLocalpart(uuid))
+                .verifyComplete();
+        StepVerifier.create(localparts.casdoorUsernameOf(a.id())).expectNext(username).verifyComplete();
+
+        // A later token without `name` never clears the stored hint.
+        localparts.resolveAndPersist(a.id(), a.handle(), null).block();
+        StepVerifier.create(localparts.casdoorUsernameOf(a.id())).expectNext(username).verifyComplete();
+    }
+
+    /** A username another account already holds (as Matrix localpart or Mastodon fold) is
+     *  never taken: the new account falls back to its UUID-derived localpart, no 409. */
+    @Test
+    void resolveAndPersist_usernameTakenByAnotherAccount_fallsBackToUuid() {
+        AccountStore accounts = newAccountStore();
+        AccountLocalpartService localparts = newLocalparts();
+        String username = freshUsername("taken");
+
+        Account holder = accounts.ensureAccount("google", username + "@x.com").block();
+        localparts.resolveAndPersist(holder.id(), holder.handle()).block();
+
+        String uuid = freshUuid();
+        Account a = accounts.ensureAccount("casdoor", uuid, java.util.List.of("user")).block();
+        StepVerifier.create(localparts.resolveAndPersist(a.id(), a.handle(), username))
+                .expectNext(uuid).verifyComplete();
+        StepVerifier.create(localparts.localpartOf(holder.id())).expectNext(username).verifyComplete();
+    }
+
+    /** A reserved name (provisioning refuses those) or an email-shaped name is not used. */
+    @Test
+    void resolveAndPersist_reservedOrNonPlainUsername_fallsBackToUuid() {
+        AccountStore accounts = newAccountStore();
+        AccountLocalpartService localparts = newLocalparts();
+        for (String name : new String[] {"admin", "matrix", "bob@evil.example", "a/b", "---"}) {
+            String uuid = freshUuid();
+            Account a = accounts.ensureAccount("casdoor", uuid, java.util.List.of("user")).block();
+            StepVerifier.create(localparts.resolveAndPersist(a.id(), a.handle(), name))
+                    .as(name).expectNext(uuid).verifyComplete();
+        }
+    }
+
+    /** An email handle keeps its email-derived localpart (alice@... -> alice); the username
+     *  only replaces a bare UUID handle. */
+    @Test
+    void resolveAndPersist_emailHandle_ignoresUsernameForLocalpart() {
+        AccountStore accounts = newAccountStore();
+        AccountLocalpartService localparts = newLocalparts();
+        String local = freshUsername("mail");
+        Account a = accounts.ensureAccount("casdoor", local + "@x.com", java.util.List.of("user")).block();
+        StepVerifier.create(localparts.resolveAndPersist(a.id(), a.handle(), "someone-else"))
+                .expectNext(local).verifyComplete();
+        StepVerifier.create(localparts.casdoorUsernameOf(a.id())).expectNext("someone-else").verifyComplete();
+    }
+
+    /**
+     * Pinning also fixes a latent 409: a row whose localpart a backfill disambiguated
+     * (changeset 290 suffixes '-'||md5(id)[0:8]) used to be re-derived to the BARE candidate
+     * on every sign-in, which belongs to the other row, so every sign-in failed with a
+     * CollisionException. It now keeps its persisted value.
+     */
+    @Test
+    void resolveAndPersist_backfillSuffixedLocalpart_isKept_notA409() {
+        AccountStore accounts = newAccountStore();
+        AccountLocalpartService localparts = newLocalparts();
+        String base = freshUsername("dup");
+        Account first = accounts.ensureAccount("google", base + "@x.com").block();
+        localparts.resolveAndPersist(first.id(), first.handle()).block();
+        Account second = accounts.ensureAccount("discord", base + "@y.com").block();
+        db.sql("UPDATE account SET localpart = :lp, mastodon_localpart = :mlp WHERE id = :id")
+                .bind("lp", base + "-deadbeef")
+                .bind("mlp", net.hugmesh.adminbff.provision.ServiceTokenBroker.mastodonLocalpart(base) + "_d")
+                .bind("id", second.id())
+                .fetch().rowsUpdated().block();
+
+        StepVerifier.create(localparts.resolveAndPersist(second.id(), second.handle()))
+                .expectNext(base + "-deadbeef").verifyComplete();
+    }
+
     /**
      * Deliberately SKIPPED (per this fix's explicit scope): exercising the genuine
      * concurrent-write race — two SIMULTANEOUS {@code resolveAndPersist} calls for two

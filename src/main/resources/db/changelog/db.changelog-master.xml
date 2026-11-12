@@ -737,4 +737,11 @@
       no foreign keys (see the file); SELECT, INSERT, UPDATE to adminbff_app. Appended LAST.
     -->
     <include file="db/changelog/400-service-deployment-route-rule.xml"/>
+    <!--
+      410 — account.casdoor_username: the Casdoor username (id_token `name` claim) captured at
+      the native-login decode point, used as the default Matrix and Mastodon/Akkoma display name
+      (an email-less Casdoor account's handle is its UUID). Nullable, not unique; legacy rows
+      fill in on their next sign-in. Appended LAST.
+    -->
+    <include file="db/changelog/410-account-casdoor-username.xml"/>
 </databaseChangeLog>

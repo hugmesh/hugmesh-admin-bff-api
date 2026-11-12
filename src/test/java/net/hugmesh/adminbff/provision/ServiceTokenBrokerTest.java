@@ -293,4 +293,198 @@ class ServiceTokenBrokerTest {
                         assertThat(e).hasMessageContaining("email domain not configured"))
                 .verify();
     }
+
+    // ── Display name reconcile (Casdoor username) ──────────────────────────────────────
+
+    /** One recorded homeserver request: method, path and (for writes) the body sent. */
+    private record Seen(String method, String path, String auth) { }
+
+    /**
+     * A stub homeserver keyed on "METHOD path": answers from {@code routes} (404 when
+     * unrouted) and records every request in {@code seen}, so a test can assert which
+     * profile writes happened. Response bodies are rebuilt per call.
+     */
+    private static ExchangeFunction recordingStub(java.util.Map<String, String> routes,
+                                                  java.util.List<Seen> seen,
+                                                  java.util.List<String> writeBodies) {
+        return request -> {
+            String key = request.method().name() + " " + request.url().getRawPath();
+            seen.add(new Seen(request.method().name(), request.url().getRawPath(),
+                    request.headers().getFirst("Authorization")));
+            Mono<Void> capture = Mono.empty();
+            if (request.method().name().equals("PUT") || request.method().name().equals("PATCH")) {
+                org.springframework.mock.http.client.reactive.MockClientHttpRequest mock =
+                        new org.springframework.mock.http.client.reactive.MockClientHttpRequest(
+                                request.method(), request.url());
+                capture = request.body().insert(mock, new org.springframework.web.reactive.function
+                                .BodyInserter.Context() {
+                            @Override public java.util.List<org.springframework.http.codec.HttpMessageWriter<?>> messageWriters() {
+                                return org.springframework.web.reactive.function.client.ExchangeStrategies
+                                        .withDefaults().messageWriters();
+                            }
+                            @Override public java.util.Optional<org.springframework.http.server.reactive.ServerHttpRequest> serverRequest() {
+                                return java.util.Optional.empty();
+                            }
+                            @Override public java.util.Map<String, Object> hints() {
+                                return java.util.Map.of();
+                            }
+                        })
+                        .then(Mono.defer(() -> org.springframework.core.io.buffer.DataBufferUtils
+                                .join(mock.getBody())
+                                .map(buf -> buf.toString(java.nio.charset.StandardCharsets.UTF_8))
+                                .doOnNext(writeBodies::add)
+                                .then()));
+            }
+            String body = routes.get(key);
+            return capture.then(Mono.just(body == null
+                    ? json(HttpStatus.NOT_FOUND, "{\"errcode\":\"M_NOT_FOUND\"}")
+                    : json(HttpStatus.OK, body)));
+        };
+    }
+
+    private static ServiceTokenBroker brokerOn(ExchangeFunction ex) {
+        WebClient hs = WebClient.builder().exchangeFunction(ex).build();
+        SuspensionService suspensions = mock(SuspensionService.class);
+        when(suspensions.isLocalpartSuspended(any(), any())).thenReturn(Mono.just(false));
+        HsTokenRegistry hsTokens = mock(HsTokenRegistry.class);
+        when(hsTokens.recordBrokered(any(), any(), any())).thenReturn(Mono.empty());
+        return new ServiceTokenBroker(hs, hs, "svc-pw", suspensions, hsTokens);
+    }
+
+    private static final String UUID_LP = "c18f905c-62a1-4c20-a7c5-c707fb6eae85";
+    private static final String UUID_MXID = "@" + UUID_LP + ":localhost";
+    private static final String PROFILE_PATH = "/_matrix/client/v3/profile/" + UUID_MXID + "/displayname";
+
+    /** The live defect: tuwunel's default "<uuid> 💕" display name is replaced by the
+     *  Casdoor username, with the user's own freshly minted token. */
+    @Test
+    void matrixToken_defaultDisplayName_isSetToCasdoorUsername() {
+        var seen = new java.util.ArrayList<Seen>();
+        var writes = new java.util.ArrayList<String>();
+        ServiceTokenBroker broker = brokerOn(recordingStub(java.util.Map.of(
+                "POST /_matrix/client/v3/register",
+                "{\"access_token\":\"mx_tok\",\"user_id\":\"" + UUID_MXID + "\"}",
+                "GET " + PROFILE_PATH, "{\"displayname\":\"" + UUID_LP + " \uD83D\uDC95\"}",
+                "PUT " + PROFILE_PATH, "{}"), seen, writes));
+
+        StepVerifier.create(broker.matrixToken(UUID_LP, "e2e-matrix"))
+                .assertNext(out -> assertThat(out.get("access_token")).isEqualTo("mx_tok"))
+                .verifyComplete();
+
+        assertThat(seen).anySatisfy(r -> {
+            assertThat(r.method()).isEqualTo("PUT");
+            assertThat(r.path()).isEqualTo(PROFILE_PATH);
+            assertThat(r.auth()).isEqualTo("Bearer mx_tok");
+        });
+        assertThat(writes).containsExactly("{\"displayname\":\"e2e-matrix\"}");
+    }
+
+    /** A name the user chose (matrix-ui lets them set one) is never overwritten. */
+    @Test
+    void matrixToken_userChosenDisplayName_isLeftAlone() {
+        var seen = new java.util.ArrayList<Seen>();
+        var writes = new java.util.ArrayList<String>();
+        ServiceTokenBroker broker = brokerOn(recordingStub(java.util.Map.of(
+                "POST /_matrix/client/v3/register",
+                "{\"access_token\":\"mx_tok\",\"user_id\":\"" + UUID_MXID + "\"}",
+                "GET " + PROFILE_PATH, "{\"displayname\":\"Trinity\"}",
+                "PUT " + PROFILE_PATH, "{}"), seen, writes));
+
+        StepVerifier.create(broker.matrixToken(UUID_LP, "e2e-matrix")).expectNextCount(1).verifyComplete();
+        assertThat(seen).noneSatisfy(r -> assertThat(r.method()).isEqualTo("PUT"));
+        assertThat(writes).isEmpty();
+    }
+
+    /** No display name known (a google/discord account, or the 1-arg overload): no profile
+     *  traffic at all, the mint is exactly what it was. */
+    @Test
+    void matrixToken_noDisplayName_noProfileTraffic() {
+        var seen = new java.util.ArrayList<Seen>();
+        ServiceTokenBroker broker = brokerOn(recordingStub(java.util.Map.of(
+                "POST /_matrix/client/v3/register",
+                "{\"access_token\":\"mx_tok\",\"user_id\":\"" + UUID_MXID + "\"}"),
+                seen, new java.util.ArrayList<>()));
+        StepVerifier.create(broker.matrixToken(UUID_LP, "")).expectNextCount(1).verifyComplete();
+        StepVerifier.create(broker.matrixToken(UUID_LP)).expectNextCount(1).verifyComplete();
+        assertThat(seen).allSatisfy(r -> assertThat(r.path()).isEqualTo("/_matrix/client/v3/register"));
+    }
+
+    /** A failing profile write never fails the mint (best effort). */
+    @Test
+    void matrixToken_profileWriteFails_mintStillSucceeds() {
+        ServiceTokenBroker broker = brokerOn(request -> {
+            String path = request.url().getRawPath();
+            if (path.equals("/_matrix/client/v3/register")) {
+                return Mono.just(json(HttpStatus.OK,
+                        "{\"access_token\":\"mx_tok\",\"user_id\":\"" + UUID_MXID + "\"}"));
+            }
+            if (request.method().name().equals("GET")) {
+                return Mono.just(json(HttpStatus.NOT_FOUND, "{}"));
+            }
+            return Mono.error(new IllegalStateException("homeserver down"));
+        });
+        StepVerifier.create(broker.matrixToken(UUID_LP, "e2e-matrix"))
+                .assertNext(out -> assertThat(out.get("access_token")).isEqualTo("mx_tok"))
+                .verifyComplete();
+    }
+
+    private static final String MST_LP = "c18f905c_62a1_4c20_a7c5_c707fb";
+
+    /** Mastodon/Akkoma: an empty display_name (the live state of every UUID account) is set
+     *  to the Casdoor username via update_credentials, with the user token. */
+    @Test
+    void mastodonToken_emptyDisplayName_isSetToCasdoorUsername() {
+        var seen = new java.util.ArrayList<Seen>();
+        var writes = new java.util.ArrayList<String>();
+        ServiceTokenBroker broker = brokerOn(recordingStub(java.util.Map.of(
+                "POST /api/v1/apps", APP_CREDS,
+                "POST /oauth/token", "{\"access_token\":\"mst_tok\",\"token_type\":\"Bearer\"}",
+                "GET /api/v1/accounts/verify_credentials",
+                "{\"username\":\"" + MST_LP + "\",\"display_name\":\"\"}",
+                "PATCH /api/v1/accounts/update_credentials", "{}"), seen, writes));
+
+        StepVerifier.create(broker.mastodonToken(UUID_LP, MST_LP, "e2e-matrix"))
+                .assertNext(out -> assertThat(out.get("access_token")).isEqualTo("mst_tok"))
+                .verifyComplete();
+        assertThat(seen).anySatisfy(r -> {
+            assertThat(r.method()).isEqualTo("PATCH");
+            assertThat(r.path()).isEqualTo("/api/v1/accounts/update_credentials");
+            assertThat(r.auth()).isEqualTo("Bearer mst_tok");
+        });
+        assertThat(writes).containsExactly("{\"display_name\":\"e2e-matrix\"}");
+    }
+
+    @Test
+    void mastodonToken_userChosenDisplayName_isLeftAlone() {
+        var seen = new java.util.ArrayList<Seen>();
+        var writes = new java.util.ArrayList<String>();
+        ServiceTokenBroker broker = brokerOn(recordingStub(java.util.Map.of(
+                "POST /api/v1/apps", APP_CREDS,
+                "POST /oauth/token", "{\"access_token\":\"mst_tok\",\"token_type\":\"Bearer\"}",
+                "GET /api/v1/accounts/verify_credentials",
+                "{\"username\":\"" + MST_LP + "\",\"display_name\":\"Morpheus\"}"), seen, writes));
+        StepVerifier.create(broker.mastodonToken(UUID_LP, MST_LP, "e2e-matrix"))
+                .expectNextCount(1).verifyComplete();
+        assertThat(writes).isEmpty();
+    }
+
+    @Test
+    void isDefaultDisplayName_rules() {
+        assertThat(ServiceTokenBroker.isDefaultDisplayName(null, "bob")).isTrue();
+        assertThat(ServiceTokenBroker.isDefaultDisplayName("", "bob")).isTrue();
+        assertThat(ServiceTokenBroker.isDefaultDisplayName("bob", "bob")).isTrue();
+        assertThat(ServiceTokenBroker.isDefaultDisplayName("bob \uD83D\uDC95", "bob")).isTrue();
+        assertThat(ServiceTokenBroker.isDefaultDisplayName("bob \u2764\uFE0F", "bob")).isTrue();
+        assertThat(ServiceTokenBroker.isDefaultDisplayName("bob smith", "bob")).isFalse();
+        assertThat(ServiceTokenBroker.isDefaultDisplayName("bobby", "bob")).isFalse();
+        assertThat(ServiceTokenBroker.isDefaultDisplayName("Alice", "bob")).isFalse();
+    }
+
+    @Test
+    void cleanDisplayName_stripsControlsAndCaps() {
+        assertThat(ServiceTokenBroker.cleanDisplayName("a\u0000b\nc", 30)).isEqualTo("abc");
+        assertThat(ServiceTokenBroker.cleanDisplayName("x".repeat(40), 30)).hasSize(30);
+        assertThat(ServiceTokenBroker.cleanDisplayName("  ", 30)).isNull();
+        assertThat(ServiceTokenBroker.cleanDisplayName(null, 30)).isNull();
+    }
 }

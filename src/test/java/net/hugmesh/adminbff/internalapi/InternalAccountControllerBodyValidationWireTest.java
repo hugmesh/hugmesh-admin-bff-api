@@ -82,7 +82,7 @@ class InternalAccountControllerBodyValidationWireTest {
 
     @BeforeEach
     void setUp() {
-        when(localparts.resolveAndPersist(any(), any())).thenReturn(Mono.just("a"));
+        when(localparts.resolveAndPersist(any(), any(), any())).thenReturn(Mono.just("a"));
         when(localparts.localpartsOf(any()))
                 .thenReturn(Mono.just(new AccountLocalpartService.ResolvedLocalparts("", "")));
         service = WebTestClient.bindToApplicationContext(context).apply(springSecurity()).build()
