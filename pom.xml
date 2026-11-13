@@ -14,7 +14,7 @@
   <parent>
     <groupId>net.hugmesh</groupId>
     <artifactId>hugmesh-parent</artifactId>
-    <version>2.9.0-beta.1</version>
+    <version>2.10.0-beta.1</version>
     <relativePath/>
   </parent>
 
@@ -27,7 +27,7 @@
   <!-- Beta scheme (2026-10-21): MAJOR.MINOR.PATCH-beta.N, never SNAPSHOT. 0.3 = in the
        default mesh with recorded live checks. This is also the image version: the
        release workflow refuses a v<tag> that does not equal this string. -->
-  <version>0.4.0-beta.2</version>
+  <version>0.5.0-beta.1</version>
 
   <properties>
     <!-- java.version (25), encoding, the hugmesh-commons version, the AWS SDK
@@ -168,7 +168,7 @@
            2.6.0-beta.1 is the first auth-core coordinate of the beta release chain
            (build-config 0.6.0-beta.1, parent 2.9.0-beta.1, commons 2.2.0-beta.1,
            auth-core 2.6.0-beta.1). 2.6.0 adds the bff_ session bridge. -->
-      <version>2.6.0-beta.1</version>
+      <version>2.7.0-beta.1</version>
     </dependency>
 
     <!-- ============================================================================
