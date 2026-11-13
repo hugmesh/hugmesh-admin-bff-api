@@ -11,6 +11,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
+import org.springframework.web.reactive.function.client.ClientResponse;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
 import net.hugmesh.adminbff.suspension.AccessSuspension;
@@ -302,29 +303,9 @@ public class ServiceTokenBroker {
                         ? resp.bodyToMono(String.class).defaultIfEmpty("")
                         // 404 = no displayname set: treat as empty.
                         : resp.releaseBody().thenReturn(""))
-                .flatMap(body -> {
-                    String current = "";
-                    if (!body.isBlank()) {
-                        try {
-                            current = MAPPER.readTree(body).path("displayname").asText("");
-                        } catch (JsonProcessingException e) {
-                            return Mono.empty();
-                        }
-                    }
-                    if (name.equals(current) || !isDefaultDisplayName(current, localpart)) {
-                        return Mono.empty();
-                    }
-                    return tuwunel.put().uri(path).header("Authorization", auth)
-                            .contentType(MediaType.APPLICATION_JSON)
-                            .bodyValue(Map.of("displayname", name))
-                            .exchangeToMono(resp -> {
-                                if (!resp.statusCode().is2xxSuccessful()) {
-                                    log.info("[broker] matrix displayname update refused: {}",
-                                            resp.statusCode().value());
-                                }
-                                return resp.releaseBody();
-                            });
-                })
+                .flatMap(ServiceTokenBroker::matrixDisplayName)
+                .filter(current -> !name.equals(current) && isDefaultDisplayName(current, localpart))
+                .flatMap(current -> putMatrixDisplayName(path, auth, name))
                 .onErrorResume(e -> {
                     log.info("[broker] matrix displayname reconcile failed: {}", e.toString());
                     return Mono.empty();
@@ -347,29 +328,53 @@ public class ServiceTokenBroker {
                         // leave it, the next mint retries.
                         : resp.releaseBody().then(Mono.<String>empty()))
                 .flatMap(ServiceTokenBroker::parseJson)
-                .flatMap(acct -> {
+                .filter(acct -> {
                     String current = acct.path("display_name").asText("");
-                    String username = acct.path("username").asText(localpart);
-                    if (name.equals(current) || !isDefaultDisplayName(current, username)) {
-                        return Mono.empty();
-                    }
-                    return mastodon.patch().uri("/api/v1/accounts/update_credentials")
-                            .header("Authorization", auth)
-                            .contentType(MediaType.APPLICATION_JSON)
-                            .bodyValue(Map.of("display_name", name))
-                            .exchangeToMono(resp -> {
-                                if (!resp.statusCode().is2xxSuccessful()) {
-                                    log.info("[broker] mastodon display_name update refused: {}",
-                                            resp.statusCode().value());
-                                }
-                                return resp.releaseBody();
-                            });
+                    return !name.equals(current)
+                            && isDefaultDisplayName(current, acct.path("username").asText(localpart));
                 })
+                .flatMap(acct -> patchMastodonDisplayName(auth, name))
                 .onErrorResume(e -> {
                     log.info("[broker] mastodon display_name reconcile failed: {}", e.toString());
                     return Mono.empty();
                 })
                 .then();
+    }
+
+    /** The {@code displayname} in a tuwunel profile body; "" for an empty body (404 = none set).
+     *  Empty Mono when the body is not JSON: then nothing is changed. */
+    private static Mono<String> matrixDisplayName(String body) {
+        if (body.isBlank()) {
+            return Mono.just("");
+        }
+        try {
+            return Mono.just(MAPPER.readTree(body).path("displayname").asText(""));
+        } catch (JsonProcessingException e) {
+            return Mono.empty();
+        }
+    }
+
+    private Mono<Void> putMatrixDisplayName(String path, String auth, String name) {
+        return tuwunel.put().uri(path).header("Authorization", auth)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("displayname", name))
+                .exchangeToMono(resp -> logRefusal(resp, "matrix displayname"));
+    }
+
+    private Mono<Void> patchMastodonDisplayName(String auth, String name) {
+        return mastodon.patch().uri("/api/v1/accounts/update_credentials")
+                .header("Authorization", auth)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("display_name", name))
+                .exchangeToMono(resp -> logRefusal(resp, "mastodon display_name"));
+    }
+
+    private static Mono<Void> logRefusal(ClientResponse resp,
+                                         String what) {
+        if (!resp.statusCode().is2xxSuccessful()) {
+            log.info("[broker] {} update refused: {}", what, resp.statusCode().value());
+        }
+        return resp.releaseBody();
     }
 
     private Mono<Map<String, Object>> mintMastodon(String persistedMastodonLocalpart) {
