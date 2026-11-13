@@ -2,19 +2,23 @@
   "archs": [
     {
       "id": "x86-64",
-      "label": "x86-64 (Intel/AMD PCs)"
+      "label": "x86-64 (Intel/AMD PCs)",
+      "selinux": true
     },
     {
       "id": "arm64",
-      "label": "ARM64 (single-board / edge devices)"
+      "label": "ARM64 (single-board / edge devices)",
+      "selinux": true
     },
     {
       "id": "armv7",
-      "label": "ARMv7 (32-bit \u2014 no aarch64 toolchain fit)"
+      "label": "ARMv7 (32-bit \u2014 no aarch64 toolchain fit)",
+      "selinux": true
     },
     {
       "id": "riscv64",
-      "label": "RISC-V 64 (no builder / no toolchain)"
+      "label": "RISC-V 64 (no SELinux; no builder yet)",
+      "selinux": false
     }
   ],
   "devices": [
