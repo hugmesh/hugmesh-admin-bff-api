@@ -37,8 +37,8 @@ public record DomainThemeRequest(
          * That cross-language duplication is deliberate and is the price of rejecting a
          * typo at the boundary; the alternative is a theme that silently renders wrong.
          */
-        @Pattern(regexp = "^(dark|light|dawn|morning|afternoon|dusk|evening|midnight)?$",
-                message = "ramp must be one of dark, light, dawn, morning, afternoon, dusk, evening, midnight")
+        @Pattern(regexp = "^(dark|light|dawn|morning|afternoon|dusk|evening|contrast-dark|contrast-light|midnight)?$",
+                message = "ramp must be one of dark, light, dawn, morning, afternoon, dusk, evening, contrast-dark, contrast-light, midnight")
         String ramp,
 
         /* theme.STYLE_VARIANTS — the shape axis. Closed set, same reasoning as ramp. */
