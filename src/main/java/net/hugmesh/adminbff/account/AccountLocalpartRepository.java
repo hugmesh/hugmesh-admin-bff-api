@@ -45,4 +45,10 @@ public interface AccountLocalpartRepository extends ReactiveCrudRepository<Accou
     @Query("UPDATE account SET localpart = :localpart, mastodon_localpart = :mastodonLocalpart WHERE id = :id")
     Mono<Long> updateLocalparts(@Param("id") String id, @Param("localpart") String localpart,
                                 @Param("mastodonLocalpart") String mastodonLocalpart);
+
+    /** Targeted single-column write of the Casdoor username display hint (changeset 410). */
+    @Modifying
+    @Query("UPDATE account SET casdoor_username = :casdoorUsername WHERE id = :id")
+    Mono<Long> updateCasdoorUsername(@Param("id") String id,
+                                     @Param("casdoorUsername") String casdoorUsername);
 }

@@ -618,17 +618,20 @@ public class AuthController {
             return Mono.error(ApiException.badRequest(
                     "username '" + username + "' is reserved and cannot be provisioned"));
         }
+        // The Casdoor username (changeset 410) becomes the homeserver display name while the
+        // current one is still a default; "" (unknown) leaves the display name alone.
+        Mono<String> displayName = localparts.casdoorUsernameOf(me.id()).defaultIfEmpty("");
         if (matrix) {
-            return broker.matrixToken(username)
-                    .onErrorResume(e -> Mono.error(ApiException.badGateway(String.valueOf(e))));
+            return displayName.flatMap(name -> broker.matrixToken(username, name)
+                    .onErrorResume(e -> Mono.error(ApiException.badGateway(String.valueOf(e)))));
         }
         // Mastodon needs BOTH: the Matrix-style username (the suspension row key the
         // broker guards on) AND the PERSISTED, collision-checked Mastodon localpart
         // (changeset 291) the homeserver account is keyed on. Resolve the latter FIRST
         // and OUTSIDE the badGateway wrap — a self-heal here can raise CollisionException
         // that must reach the outer 409 mapper, not be masked as a 502.
-        return mastodonLocalpartOf(me).flatMap(mastodonLocalpart ->
-                broker.mastodonToken(username, mastodonLocalpart)
+        return mastodonLocalpartOf(me).zipWith(displayName).flatMap(t ->
+                broker.mastodonToken(username, t.getT1(), t.getT2())
                         .onErrorResume(e -> Mono.error(ApiException.badGateway(String.valueOf(e)))));
     }
 

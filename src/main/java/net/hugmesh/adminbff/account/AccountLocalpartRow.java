@@ -24,6 +24,10 @@ import org.springframework.data.relational.core.mapping.Table;
  * about) the columns {@code AccountRowRepository} (auth-core) owns — {@code provider},
  * {@code handle}, {@code registration_complete}, {@code roles}, {@code updated_at}.
  *
+ * <p>{@code casdoorUsername} (changeset 410) is the Casdoor username (id_token {@code name}
+ * claim) behind a native-login account: the seed for the homeserver display name. It is a
+ * display hint only, never an identity key, so it has no {@code UNIQUE} constraint.
+ *
  * <p>{@code mastodonLocalpart} (changeset 291) is the coarser Mastodon/Akkoma fold
  * ({@code [a-z0-9_]}, 30-cap) layered on top of {@code localpart} — its OWN {@code
  * UNIQUE} constraint, so the Mastodon mint can never collapse two distinct accounts
@@ -35,5 +39,6 @@ import org.springframework.data.relational.core.mapping.Table;
  */
 @Table("account")
 public record AccountLocalpartRow(@Id @Column("id") String id, @Column("localpart") String localpart,
-                                  @Column("mastodon_localpart") String mastodonLocalpart) {
+                                  @Column("mastodon_localpart") String mastodonLocalpart,
+                                  @Column("casdoor_username") String casdoorUsername) {
 }

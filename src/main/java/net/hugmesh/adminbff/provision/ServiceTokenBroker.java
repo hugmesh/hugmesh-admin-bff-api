@@ -11,6 +11,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
+import org.springframework.web.reactive.function.client.ClientResponse;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
 import net.hugmesh.adminbff.suspension.AccessSuspension;
@@ -142,10 +143,22 @@ public class ServiceTokenBroker {
      * recorded in the hs_tokens registry (kind=brokered).
      */
     public Mono<Map<String, Object>> matrixToken(String username) {
+        return matrixToken(username, null);
+    }
+
+    /**
+     * {@link #matrixToken(String)}, then set the account's Matrix display name to
+     * {@code displayName} (the Casdoor username) while the current one is still a default
+     * (see {@link #isDefaultDisplayName}). Best effort: a failed display-name read or write
+     * is logged and never fails the mint. A null/blank {@code displayName} skips it.
+     */
+    public Mono<Map<String, Object>> matrixToken(String username, String displayName) {
         // Guard suspension, then register or login to tuwunel and record the brokered token.
         return guardSuspended(username, AccessSuspension.ROLE_MATRIX)
                 .then(Mono.defer(() -> tuwunelRegisterOrLogin(username)
-                        .flatMap(out -> recordBrokered(out, username, "matrix"))));
+                        .flatMap(out -> recordBrokered(out, username, "matrix"))
+                        .flatMap(out -> reconcileMatrixDisplayName(out, username, displayName)
+                                .thenReturn(out))));
     }
 
     /**
@@ -196,6 +209,16 @@ public class ServiceTokenBroker {
      *                 here (see {@link net.hugmesh.adminbff.account.AccountLocalpartService})
      */
     public Mono<Map<String, Object>> mastodonToken(String username, String persistedMastodonLocalpart) {
+        return mastodonToken(username, persistedMastodonLocalpart, null);
+    }
+
+    /**
+     * {@link #mastodonToken(String, String)}, then set the Mastodon/Akkoma
+     * {@code display_name} to {@code displayName} (the Casdoor username) while it is still
+     * empty or equal to the localpart. Best effort, like {@link #matrixToken(String, String)}.
+     */
+    public Mono<Map<String, Object>> mastodonToken(String username, String persistedMastodonLocalpart,
+                                                   String displayName) {
         // Guard on the MATRIX-style `username` (= matrixUser(handle), the exact string
         // SuspensionService stores EVERY role's rows under, incl. ROLE_MASTODON — same key
         // matrixToken() guards on), NOT the mastodon-folded localpart. mastodonLocalpart
@@ -203,7 +226,155 @@ public class ServiceTokenBroker {
         // folded form never equals its stored suspension row's localpart -> the guard would
         // silently miss and a MASTODON-suspended user could re-mint.
         return guardSuspended(username, AccessSuspension.ROLE_MASTODON)
-                .then(Mono.defer(() -> mintMastodon(persistedMastodonLocalpart)));
+                .then(Mono.defer(() -> mintMastodon(persistedMastodonLocalpart)))
+                .flatMap(out -> reconcileMastodonDisplayName(out,
+                        mastodonLocalpart(persistedMastodonLocalpart), displayName).thenReturn(out));
+    }
+
+    // ── Display name reconcile ──────────────────────────────────────────
+    /** Mainline Mastodon's display_name limit (Akkoma's default is larger). */
+    static final int MASTODON_DISPLAY_NAME_MAX = 30;
+    /** Upper bound for a Matrix display name we set. */
+    static final int MATRIX_DISPLAY_NAME_MAX = 255;
+    /** Characters a user id may carry to be put into a profile URL path verbatim. A user id
+     *  with anything else (a '/' localpart) is skipped rather than percent-encoded, because
+     *  the homeserver proxy re-escapes '%'. */
+    private static final java.util.regex.Pattern PATH_SAFE_USER_ID =
+            java.util.regex.Pattern.compile("^@[A-Za-z0-9._=\\-]+:[A-Za-z0-9.\\-:\\[\\]]+$");
+
+    /**
+     * Is {@code current} a display name nobody chose: empty, the localpart itself, or the
+     * localpart followed by a homeserver's new-user suffix (tuwunel appends " 💕" by
+     * default; the suffix is configurable, so any trailing run of non-letter, non-digit
+     * characters after a space counts). A name the user set themselves is never one of
+     * these, so it is never overwritten.
+     */
+    static boolean isDefaultDisplayName(String current, String localpart) {
+        if (current == null || current.isBlank()) {
+            return true;
+        }
+        String c = current.strip();
+        if (localpart == null || localpart.isEmpty()) {
+            return false;
+        }
+        if (c.equalsIgnoreCase(localpart)) {
+            return true;
+        }
+        if (c.length() > localpart.length() && c.regionMatches(true, 0, localpart, 0, localpart.length())) {
+            String rest = c.substring(localpart.length());
+            return Character.isWhitespace(rest.charAt(0))
+                    && rest.codePoints().noneMatch(Character::isLetterOrDigit);
+        }
+        return false;
+    }
+
+    /** {@code name} stripped of control characters and capped at {@code max} code points;
+     *  null when nothing usable is left. */
+    static String cleanDisplayName(String name, int max) {
+        if (name == null) {
+            return null;
+        }
+        String cleaned = name.codePoints()
+                .filter(cp -> !Character.isISOControl(cp))
+                .limit(max)
+                .collect(StringBuilder::new, StringBuilder::appendCodePoint, StringBuilder::append)
+                .toString()
+                .strip();
+        return cleaned.isEmpty() ? null : cleaned;
+    }
+
+    private Mono<Void> reconcileMatrixDisplayName(Map<String, Object> out, String localpart,
+                                                  String displayName) {
+        String name = cleanDisplayName(displayName, MATRIX_DISPLAY_NAME_MAX);
+        Object token = out.get("access_token");
+        Object userId = out.get("user_id");
+        if (name == null || token == null || userId == null) {
+            return Mono.empty();
+        }
+        String uid = userId.toString();
+        if (!PATH_SAFE_USER_ID.matcher(uid).matches()) {
+            log.info("[broker] matrix displayname reconcile skipped: user id not path-safe");
+            return Mono.empty();
+        }
+        String path = "/_matrix/client/v3/profile/" + uid + "/displayname";
+        String auth = "Bearer " + token;
+        return tuwunel.get().uri(path).header("Authorization", auth)
+                .exchangeToMono(resp -> resp.statusCode().is2xxSuccessful()
+                        ? resp.bodyToMono(String.class).defaultIfEmpty("")
+                        // 404 = no displayname set: treat as empty.
+                        : resp.releaseBody().thenReturn(""))
+                .flatMap(ServiceTokenBroker::matrixDisplayName)
+                .filter(current -> !name.equals(current) && isDefaultDisplayName(current, localpart))
+                .flatMap(current -> putMatrixDisplayName(path, auth, name))
+                .onErrorResume(e -> {
+                    log.info("[broker] matrix displayname reconcile failed: {}", e.toString());
+                    return Mono.empty();
+                })
+                .then();
+    }
+
+    private Mono<Void> reconcileMastodonDisplayName(Map<String, Object> out, String localpart,
+                                                    String displayName) {
+        String name = cleanDisplayName(displayName, MASTODON_DISPLAY_NAME_MAX);
+        Object token = out.get("access_token");
+        if (name == null || token == null) {
+            return Mono.empty();
+        }
+        String auth = "Bearer " + token;
+        return mastodon.get().uri("/api/v1/accounts/verify_credentials").header("Authorization", auth)
+                .exchangeToMono(resp -> resp.statusCode().is2xxSuccessful()
+                        ? resp.bodyToMono(String.class)
+                        // Not readable (e.g. mainline holding an unconfirmed account at 403):
+                        // leave it, the next mint retries.
+                        : resp.releaseBody().then(Mono.<String>empty()))
+                .flatMap(ServiceTokenBroker::parseJson)
+                .filter(acct -> {
+                    String current = acct.path("display_name").asText("");
+                    return !name.equals(current)
+                            && isDefaultDisplayName(current, acct.path("username").asText(localpart));
+                })
+                .flatMap(acct -> patchMastodonDisplayName(auth, name))
+                .onErrorResume(e -> {
+                    log.info("[broker] mastodon display_name reconcile failed: {}", e.toString());
+                    return Mono.empty();
+                })
+                .then();
+    }
+
+    /** The {@code displayname} in a tuwunel profile body; "" for an empty body (404 = none set).
+     *  Empty Mono when the body is not JSON: then nothing is changed. */
+    private static Mono<String> matrixDisplayName(String body) {
+        if (body.isBlank()) {
+            return Mono.just("");
+        }
+        try {
+            return Mono.just(MAPPER.readTree(body).path("displayname").asText(""));
+        } catch (JsonProcessingException e) {
+            return Mono.empty();
+        }
+    }
+
+    private Mono<Void> putMatrixDisplayName(String path, String auth, String name) {
+        return tuwunel.put().uri(path).header("Authorization", auth)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("displayname", name))
+                .exchangeToMono(resp -> logRefusal(resp, "matrix displayname"));
+    }
+
+    private Mono<Void> patchMastodonDisplayName(String auth, String name) {
+        return mastodon.patch().uri("/api/v1/accounts/update_credentials")
+                .header("Authorization", auth)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("display_name", name))
+                .exchangeToMono(resp -> logRefusal(resp, "mastodon display_name"));
+    }
+
+    private static Mono<Void> logRefusal(ClientResponse resp,
+                                         String what) {
+        if (!resp.statusCode().is2xxSuccessful()) {
+            log.info("[broker] {} update refused: {}", what, resp.statusCode().value());
+        }
+        return resp.releaseBody();
     }
 
     private Mono<Map<String, Object>> mintMastodon(String persistedMastodonLocalpart) {

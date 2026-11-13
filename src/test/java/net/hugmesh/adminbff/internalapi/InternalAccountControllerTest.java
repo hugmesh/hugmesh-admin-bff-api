@@ -100,7 +100,7 @@ class InternalAccountControllerTest {
         when(accounts.sessionOfToken(any())).thenReturn(Mono.empty());
         // Default: no collision, resolves to a stub localpart — the ensureAccount tests below
         // assert on the account id/roles, not the exact localpart value.
-        when(localparts.resolveAndPersist(any(), any())).thenReturn(Mono.just("a"));
+        when(localparts.resolveAndPersist(any(), any(), any())).thenReturn(Mono.just("a"));
         // Default for the plain-read path (account()/complete()): unset — Mockito's default
         // unstubbed answer for a Mono-returning method is null, NOT Mono.empty(), so every test
         // that reaches readWithLocalpart (anything calling account()/complete()) needs this or
@@ -180,7 +180,7 @@ class InternalAccountControllerTest {
     void ensureAccount_collision_mapsToConflict409() {
         when(accounts.ensureAccount("google", "second@x.com")).thenReturn(Mono.just(
                 new Account("google:second@x.com", "google", "second@x.com", false, List.of("user"))));
-        when(localparts.resolveAndPersist("google:second@x.com", "second@x.com"))
+        when(localparts.resolveAndPersist("google:second@x.com", "second@x.com", null))
                 .thenReturn(Mono.error(new AccountLocalpartService.CollisionException("collideone")));
 
         StepVerifier.create(controller.ensureAccount(
@@ -215,6 +215,55 @@ class InternalAccountControllerTest {
                 .verifyComplete();
         // ROLE_ADMIN/ROLE_USER (gateway-facing convention) -> admin/user (BFF session convention).
         verify(accounts).ensureAccount("casdoor", "e2e-admin@hugmesh.net", List.of("admin", "user"));
+    }
+
+    /**
+     * The hugmesh-realm JWT-Custom id_token: no email, no preferred_username (deliberately,
+     * the takeover lock), the username as `name`. The account key stays the `sub` UUID (so
+     * existing accounts are not re-keyed), and the `name` claim is handed to the localpart
+     * service as the display-name / new-localpart hint. Before the fix it was never read.
+     */
+    @Test
+    void ensureAccount_casdoor_passesNameClaimAsUsernameHint_keyStaysSub() {
+        String uuid = "c18f905c-62a1-4c20-a7c5-c707fb6eae85";
+        String idToken = fakeIdToken("{\"sub\":\"" + uuid + "\",\"name\":\"e2e-matrix\","
+                + "\"roles\":[\"ROLE_USER\"]}");
+        Account a = new Account("casdoor:" + uuid, "casdoor", uuid, true, List.of("user"));
+        when(accounts.ensureAccount(eq("casdoor"), eq(uuid), any())).thenReturn(Mono.just(a));
+        when(localparts.localpartsOf("casdoor:" + uuid)).thenReturn(Mono.just(
+                new AccountLocalpartService.ResolvedLocalparts(uuid, "c18f905c_62a1_4c20_a7c5_c707fb",
+                        "e2e-matrix")));
+
+        StepVerifier.create(controller.ensureAccount(
+                        new InternalAccountController.EnsureAccountRequest("casdoor", idToken)))
+                .assertNext(out -> {
+                    assertThat(out.id()).isEqualTo("casdoor:" + uuid);
+                    assertThat(out.displayName()).isEqualTo("e2e-matrix");
+                })
+                .verifyComplete();
+        verify(accounts).ensureAccount("casdoor", uuid, List.of("user"));
+        verify(localparts).resolveAndPersist("casdoor:" + uuid, uuid, "e2e-matrix");
+    }
+
+    @Test
+    void ensureAccount_casdoor_noNameClaim_passesNullHint() {
+        String idToken = fakeIdToken("{\"sub\":\"e2e-mod\",\"name\":\"  \"}");
+        when(accounts.ensureAccount(eq("casdoor"), eq("e2e-mod"), any())).thenReturn(Mono.just(acct(true)));
+        StepVerifier.create(controller.ensureAccount(
+                        new InternalAccountController.EnsureAccountRequest("casdoor", idToken)))
+                .expectNextCount(1)
+                .verifyComplete();
+        verify(localparts).resolveAndPersist(acct(true).id(), acct(true).handle(), null);
+    }
+
+    @Test
+    void nameClaimFromIdToken_degradesToNull() {
+        assertThat(InternalAccountController.nameClaimFromIdToken(null)).isNull();
+        assertThat(InternalAccountController.nameClaimFromIdToken("not-a-jwt")).isNull();
+        assertThat(InternalAccountController.nameClaimFromIdToken("a.!!!.c")).isNull();
+        assertThat(InternalAccountController.nameClaimFromIdToken(fakeIdToken("{\"name\":7}"))).isNull();
+        assertThat(InternalAccountController.nameClaimFromIdToken(fakeIdToken("{\"name\":\" bob \"}")))
+                .isEqualTo("bob");
     }
 
     @Test
@@ -471,7 +520,7 @@ class InternalAccountControllerTest {
 
         verify(accounts).restartOnboarding(acct(true));
         verify(accounts, never()).markComplete(any());
-        verify(localparts, never()).resolveAndPersist(any(), any());
+        verify(localparts, never()).resolveAndPersist(any(), any(), any());
     }
 
     @Test

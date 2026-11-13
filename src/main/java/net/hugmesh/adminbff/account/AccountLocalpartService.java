@@ -69,41 +69,117 @@ public class AccountLocalpartService {
 
     /**
      * Resolve (from {@code handle}, via {@link ServiceTokenBroker#matrixUser}) and
-     * persist the canonical, collision-checked localpart for {@code accountId}.
+     * persist the canonical, collision-checked localpart for {@code accountId}. Same as
+     * {@link #resolveAndPersist(String, String, String)} with no Casdoor username.
+     */
+    public Mono<String> resolveAndPersist(String accountId, String handle) {
+        return resolveAndPersist(accountId, handle, null);
+    }
+
+    /**
+     * Resolve and persist the canonical, collision-checked homeserver localparts for
+     * {@code accountId}, and record {@code casdoorUsername} as its display-name hint.
      *
-     * <p>Idempotent: {@code accountId} is derived from {@code provider:handle}
-     * ({@link net.hugmesh.authcore.account.AccountStore#idFor}), so a repeat
-     * call for an already-resolved row (e.g. the native-login {@code
-     * ensureAccount(provider, handle, roles)} overload, which re-runs on EVERY sign-in
-     * to sync roles) always recomputes the exact SAME candidate; the collision check
-     * excludes this row's own id, so an account can never collide with itself — this
-     * fast-paths to a pure read (no write, no collision check) whenever the persisted
-     * value already matches the freshly-computed candidate.
+     * <p><b>Persisted localparts are pinned.</b> Once a row has a localpart it is kept
+     * as-is on every later call (only a missing Mastodon fold is filled in, as the fold of
+     * the persisted Matrix localpart). The homeserver identity is keyed on that value, so
+     * re-deriving it would move the user to a different homeserver account. Pinning also
+     * keeps rows whose localpart was disambiguated by a backfill (changesets 290/291 add
+     * an md5 suffix on collision) from failing every later sign-in with a 409 because the
+     * bare candidate belongs to another row.
+     *
+     * <p><b>New rows: the Casdoor username, not the UUID.</b> An email-less Casdoor
+     * account's handle is its {@code sub} UUID (the hugmesh-realm JWT-Custom token carries
+     * the username as {@code name}, never {@code preferred_username}). For such a row, when
+     * no localpart is persisted yet, the candidate is taken from {@code casdoorUsername}
+     * instead, so new Matrix and Mastodon/Akkoma handles read as the username. It falls
+     * back to the UUID-derived candidate when the username is not a plain localpart, is a
+     * reserved name, or either fold already belongs to another row, so a username can
+     * never take over (or block) another account's homeserver identity.
+     *
+     * <p>{@code casdoorUsername} is then stored on the row (changeset 410) when it is
+     * non-blank and differs from the stored value; a null/blank value never clears one.
      *
      * @throws CollisionException (as a {@code Mono} error) when the candidate is
      *         already persisted on a DIFFERENT account row
      */
-    public Mono<String> resolveAndPersist(String accountId, String handle) {
-        String candidate = ServiceTokenBroker.matrixUser(handle);
-        // The Mastodon fold is the coarser fold of the SAME canonical Matrix candidate
-        // (never a second independent fold of the raw handle) — so a row's two persisted
-        // localparts always stand in the exact relationship every mint site reconstructs
-        // (mastodonLocalpart(localpart)), and mastodonLocalpart is idempotent so this is a
-        // fixed point (changeset 291's fold-stability invariant).
-        String mastodonCandidate = ServiceTokenBroker.mastodonLocalpart(candidate);
-        // Read the WHOLE row (both localpart columns): the fast-path no-ops ONLY when BOTH
-        // folds already match — a row whose Matrix localpart is set but whose Mastodon
-        // localpart is still null (a pre-291 self-heal window) must still fall through to
-        // persist the Mastodon fold. defaultIfEmpty supplies a null-columned sentinel for an
-        // account whose row isn't present yet (checkAndPersist's UPDATE then affects 0 rows,
-        // exactly as the prior single-column code did on an absent row).
+    public Mono<String> resolveAndPersist(String accountId, String handle, String casdoorUsername) {
+        String username = casdoorUsername == null ? null : casdoorUsername.trim();
+        // defaultIfEmpty supplies a null-columned sentinel for an account whose row isn't
+        // present yet (the targeted UPDATEs then affect 0 rows).
         return repo.findById(accountId)
-                .defaultIfEmpty(new AccountLocalpartRow(accountId, null, null))
-                .flatMap(row -> candidate.equals(row.localpart())
-                                && mastodonCandidate.equals(row.mastodonLocalpart())
-                        ? Mono.just(candidate)
-                        : checkAndPersist(accountId, candidate, mastodonCandidate));
+                .defaultIfEmpty(new AccountLocalpartRow(accountId, null, null, null))
+                .flatMap(row -> resolveLocalparts(row, handle, username)
+                        .flatMap(lp -> stampUsername(row, username).thenReturn(lp)));
     }
+
+    private Mono<String> resolveLocalparts(AccountLocalpartRow row, String handle, String username) {
+        String accountId = row.id();
+        String persisted = row.localpart();
+        if (persisted != null && !persisted.isBlank()) {
+            if (row.mastodonLocalpart() != null && !row.mastodonLocalpart().isBlank()) {
+                return Mono.just(persisted);
+            }
+            // Pre-291 self-heal window: the Matrix localpart is set but the Mastodon fold is
+            // not. The fold is taken from the PERSISTED localpart (changeset 291's
+            // fold-stability invariant: mastodon_localpart == mastodonLocalpart(localpart)).
+            return checkAndPersist(accountId, persisted, ServiceTokenBroker.mastodonLocalpart(persisted));
+        }
+        String fallback = ServiceTokenBroker.matrixUser(handle);
+        String fromUsername = usernameCandidate(handle, username);
+        if (fromUsername == null || fromUsername.equals(fallback)) {
+            return checkAndPersist(accountId, fallback, ServiceTokenBroker.mastodonLocalpart(fallback));
+        }
+        // checkAndPersist refuses (CollisionException) when either fold of the username is
+        // held by another row, sequentially or by a lost concurrent race; the UUID-derived
+        // candidate is unique per account, so fall back to it.
+        return checkAndPersist(accountId, fromUsername, ServiceTokenBroker.mastodonLocalpart(fromUsername))
+                .onErrorResume(CollisionException.class, e -> checkAndPersist(
+                        accountId, fallback, ServiceTokenBroker.mastodonLocalpart(fallback)));
+    }
+
+    /** Shape of a Casdoor user {@code sub}: the account handle of an email-less user. */
+    private static final java.util.regex.Pattern UUID_HANDLE = java.util.regex.Pattern.compile(
+            "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$");
+
+    /** A Casdoor username usable verbatim (lowercased) as a Matrix localpart: no '@' (an
+     *  email-shaped name would be split by {@link ServiceTokenBroker#matrixUser}), no '/'
+     *  (unsafe in homeserver URL paths), bounded length. */
+    private static final java.util.regex.Pattern PLAIN_USERNAME =
+            java.util.regex.Pattern.compile("^[A-Za-z0-9._=-]{1,64}$");
+
+    /**
+     * The localpart candidate taken from the Casdoor username, or {@code null} when the
+     * handle is not a bare Casdoor UUID (an email handle keeps its email-derived
+     * localpart) or the username is not usable: not a plain localpart, folds to nothing
+     * on Mastodon, or is a reserved app path/prefix (which provisioning refuses).
+     */
+    static String usernameCandidate(String handle, String username) {
+        if (handle == null || username == null || !UUID_HANDLE.matcher(handle).matches()
+                || !PLAIN_USERNAME.matcher(username).matches()) {
+            return null;
+        }
+        String candidate = username.toLowerCase(java.util.Locale.ROOT);
+        if (candidate.replaceAll("[^a-z0-9]", "").isEmpty()
+                || net.hugmesh.authcore.reserved.ReservedNames.isReserved(candidate)
+                || net.hugmesh.authcore.reserved.ReservedNames.isReserved(
+                        ServiceTokenBroker.mastodonLocalpart(candidate))) {
+            return null;
+        }
+        return candidate;
+    }
+
+    private Mono<Void> stampUsername(AccountLocalpartRow row, String username) {
+        if (username == null || username.isEmpty() || username.equals(row.casdoorUsername())) {
+            return Mono.empty();
+        }
+        String capped = username.length() > CASDOOR_USERNAME_MAX
+                ? username.substring(0, CASDOOR_USERNAME_MAX) : username;
+        return repo.updateCasdoorUsername(row.id(), capped).then();
+    }
+
+    /** Width of {@code account.casdoor_username} (changeset 410). */
+    static final int CASDOOR_USERNAME_MAX = 255;
 
     /**
      * Check-then-write. The check-and-write is NOT atomic (two concurrent {@code
@@ -154,6 +230,15 @@ public class AccountLocalpartService {
                 .filter(lp -> !lp.isBlank());
     }
 
+    /** The Casdoor username recorded for an account (changeset 410), the default
+     *  homeserver display name. Empty {@link Mono} when unset (google/discord accounts,
+     *  or a native-login row that has not signed in since the column landed). */
+    public Mono<String> casdoorUsernameOf(String accountId) {
+        return repo.findById(accountId)
+                .mapNotNull(AccountLocalpartRow::casdoorUsername)
+                .filter(name -> !name.isBlank());
+    }
+
     /** Both persisted homeserver localpart folds in ONE read (blank when unset), for the
      *  account-view read paths that surface both to user-bff over the internal API —
      *  avoids two findById round trips per read. */
@@ -161,13 +246,20 @@ public class AccountLocalpartService {
         return repo.findById(accountId)
                 .map(row -> new ResolvedLocalparts(
                         row.localpart() == null ? "" : row.localpart(),
-                        row.mastodonLocalpart() == null ? "" : row.mastodonLocalpart()))
-                .defaultIfEmpty(new ResolvedLocalparts("", ""));
+                        row.mastodonLocalpart() == null ? "" : row.mastodonLocalpart(),
+                        row.casdoorUsername() == null ? "" : row.casdoorUsername()))
+                .defaultIfEmpty(new ResolvedLocalparts("", "", ""));
     }
 
     /** The two persisted homeserver localpart folds for an account: the Matrix
      *  ({@code localpart}) fold and its coarser Mastodon ({@code mastodonLocalpart})
-     *  fold. Either may be blank for a row that predates the columns. */
-    public record ResolvedLocalparts(String localpart, String mastodonLocalpart) {
+     *  fold, plus the Casdoor username display hint ({@code displayName}, changeset 410).
+     *  Any may be blank for a row that predates the columns. */
+    public record ResolvedLocalparts(String localpart, String mastodonLocalpart, String displayName) {
+
+        /** No display-name hint recorded. */
+        public ResolvedLocalparts(String localpart, String mastodonLocalpart) {
+            this(localpart, mastodonLocalpart, "");
+        }
     }
 }
