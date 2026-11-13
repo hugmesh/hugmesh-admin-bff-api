@@ -5,28 +5,42 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import reactor.core.publisher.Mono;
+import net.hugmesh.adminbff.announcement.AkkomaNoticeText;
 import net.hugmesh.adminbff.announcement.AkkomaOutcome;
 import net.hugmesh.adminbff.announcement.AnnouncementMastodonClient;
 
 /**
  * Akkoma (Mastodon-API) channel adapter for the {@code @system} sender (Notifications
- * PR7). Posts a neutral LOCAL-ONLY notice to the recipient via the EXISTING
- * {@link AnnouncementMastodonClient} akkoma seam
- * ({@link AnnouncementMastodonClient#postLocalUserNotice}) — reusing the local-only akkoma
- * POST + gated stub-seam already proven for server announcements.
+ * PR7). Posts a neutral notice to the recipient as a {@code direct} status from the
+ * {@code @system} account, via the EXISTING {@link AnnouncementMastodonClient} akkoma client
+ * ({@link AnnouncementMastodonClient#postLocalUserNotice}) — reusing its WebClient and its
+ * {@code external.mastodon.enabled} gate.
  *
  * <h3>Ships dark</h3>
  * Gated on {@code notify.akkoma.enabled} (default false). {@link #available(String)} also
  * requires the akkoma seam to be enabled ({@code external.mastodon.enabled}) AND the
  * {@code @system} akkoma token present — so an akkoma-less / Vault-less environment
- * reports unavailable and the reconciler skips it (retried next tick). The underlying
- * notice is STUBBED until the confirmed akkoma per-user verb is wired, so a STUBBED/
- * degraded outcome is a transient FAILED→retry, never a false {@code sent}.
+ * reports unavailable and the reconciler skips it (retried next tick). On this path the
+ * notice is a Mastodon-API {@code direct} status posted by
+ * {@link AnnouncementMastodonClient#postLocalUserNotice} with the {@code @system} token;
+ * only its OK is {@code sent}, and a STUBBED (seam gate or token absent) or degraded
+ * outcome is a transient FAILED→retry, never a false {@code sent}. This path has no
+ * account-existence probe, so it can report {@code sent} for a recipient with no Akkoma
+ * account; the second gate below does probe.
+ *
+ * <h3>One recipient</h3>
+ * On both paths the status is built by {@link AkkomaNoticeText}: the recipient's mention is
+ * its only at-sign, so the moderator's free-text reason cannot add a second recipient. A
+ * subject whose localpart is not {@linkplain AkkomaNoticeText#addressable addressable}
+ * (anything but {@code [a-z0-9_]}, 1 to 64 characters) is a terminal {@code skipped} here,
+ * before either transport: a server could read such a name as a mention of somebody else,
+ * and no retry would change that.
  *
  * <h3>Real transport (second gate)</h3>
  * When {@code notify.akkoma.notice.wired=true} (default false) the channel is built with an
  * {@link AkkomaSystemNoticeClient} and posts a {@code direct} status as the {@code @system}
- * account instead of going through the stubbed announcement seam. That path does not need
+ * account through that client (lookup probe + {@code Idempotency-Key}) instead of the
+ * announcement client's notice seam. That path does not need
  * {@code external.mastodon.enabled} (that gate guards the ADMIN bearer, which a notice never
  * uses); availability is then {@code notify.akkoma.enabled} AND the {@code @system} token.
  */
@@ -49,8 +63,8 @@ public class AkkomaChannel implements NotificationChannel {
     }
 
     /**
-     * @param notice the real Mastodon-API transport, or null to stay on the stubbed
-     *               announcement seam ({@code notify.akkoma.notice.wired=false})
+     * @param notice the probing Mastodon-API transport, or null to post through the
+     *               announcement client's notice seam ({@code notify.akkoma.notice.wired=false})
      */
     public AkkomaChannel(AnnouncementMastodonClient akkoma, boolean enabled, boolean systemTokenPresent,
                          @Nullable AkkomaSystemNoticeClient notice) {
@@ -78,7 +92,11 @@ public class AkkomaChannel implements NotificationChannel {
     @Override
     public Mono<ChannelOutcome> send(String domain, String recipientSubject, ChannelMessage message) {
         String localpart = localpartOf(recipientSubject);
-        if (localpart.isBlank()) {
+        if (!AkkomaNoticeText.addressable(localpart)) {
+            // Terminal on either transport: no retry can make such a name deliverable, and
+            // posting "@bob." would reach the account "bob". The name itself is not logged.
+            log.debug("[notify-akkoma] recipient name ({} chars) is not addressable; SKIPPED",
+                    localpart.length());
             return Mono.just(ChannelOutcome.SKIPPED);
         }
         String body = message.title() + "\n\n" + (message.body() == null ? "" : message.body());
@@ -95,8 +113,8 @@ public class AkkomaChannel implements NotificationChannel {
                 });
     }
 
-    /** STUBBED (seam not wired) and degraded both become a transient FAILED → retry; only
-     *  a real OK is a terminal {@code sent}. */
+    /** STUBBED (seam gate or token absent) and degraded both become a transient FAILED →
+     *  retry; only a real OK is a terminal {@code sent}. */
     private static ChannelOutcome toOutcome(AkkomaOutcome o) {
         return o.isOk() ? ChannelOutcome.SENT : ChannelOutcome.FAILED;
     }

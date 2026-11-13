@@ -271,11 +271,14 @@ casdoor:
 
 # akkoma (Mastodon-API) propagation for announcements with target_akkoma. A
 # published target_akkoma announcement is propagated as a LOCAL-ONLY akkoma server
-# announcement and removed on unpublish/archive/expire/delete. SAFE GATED stub-seam
+# announcement and removed on unpublish/archive/expire/delete. SAFE GATED seam
 # (mirrors hugmesh-mod-bff-api ExternalAdminConfig): enabled=false by default so
-# an akkoma-less dev/test/CI run boots clean; even when enabled the external call
-# stays stubbed until a confirmed akkoma admin shape + token are wired in. Never
-# hard-fails — a akkoma outage never blocks the admin announcement write.
+# an akkoma-less dev/test/CI run boots clean and no call is made. When enabled, the
+# announcement create/remove calls are real (admin bearer external.mastodon.admin-token),
+# and so is the @system per-user notice the akkoma notification channel posts on its
+# fallback path (notify.akkoma.enabled=true, notify.akkoma.notice.wired=false, bearer
+# notification.system-account.channel.akkoma.token; without that token it stays
+# stubbed). Never hard-fails — a akkoma outage never blocks the admin announcement write.
 external:
   mastodon:
     enabled: "${EXTERNAL_MASTODON_ENABLED:false}"

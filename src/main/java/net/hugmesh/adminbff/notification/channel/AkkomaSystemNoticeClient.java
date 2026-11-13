@@ -9,6 +9,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
+import net.hugmesh.adminbff.announcement.AkkomaNoticeText;
 import net.hugmesh.adminbff.notification.SystemChannelTokens;
 
 import java.time.Duration;
@@ -31,7 +32,11 @@ import java.util.regex.Pattern;
  *   <li>{@code POST /api/v1/statuses} with {@code visibility=direct} and a body that
  *       starts with the {@code @localpart} mention. A bare local name (no
  *       {@code @domain}) is assumed, from the API documentation and not measured, to stay on
- *       this instance.</li>
+ *       this instance. The text after the mention is built by {@link AkkomaNoticeText}: it
+ *       carries the moderator's reason as typed, and that class makes sure the reason cannot
+ *       mention a second account or open a tag. The recipient is also named in the Akkoma
+ *       {@code to} field, which addresses exactly the listed nicknames and ignores mentions
+ *       in the text (read from the Akkoma source, not observed live).</li>
  * </ol>
  *
  * <h3>Idempotent retry</h3>
@@ -42,8 +47,8 @@ import java.util.regex.Pattern;
  * <h3>Outcome mapping</h3>
  * Covered by tests (against the fake server): a transport error (server down), a bad or
  * absent token, a 5xx on the lookup, and a 422 or 503 on the post each resolve to
- * {@link ChannelOutcome#FAILED} (retry). A lookup 404, or an invalid localpart, is the
- * terminal SKIP.
+ * {@link ChannelOutcome#FAILED} (retry). A lookup 404, or a localpart that is not
+ * {@linkplain AkkomaNoticeText#addressable addressable}, is the terminal SKIP.
  * <p>NOT covered by any test: a timeout, and a malformed or non-JSON body. A 2xx reply to
  * the post is trusted by its status alone: a body that does not parse is ignored, so a 200
  * with a non-JSON body (a captive portal page, say) is returned as {@link ChannelOutcome#SENT}.
@@ -63,11 +68,9 @@ public class AkkomaSystemNoticeClient {
     private static final Logger log = LoggerFactory.getLogger(AkkomaSystemNoticeClient.class);
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
-    private static final Pattern LOCALPART = Pattern.compile("[a-z0-9._-]+");
     private static final Pattern KEY_UNSAFE = Pattern.compile("[^A-Za-z0-9_-]");
-    private static final int MAX_LOCALPART = 64;
-    /** Akkoma's default {@code max_toot_chars} is 5000 (Mastodon: 500); stay well inside it. */
-    static final int MAX_STATUS_CHARS = 4000;
+    /** The cap {@link AkkomaNoticeText} applies to the whole status. */
+    static final int MAX_STATUS_CHARS = AkkomaNoticeText.MAX_STATUS_CHARS;
 
     private final WebClient http;
     private final SystemChannelTokens tokens;
@@ -87,7 +90,7 @@ public class AkkomaSystemNoticeClient {
 
     public Mono<ChannelOutcome> sendDirectNotice(String localpart, String text, String deliveryKey) {
         String lp = localpart == null ? "" : localpart.trim();
-        if (lp.isEmpty() || lp.length() > MAX_LOCALPART || !LOCALPART.matcher(lp).matches()) {
+        if (!AkkomaNoticeText.addressable(lp)) {
             return Mono.just(ChannelOutcome.SKIPPED);
         }
         String token = tokens.akkoma().orElse(null);
@@ -127,13 +130,10 @@ public class AkkomaSystemNoticeClient {
     }
 
     private Mono<Reply> post(String token, String lp, String text, String key) {
-        String status = "@" + lp + " " + (text == null ? "" : text);
-        if (status.length() > MAX_STATUS_CHARS) {
-            status = status.substring(0, MAX_STATUS_CHARS - 1) + "…";
-        }
         ObjectNode body = MAPPER.createObjectNode();
-        body.put("status", status);
+        body.put("status", AkkomaNoticeText.status(lp, text));
         body.put("visibility", "direct");
+        body.putArray("to").add(lp);
         // Serialised here and sent as a String: the WebClient codecs are Jackson 3 and do
         // not encode a Jackson 2 tree (see MatrixSystemDmClient).
         return http.post().uri("/api/v1/statuses")

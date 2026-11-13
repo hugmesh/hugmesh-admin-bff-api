@@ -8,6 +8,10 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.web.reactive.function.client.WebClient;
+import net.hugmesh.adminbff.announcement.FediverseAddressing;
+import net.hugmesh.adminbff.notification.AccountRestrictionPayload;
+import net.hugmesh.adminbff.notification.NotificationOutbox;
+import net.hugmesh.adminbff.notification.NotificationTemplate;
 import net.hugmesh.adminbff.notification.SystemChannelTokens;
 
 import java.io.IOException;
@@ -23,6 +27,7 @@ import java.util.Map;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.SoftAssertions.assertSoftly;
 
 /**
  * Contract tests for the real Akkoma {@code @system} notice transport against an in-JVM
@@ -43,6 +48,8 @@ class AkkomaSystemNoticeClientTest {
     private final Map<String, String> idemReplay = new HashMap<>();
     private final List<JsonNode> statuses = Collections.synchronizedList(new ArrayList<>());
     private final Set<String> accounts = Set.of("alice", "bob");
+    /** Everyone a status could reach on the fake instance; only {@code alice} is ever the recipient. */
+    private static final List<String> REACHABLE = List.of("alice", "bob", "carol");
     private volatile int forcePostStatus = 0;
     private volatile int forceLookupStatus = 0;
     private volatile boolean dropNextPostReply = false;
@@ -205,6 +212,91 @@ class AkkomaSystemNoticeClientTest {
         client().sendDirectNotice("alice", "y".repeat(9000), "r").block();
         assertThat(statuses.get(0).get("status").asText()).hasSize(AkkomaSystemNoticeClient.MAX_STATUS_CHARS);
         assertThat(statuses.get(0).get("status").asText()).startsWith("@alice yyy").endsWith("…");
+    }
+
+    // ── the notice must reach the recipient and nobody else ──────────────────
+    @Test
+    void aReasonThatNamesSomeoneElse_cannotAddARecipient() {
+        assertSoftly(soft -> {
+            int row = 0;
+            for (String reason : FediverseAddressing.REASONS_NAMING_SOMEONE_ELSE) {
+                statuses.clear();
+                ChannelOutcome out = client().sendDirectNotice("alice",
+                        "Your account access changed\n\nReason: " + reason + ".", "row-" + row++).block();
+                soft.assertThat(out).as("reason=[%s]", reason).isEqualTo(ChannelOutcome.SENT);
+                soft.assertThat(statuses).as("reason=[%s]", reason).hasSize(1);
+                String status = statuses.get(0).get("status").asText();
+                // Parser-independent: the recipient's own mention is the only at-sign there is.
+                soft.assertThat(status).as("reason=[%s]", reason).startsWith("@alice Your account access changed");
+                soft.assertThat(FediverseAddressing.atSigns(status)).as("at-signs in [%s]", status).isEqualTo(1);
+                // And a server that reads recipients out of the text finds only alice.
+                soft.assertThat(FediverseAddressing.addressedByText(status, REACHABLE))
+                        .as("addressed by [%s]", status).containsExactly("alice");
+            }
+        });
+    }
+
+    @Test
+    void aReasonThatCarriesATag_isPostedWithNoLessThanSign() {
+        assertSoftly(soft -> {
+            int row = 0;
+            for (String reason : FediverseAddressing.REASONS_CARRYING_A_TAG) {
+                statuses.clear();
+                client().sendDirectNotice("alice", "T\n\nReason: " + reason + ".", "tag-" + row++).block();
+                soft.assertThat(statuses).as("reason=[%s]", reason).hasSize(1);
+                String status = statuses.get(0).get("status").asText();
+                // Nothing in the status can open a tag, however a server escapes plain text.
+                soft.assertThat(FediverseAddressing.lessThans(status)).as("less-than signs in [%s]", status)
+                        .isZero();
+                soft.assertThat(FediverseAddressing.atSigns(status)).as("at-signs in [%s]", status).isEqualTo(1);
+            }
+        });
+    }
+
+    @Test
+    void throughTheRealTemplateAndChannel_aModeratorReasonCannotAddARecipient() {
+        String payload = AccountRestrictionPayload.build("hugmesh/alice", "PROFILE", 3600L,
+                "reported by @carol, see @bob@remote.social");
+        NotificationTemplate.Message msg =
+                NotificationTemplate.render(NotificationOutbox.CATEGORY_ACCOUNT_RESTRICTION, payload);
+        net.hugmesh.adminbff.announcement.AnnouncementMastodonClient disabledSeam =
+                new net.hugmesh.adminbff.announcement.AnnouncementMastodonClient(
+                        WebClient.builder().baseUrl("http://x").build(), false);
+
+        ChannelOutcome out = new AkkomaChannel(disabledSeam, true, true, client())
+                .send("brandx", "hugmesh/alice", new ChannelMessage(
+                        NotificationOutbox.CATEGORY_ACCOUNT_RESTRICTION, msg.title(), msg.body(), "row-7"))
+                .block();
+
+        assertThat(out).isEqualTo(ChannelOutcome.SENT);
+        assertThat(statuses).hasSize(1);
+        String status = statuses.get(0).get("status").asText();
+        assertThat(status).startsWith("@alice Your account access changed\n\n");
+        assertThat(status).contains("Reason: reported by (at)carol, see (at)bob(at)remote.social.");
+        assertThat(FediverseAddressing.atSigns(status)).isEqualTo(1);
+        assertThat(FediverseAddressing.addressedByText(status, REACHABLE)).containsExactly("alice");
+    }
+
+    @Test
+    void theRecipientIsAlsoNamedInTheToField() {
+        // Akkoma addresses exactly the nicknames in "to" and then ignores mentions in the
+        // text (read from its source, not observed live); Mastodon drops the field.
+        client().sendDirectNotice("alice", "T\n\nReason: @carol.", "row-1").block();
+
+        JsonNode to = statuses.get(0).path("to");
+        assertThat(to.isArray()).as("to=%s", to).isTrue();
+        assertThat(to).hasSize(1);
+        assertThat(to.get(0).asText()).isEqualTo("alice");
+    }
+
+    @Test
+    void aRecipientNameAParserWouldShortenOrSplit_isSkippedWithoutAnyRequest() {
+        // The lookup already refused these (no such account can exist); they now stop before it.
+        for (String bad : new String[] {"bob.", "bob-", ".bob", "-bob", "bob.smith", "b-ob"}) {
+            assertThat(client().sendDirectNotice(bad, "x", "r").block()).as("localpart=%s", bad)
+                    .isEqualTo(ChannelOutcome.SKIPPED);
+        }
+        assertThat(requests).isEmpty();
     }
 
     // ── through the channel adapter ──────────────────────────────────────────

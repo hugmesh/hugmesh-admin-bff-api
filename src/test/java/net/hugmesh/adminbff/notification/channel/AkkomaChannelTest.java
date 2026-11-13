@@ -10,6 +10,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /** Unit coverage for the Akkoma {@code @system} channel adapter (Notifications PR7). */
@@ -47,6 +48,22 @@ class AkkomaChannelTest {
         assertThat(new AkkomaChannel(akkoma(true), true, true)
                 .send("brandx", " ", new ChannelMessage("c", "T", "B")).block())
                 .isEqualTo(ChannelOutcome.SKIPPED);
+    }
+
+    @Test
+    void send_recipientNameAServerCouldReadAsSomeoneElse_isSkipped_andNeitherTransportIsCalled() {
+        AnnouncementMastodonClient seam = mock(AnnouncementMastodonClient.class);
+        AkkomaSystemNoticeClient probing = mock(AkkomaSystemNoticeClient.class);
+        // "@bob." reaches the account "bob"; a dotted or over-long name is no account at all.
+        for (String subject : new String[] {"hugmesh/bob.", "hugmesh/Bob-", "bob.smith@brandx.test",
+            "hugmesh/b ob", "hugmesh/bob,", "hugmesh/" + "a".repeat(65), "hugmesh/", "@brandx.test"}) {
+            for (AkkomaChannel ch : new AkkomaChannel[] {
+                new AkkomaChannel(seam, true, true), new AkkomaChannel(seam, true, true, probing)}) {
+                assertThat(ch.send("brandx", subject, new ChannelMessage("c", "T", "B", "row-1")).block())
+                        .as("subject=[%s]", subject).isEqualTo(ChannelOutcome.SKIPPED);
+            }
+        }
+        verifyNoInteractions(seam, probing);
     }
 
     @Test
