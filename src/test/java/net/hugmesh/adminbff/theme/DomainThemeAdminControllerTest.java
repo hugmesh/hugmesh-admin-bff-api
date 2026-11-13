@@ -195,19 +195,6 @@ class DomainThemeAdminControllerTest {
     // ── boundary validation ─────────────────────────────────────────────
 
     @Test
-    void theHighContrastRampsAreAccepted() {
-        // generator theme_presets.RAMPS gained contrast-dark / contrast-light (pure
-        // black / pure white surfaces); the restated vocabulary must accept them.
-        when(service.set(any(DomainTheme.class), any(PrincipalDomain.class), anyString()))
-                .thenReturn(Mono.just(row("brandx")));
-        for (String ramp : new String[] {"contrast-dark", "contrast-light"}) {
-            asAdmin().put().uri("/bff/admin/themes/brandx").contentType(MediaType.APPLICATION_JSON)
-                    .bodyValue("{\"preset\":\"hc-yellow-black\",\"ramp\":\"" + ramp + "\"}")
-                    .exchange().expectStatus().isOk();
-        }
-    }
-
-    @Test
     void anOutOfVocabularyRampIs400_notASilentlyWrongTheme() {
         asAdmin().put().uri("/bff/admin/themes/brandx").contentType(MediaType.APPLICATION_JSON)
                 .bodyValue("{\"preset\":\"nord\",\"ramp\":\"twilight\"}")
