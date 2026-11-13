@@ -9694,7 +9694,7 @@
             "type" : "string"
           },
           "ramp" : {
-            "pattern" : "^(dark|light|dawn|morning|afternoon|dusk|evening|midnight)?$",
+            "pattern" : "^(dark|light|dawn|morning|afternoon|dusk|evening|contrast-dark|contrast-light|midnight)?$",
             "type" : "string"
           },
           "style" : {
