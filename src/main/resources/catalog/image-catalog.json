@@ -446,7 +446,7 @@
       "id": "orin-nano",
       "label": "NVIDIA Jetson Orin Nano [Super] devkit 8GB",
       "notes": "mesh-only: edge_ai / gpu-host / full / jetson-desktop",
-      "reason": "hardware validation pending (specs-jetson/README.md) \u2014 fail-loud preflight; mesh-only roles in ROLE_CHOICES; the builder blocks --encrypt-root; the l4t kernel-flavor build is a stub that hard-errors",
+      "reason": "hardware validation pending (specs-jetson/README.md) \u2014 fail-loud preflight; mesh-only roles in ROLE_CHOICES; no root-disk encryption: the builder refuses --encrypt-root, because the Orin firmware reads the boot config off the single boot+root partition; the l4t kernel flavour is not offered (the builder refuses it: NVIDIA's L4T kernel and CUDA userspace are EULA-gated downloads it does not fetch)",
       "roles": {
         "cloud": [],
         "mesh": [
@@ -482,7 +482,7 @@
       "id": "orin-nano-4gb",
       "label": "NVIDIA Jetson Orin Nano devkit 4GB",
       "notes": "mesh-only: edge_ai / gpu-host / full / jetson-desktop",
-      "reason": "hardware validation pending (specs-jetson/README.md) \u2014 fail-loud preflight; mesh-only roles; no --encrypt-root; l4t kernel-flavor is a stub",
+      "reason": "hardware validation pending (specs-jetson/README.md) \u2014 fail-loud preflight; mesh-only roles; no root-disk encryption: the builder refuses --encrypt-root, because the Orin firmware reads the boot config off the single boot+root partition; the l4t kernel flavour is not offered (the builder refuses it: NVIDIA's L4T kernel and CUDA userspace are EULA-gated downloads it does not fetch)",
       "roles": {
         "cloud": [],
         "mesh": [
@@ -518,7 +518,7 @@
       "id": "orin-nx-8gb",
       "label": "NVIDIA Jetson Orin NX 8GB (devkit carrier)",
       "notes": "mesh-only: edge_ai / gpu-host / full / jetson-desktop",
-      "reason": "hardware validation pending \u2014 additionally marked UNTESTED in the builder's own usage text; mesh-only roles; no --encrypt-root; l4t kernel-flavor is a stub",
+      "reason": "hardware validation pending \u2014 additionally marked UNTESTED in the builder's own usage text; mesh-only roles; no root-disk encryption: the builder refuses --encrypt-root, because the Orin firmware reads the boot config off the single boot+root partition; the l4t kernel flavour is not offered (the builder refuses it: NVIDIA's L4T kernel and CUDA userspace are EULA-gated downloads it does not fetch)",
       "roles": {
         "cloud": [],
         "mesh": [
@@ -554,7 +554,7 @@
       "id": "orin-nx-16gb",
       "label": "NVIDIA Jetson Orin NX 16GB (devkit carrier)",
       "notes": "mesh-only: edge_ai / gpu-host / full / jetson-desktop",
-      "reason": "hardware validation pending \u2014 additionally marked UNTESTED in the builder's own usage text; mesh-only roles; no --encrypt-root; l4t kernel-flavor is a stub",
+      "reason": "hardware validation pending \u2014 additionally marked UNTESTED in the builder's own usage text; mesh-only roles; no root-disk encryption: the builder refuses --encrypt-root, because the Orin firmware reads the boot config off the single boot+root partition; the l4t kernel flavour is not offered (the builder refuses it: NVIDIA's L4T kernel and CUDA userspace are EULA-gated downloads it does not fetch)",
       "roles": {
         "cloud": [],
         "mesh": [
@@ -1021,21 +1021,9 @@
       "id": "rpi2",
       "label": "Raspberry Pi 2",
       "notes": "",
-      "reason": "INFEASIBLE: 32-bit ARMv7 \u2014 the whole rpi5 toolchain is aarch64-only (#351 verdict)",
+      "reason": "INFEASIBLE: 32-bit ARMv7 \u2014 the rpi5 builder (build-rpi5-stage4.sh) and its whole cross toolchain are aarch64-only",
       "roles": {},
       "soc": "Broadcom BCM2836 (4x Cortex-A7, 32-bit)",
-      "status": "unsupported"
-    },
-    {
-      "arch": "arm64",
-      "config_axes": null,
-      "family": "raspberry-pi",
-      "id": "rpi6",
-      "label": "\"Raspberry Pi 6\"",
-      "notes": "",
-      "reason": "DOES NOT EXIST \u2014 the latest shipping Raspberry Pi is the Pi 5 (#351 verdict); listed so the request dies honestly",
-      "roles": {},
-      "soc": "does not exist",
       "status": "unsupported"
     },
     {
@@ -1057,7 +1045,7 @@
       "id": "opi2",
       "label": "Orange Pi 2",
       "notes": "",
-      "reason": "INFEASIBLE: 32-bit ARMv7 \u2014 the aarch64-only toolchain blocker (#351 verdict)",
+      "reason": "INFEASIBLE: 32-bit ARMv7 \u2014 every Orange Pi builder here cross-compiles for aarch64 only",
       "roles": {},
       "soc": "Allwinner H3 (4x Cortex-A7, 32-bit)",
       "status": "unsupported"
@@ -1069,7 +1057,7 @@
       "id": "opi3",
       "label": "Orange Pi 3 (non-LTS)",
       "notes": "",
-      "reason": "the LTS revision now has its own platform (orangepi3-lts / specs-orangepi3-lts, which ironically boots THIS board's own mainline DTB/defconfig \u2014 mainline has no -lts variant), so promoting the non-LTS board is a validation task, not a builder task \u2014 but its board row (AP6256 radio, 1/2GB RAM SKUs, PCIe) is unverified against that recipe and is not claimed until a real board proves it (#351 honesty rule)",
+      "reason": "the LTS revision has its own platform (orangepi3-lts / specs-orangepi3-lts), which boots THIS board's own mainline DTB and U-Boot defconfig (mainline has no -lts variant), so promoting the non-LTS board is a validation task, not a builder task. Its board row (AP6256 radio, 1/2 GB RAM SKUs, PCIe) is unverified against that recipe, so it is not claimed until a real board proves it",
       "roles": {},
       "soc": "Allwinner H6 (4x Cortex-A53)",
       "status": "unsupported"
@@ -1081,7 +1069,7 @@
       "id": "opi4",
       "label": "Orange Pi 4",
       "notes": "",
-      "reason": "the LTS revision now has its own platform (orangepi4-lts / specs-orangepi4-lts, which boots THIS board's own mainline DTB and U-Boot defconfig \u2014 mainline has no -lts variant of either), so promoting the non-LTS board is a validation task, not a builder task. Its board row (no onboard eMMC, differing RAM SKUs) is unverified against that recipe and is not claimed until a real board proves it (#351 honesty rule)",
+      "reason": "the LTS revision has its own platform (orangepi4-lts / specs-orangepi4-lts), which boots THIS board's own mainline rk3399-orangepi DTB and orangepi-rk3399_defconfig (mainline has no -lts variant of either), so promoting the non-LTS board is a validation task, not a builder task. Its board row (no onboard eMMC, differing RAM SKUs) is unverified against that recipe, so it is not claimed until a real board proves it",
       "roles": {},
       "soc": "Rockchip RK3399 (2x Cortex-A72 + 4x Cortex-A53)",
       "status": "unsupported"
@@ -1093,7 +1081,7 @@
       "id": "opi4-pro",
       "label": "Orange Pi 4 Pro",
       "notes": "",
-      "reason": "UNCONFIRMED SKU \u2014 folds into the Orange Pi 4 verdict only IF proven RK3399 (#351). If proven, it would ride the orangepi4-lts platform rather than needing a new builder",
+      "reason": "UNCONFIRMED SKU \u2014 nothing in tree confirms its SoC. Only if it is proven RK3399 does it fold into the Orange Pi 4 row, riding the orangepi4-lts platform rather than needing a new builder",
       "roles": {},
       "soc": "unconfirmed SKU",
       "status": "unsupported"
@@ -1129,7 +1117,7 @@
       "id": "opi6",
       "label": "Orange Pi 6 / 6 Plus",
       "notes": "",
-      "reason": "2025 SoC on a vendor-BSP/out-of-tree stack \u2014 no trustworthy mainline u-boot/kernel/DTB to build a recipe against (#351 verdict)",
+      "reason": "2025 SoC on a vendor-BSP/out-of-tree stack \u2014 no trustworthy mainline U-Boot, kernel or DTB to build a recipe against",
       "roles": {},
       "soc": "CIX Sky1 (CD8180)",
       "status": "unsupported"
@@ -1213,7 +1201,7 @@
       "id": "rk3588-generic",
       "label": "Generic RK3588 mini-PCs (Khadas Edge2, Mekotronics, no-name boxes)",
       "notes": "",
-      "reason": "vendor/unknown boot chains \u2014 no verifiable mainline u-boot defconfig + DTB pair per device; each needs individual verification before even EXPERIMENTAL (#351: generic RK3588 mini-PCs not added)",
+      "reason": "vendor/unknown boot chains \u2014 no verifiable mainline U-Boot defconfig + DTB pair per device; each needs individual verification before even EXPERIMENTAL",
       "roles": {},
       "soc": "Rockchip RK3588 (vendor boot chains)",
       "status": "unsupported"
@@ -1225,7 +1213,7 @@
       "id": "rk3399-generic",
       "label": "Generic RK3399 boards (Rock Pi 4, NanoPi M4, ...)",
       "notes": "",
-      "reason": "same RK3399 blocker as the Orange Pi 4: the RK3588 recipe is not reusable \u2014 a new builder would be required",
+      "reason": "each board needs its own boot chain: the one RK3399 builder here (orangepi4-lts) accepts a single board and is pinned to the Orange Pi's rk3399-orangepi DTB and orangepi-rk3399_defconfig. A Rock Pi 4 or NanoPi M4 needs its own mainline U-Boot defconfig + DTB pair wired in and validated before even EXPERIMENTAL",
       "roles": {},
       "soc": "Rockchip RK3399",
       "status": "unsupported"
