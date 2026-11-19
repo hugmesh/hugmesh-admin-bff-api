@@ -167,8 +167,10 @@
            HUGMESH_MTLS_CLIENT_ENABLED (hugmesh-generator#376).
            2.6.0-beta.1 is the first auth-core coordinate of the beta release chain
            (build-config 0.6.0-beta.1, parent 2.9.0-beta.1, commons 2.2.0-beta.1,
-           auth-core 2.6.0-beta.1). 2.6.0 adds the bff_ session bridge. -->
-      <version>2.7.0-beta.1</version>
+           auth-core 2.6.0-beta.1). 2.6.0 adds the bff_ session bridge.
+           Since hugmesh-parent 2.10.0-beta.1 the parent manages this version
+           (hugmesh-auth-core.version, hugmesh-parent#10), so no <version> here: an
+           auth-core bump arrives with a parent bump. -->
     </dependency>
 
     <!-- ============================================================================
