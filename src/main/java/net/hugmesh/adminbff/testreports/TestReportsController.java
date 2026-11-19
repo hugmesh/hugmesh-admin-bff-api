@@ -136,7 +136,10 @@ public class TestReportsController {
     }
 
     // ── Event-ingest from the in-cluster test-runner ────────────────────────
-    @PreAuthorize("hasRole('ADMIN')")
+    // ROLE_TEST_INGEST is the NARROW machine role the test-runner Job's Casdoor client-credentials
+    // token carries: it is admitted to this endpoint ONLY (SecurityConfig admits it on exactly
+    // POST /bff/admin/test-reports/{id}/ingest; every other method here stays ADMIN).
+    @PreAuthorize("hasAnyRole('ADMIN','TEST_INGEST')")
     @Operation(summary = "Ingest", operationId = "testReportsIngest")
     @PostMapping("/{id}/ingest")
     public Mono<Map<String, Object>> ingest(
