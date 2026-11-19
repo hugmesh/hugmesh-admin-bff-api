@@ -97,7 +97,78 @@
     <dependency>
       <groupId>net.hugmesh</groupId>
       <artifactId>hugmesh-auth-core</artifactId>
-      <!-- version: hugmesh-parent manages it (hugmesh-auth-core.version) -->
+      <!-- 2.1.0 adds the BFF-JWT-custody seam (bff_session custody columns on BffSession,
+           AccountStore.stampCustody/clearCustody/sessionRow, BffCustodyCipher AES-256-GCM,
+           and the OidcExchangeClient refresh leg). Bumped in lockstep with the band-180
+           custody migration + the /bff/internal custody/stamp & session/exchange endpoints.
+           2.2.0 adds the per-account session-listing seam: AccountStore.sessionsForAccount
+           (live-only, expires_at>now(), newest-first) over the new BffSessionRepository
+           derived queries (findByAccountIdOrderByCreatedAtDesc /
+           findByAccountIdAndExpiresAtAfterOrderByCreatedAtDesc), returning the projection
+           record BffSessionRow(token, accountId, createdAt, expiresAt). Bumped in lockstep
+           with the /bff/internal/sessions/{accountId} listing endpoint below.
+           2.3.0 drops UUID.randomUUID() mints from MfaEnrollmentService +
+           WebAuthnChallengeStore; INSERTs now use RETURNING id against the
+           (gen_random_uuid())::text column DEFAULT added by band-210 here.
+           2.3.1 adds AccountStore.ensureAccount(provider, handle, roles): SYNCS the
+           given roles onto an account row on every call (not just at creation), so a
+           native-login principal's real Casdoor role grant (mod/superadmin/matrix/etc,
+           not just the legacy user/admin pair) reaches the BFF session. Bumped in
+           lockstep with InternalAccountController's new rolesFromIdToken() extraction
+           below and changeset 260 (drops the now-stale 2-value account.roles CHECK).
+           2.3.2 adds BffCookieAuthenticationWebFilter: bridges a bff_ session (already
+           normalised into the Authorization header by SessionCookieWebFilter) into a
+           real Spring Security Authentication via AccountStore, so this service's own
+           hasAnyRole()/.authenticated() gates (e.g. /bff/admin/usage,
+           /bff/admin/namespace-access) — previously reachable only by a JWT, never a
+           native-login cookie — now see an authenticated, role-bearing principal. Auto-
+           registers via the existing scanBasePackages="net.hugmesh.authcore";
+           no additional wiring needed.
+           2.3.4 fixes two identity-fold bugs: CasdoorAdminClient.usernameOf now strips
+           the "@..." tail for EVERY provider (not just "google" — casdoor/matrix/discord
+           etc. were previously left un-stripped), and AccountStore.idFor now trims +
+           folds the handle with Locale.ROOT (was a bare toLowerCase(), locale-dependent).
+           Bumped in lockstep with hugmesh-auth-core PR #33 (merged 2026-07-15).
+           2.4.0 is a coordinate-only rename (legacy groupId -> net.hugmesh groupId +
+           package move), no behavior change - part of the HugMesh rebrand.
+           2.4.1 syncs ReservedNames (the shared copy this BFF's username/route-prefix
+           guards consume) to canonical reserved-prefixes.yaml revision 9 (82 labels):
+           hmdm/attest from rev 7/8 + character-forge / games-character-forge /
+           games-shadows-of-the-net from the Character Forge track — so this BFF's
+           invite/grant/provision username gates and the route-access
+           reserved-prefix warning now enforce those five labels at runtime.
+           2.4.2 SUPERSEDES 2.4.1 and is what this pin now names. 2.4.1 only ever
+           existed on the hugmesh-auth-core branch feat/character-forge-reserved-labels
+           and was never published, so this pin could not resolve in CI or on any
+           clean clone — it resolved locally only via a hand-installed build of that
+           branch. auth-core's shipped 2.4.2 carries all five rev-9 labels the note
+           above describes (verified in ReservedNames: hmdm, attest, character-forge,
+           games-character-forge, games-shadows-of-the-net), so the runtime guarantee
+           is unchanged and the unresolvable pin is gone.
+           2.5.0 adds the DOMAIN-SCOPED registration gate (auth-core issue #1, PR #8):
+           AllowlistRepository.existsByProviderAndHandleAndDomain plus the
+           AccountStore.isEmailInvited(email, domain) / isDiscordInvited(handle, domain)
+           overloads, and DEPRECATES the unscoped 1-arg overloads this BFF used to call.
+           Purely additive at the source level (the 1-arg signatures are retained), but the
+           bump is load-bearing: on 2.4.2 the 2-arg overloads do not exist, so an invite
+           stamped with brand X's domain also satisfied brand Y's registration gate here.
+           Bumped in lockstep with RegistrationDomainResolver + the AuthController /
+           InternalAccountController call sites below, which now pass a SERVER-DERIVED
+           requesting domain.
+           2.5.1 is what this pin now names, and it is the ONLY auth-core coordinate the
+           org's release chain (hugmesh-auth-core release-chain.yml) publishes to GitHub
+           Packages: a pin on 2.5.0 resolves from a developer's hand-installed ~/.m2 and
+           nowhere else, so the release image build died on "Could not find artifact
+           net.hugmesh:hugmesh-auth-core:jar:2.5.0". 2.5.0 -> 2.5.1 is source- and
+           binary-compatible (the deprecated overloads are kept; hugmesh-auth-core
+           RELEASING.md section 4). 2.5.1 also carries the Casdoor-platform username
+           gate, which stays OFF here until FEDERATION_USERNAME_GATE_ENABLED is set
+           together with APP_CASDOOR_PLATFORM_BASE_URL/_CLIENT_ID/_CLIENT_SECRET and
+           HUGMESH_MTLS_CLIENT_ENABLED (hugmesh-generator#376).
+           2.6.0-beta.1 is the first auth-core coordinate of the beta release chain
+           (build-config 0.6.0-beta.1, parent 2.9.0-beta.1, commons 2.2.0-beta.1,
+           auth-core 2.6.0-beta.1). 2.6.0 adds the bff_ session bridge. -->
+      <version>2.7.0-beta.1</version>
     </dependency>
 
     <!-- ============================================================================
