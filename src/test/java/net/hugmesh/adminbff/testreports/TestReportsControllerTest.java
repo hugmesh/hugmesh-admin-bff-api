@@ -63,6 +63,10 @@ class TestReportsControllerTest {
                 new SimpleGrantedAuthority("ROLE_USER"), new SimpleGrantedAuthority("ROLE_ADMIN")));
     }
 
+    private WebTestClient asIngestOnly() {
+        return web.mutateWith(mockJwt().authorities(new SimpleGrantedAuthority("ROLE_TEST_INGEST")));
+    }
+
     private WebTestClient asUser() {
         return web.mutateWith(mockJwt().authorities(new SimpleGrantedAuthority("ROLE_USER")));
     }
@@ -229,5 +233,64 @@ class TestReportsControllerTest {
                 .bodyValue("{\"kind\":\"RUN\",\"state\":\"passed\"}")
                 .exchange().expectStatus().isForbidden();
         verify(service, never()).ingest(anyString(), any());
+    }
+
+    // ── the NARROW ingest-only credential (hugmesh-generator#507, finding 25) ──────────────
+    private static final String INGEST_BODY =
+            "{\"kind\":\"SUITE\",\"suite\":\"s\",\"state\":\"passed\",\"passed\":1,\"failed\":0,"
+            + "\"skipped\":0,\"percent\":100}";
+
+    @Test
+    void ingestOnly_canPostAnIngestEvent() {
+        when(service.ingest(eq("r1"), any())).thenReturn(Mono.just(run("r1", "LEAN", "RUNNING")));
+        asIngestOnly().post().uri("/bff/admin/test-reports/r1/ingest").contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(INGEST_BODY).exchange().expectStatus().isOk();
+        verify(service).ingest(eq("r1"), any());
+    }
+
+    @Test
+    void ingestOnly_cannotReadTheRunHistory() {
+        asIngestOnly().get().uri("/bff/admin/test-reports").exchange().expectStatus().isForbidden();
+        verify(service, never()).history();
+    }
+
+    @Test
+    void ingestOnly_cannotReadOrDownloadOrWatchOneRun() {
+        asIngestOnly().get().uri("/bff/admin/test-reports/r1").exchange().expectStatus().isForbidden();
+        asIngestOnly().get().uri("/bff/admin/test-reports/r1/download").exchange().expectStatus().isForbidden();
+        asIngestOnly().get().uri("/bff/admin/test-reports/r1/events").exchange().expectStatus().isForbidden();
+    }
+
+    @Test
+    void ingestOnly_cannotLaunchARun() {
+        asIngestOnly().post().uri("/bff/admin/test-reports/run").contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("{}").exchange().expectStatus().isForbidden();
+    }
+
+    @Test
+    void ingestOnly_isRefusedEverywhereElseUnderTheAdminPrefix() {
+        // refused by the filter chain BEFORE routing: 403, not a 404 from a missing mapping
+        asIngestOnly().get().uri("/bff/admin/routes").exchange().expectStatus().isForbidden();
+        asIngestOnly().get().uri("/bff/admin/users").exchange().expectStatus().isForbidden();
+        asIngestOnly().post().uri("/bff/admin/test-reports/r1/ingest/extra").contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(INGEST_BODY).exchange().expectStatus().isForbidden();
+    }
+
+    @Test
+    void ingestOnly_isAdmittedForPostOnly_notForAGetOnTheSamePath() {
+        asIngestOnly().get().uri("/bff/admin/test-reports/r1/ingest").exchange().expectStatus().isForbidden();
+    }
+
+    @Test
+    void aPlainUserStillCannotIngest() {
+        asUser().post().uri("/bff/admin/test-reports/r1/ingest").contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(INGEST_BODY).exchange().expectStatus().isForbidden();
+        verify(service, never()).ingest(anyString(), any());
+    }
+
+    @Test
+    void anUnauthenticatedCallerStillGetsA401() {
+        web.post().uri("/bff/admin/test-reports/r1/ingest").contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(INGEST_BODY).exchange().expectStatus().isUnauthorized();
     }
 }

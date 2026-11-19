@@ -285,6 +285,16 @@ public class SecurityConfig {
         // entitlement gate are enforced downstream in PhoneFleetOwnerController — this coarse
         // gate only admits the three roles that can reach it at all.
         ex.pathMatchers("/bff/admin/phone-fleet/**").hasAnyRole("FLEET_ADMIN", "ADMIN", "SUPERADMIN");
+        // Test-run event INGEST — the ONE /bff/admin/** endpoint the in-cluster test-runner Job
+        // reaches, with a credential NARROWER than ADMIN (hugmesh-generator#507, finding 25).
+        // The Job's reporter posts live run/suite events here; giving it ROLE_ADMIN to do that
+        // would hand a CI Job the whole admin surface, so it gets a dedicated Casdoor
+        // client-credentials machine role, ROLE_TEST_INGEST, valid for EXACTLY
+        // POST /bff/admin/test-reports/{runId}/ingest and nothing else: it cannot list or read
+        // runs, download reports, launch a run, or touch any other /bff/admin/** path (all of
+        // which stay behind the generic ADMIN/SUPERADMIN rule below). MUST precede that generic
+        // rule (first-match-wins). The method gate on the controller says the same thing.
+        ex.pathMatchers(HttpMethod.POST, "/bff/admin/test-reports/*/ingest").hasAnyRole("TEST_INGEST", "ADMIN", "SUPERADMIN");
         // Admin surface — defence-in-depth on top of the gateway's route-access rules.
         // SUPERADMIN added so the cross-domain infra super-role reaches the coarse
         // admin gate (it is a strict superset of ADMIN); the per-row DOMAIN scoping of
