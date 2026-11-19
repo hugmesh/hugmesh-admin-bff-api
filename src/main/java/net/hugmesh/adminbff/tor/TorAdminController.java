@@ -10,6 +10,7 @@ import org.springframework.security.core.Authentication;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -49,11 +50,34 @@ public class TorAdminController {
     private final TorNodeService nodes;
     private final TorExportService export;
     private final DomainRegistry domainRegistry;
+    private final TorRotationService rotations;
 
-    public TorAdminController(TorNodeService nodes, TorExportService export, DomainRegistry domainRegistry) {
+    public TorAdminController(TorNodeService nodes, TorExportService export, DomainRegistry domainRegistry,
+                              TorRotationService rotations) {
         this.nodes = nodes;
         this.export = export;
         this.domainRegistry = domainRegistry;
+        this.rotations = rotations;
+    }
+
+    /** The typed confirmation for a new address: the domain's key name, retyped. */
+    public record TorNewAddressRequest(@NotBlank @Size(max = 63) String confirm) {
+    }
+
+    /**
+     * Ask for a new Tor address for one domain (hugmesh-generator#652). A domain ADMIN for
+     * their own domain, a SUPERADMIN for any; the mesh's own address is never replaced
+     * here. The Tor nodes apply it from the signed export and report the new address on
+     * {@code GET /nodes}. Refusal order: 422, 403, 422, 409 ({@link TorRotationService}).
+     */
+    @PreAuthorize("hasAnyRole('ADMIN','SUPERADMIN')")
+    @Operation(summary = "Request a new onion address", operationId = "torRequestNewAddress")
+    @PostMapping("/domains/{domain}/new-address")
+    public Mono<TorRotationService.TorRotationResult> requestNewAddress(
+            @PathVariable @NotBlank @Size(max = 63) String domain,
+            @Valid @RequestBody TorNewAddressRequest body, Authentication auth) {
+        return rotations.request(domain, body.confirm(), PrincipalDomain.of(auth, domainRegistry),
+                actor(auth));
     }
 
     private static String actor(Authentication auth) {

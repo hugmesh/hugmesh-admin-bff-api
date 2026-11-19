@@ -3320,6 +3320,45 @@
         }
       }
     },
+    "/bff/admin/tor/domains/{domain}/new-address" : {
+      "post" : {
+        "tags" : [ "tor-admin-controller" ],
+        "summary" : "Request a new onion address",
+        "operationId" : "torRequestNewAddress",
+        "parameters" : [ {
+          "name" : "domain",
+          "in" : "path",
+          "required" : true,
+          "schema" : {
+            "maxLength" : 63,
+            "minLength" : 0,
+            "type" : "string"
+          }
+        } ],
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/TorNewAddressRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/TorRotationResult"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/bff/admin/test-reports/{id}/ingest" : {
       "post" : {
         "tags" : [ "test-reports-controller" ],
@@ -11557,6 +11596,32 @@
           }
         }
       },
+      "TorNewAddressRequest" : {
+        "required" : [ "confirm" ],
+        "type" : "object",
+        "properties" : {
+          "confirm" : {
+            "maxLength" : 63,
+            "minLength" : 0,
+            "type" : "string"
+          }
+        }
+      },
+      "TorRotationResult" : {
+        "type" : "object",
+        "properties" : {
+          "domain" : {
+            "type" : "string"
+          },
+          "requestCount" : {
+            "type" : "integer",
+            "format" : "int64"
+          },
+          "status" : {
+            "type" : "string"
+          }
+        }
+      },
       "TestRunIngestRequest" : {
         "required" : [ "kind", "state" ],
         "type" : "object",
@@ -13359,6 +13424,24 @@
             "items" : {
               "type" : "string"
             }
+          },
+          "rotations" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/TorRotation"
+            }
+          }
+        }
+      },
+      "TorRotation" : {
+        "type" : "object",
+        "properties" : {
+          "slug" : {
+            "type" : "string"
+          },
+          "count" : {
+            "type" : "integer",
+            "format" : "int64"
           }
         }
       },

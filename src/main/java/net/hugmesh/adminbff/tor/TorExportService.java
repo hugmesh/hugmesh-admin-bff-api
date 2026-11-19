@@ -49,13 +49,22 @@ public class TorExportService {
     private final TorNodeConfigRowRepository configs;
     private final DomainCapabilityRepository capabilities;
     private final RegistrySigner signer;
+    private final TorRotationRowRepository rotations;
 
     public TorExportService(DeviceRegistryRepository devices, TorNodeConfigRowRepository configs,
                             DomainCapabilityRepository capabilities, RegistrySigner signer) {
+        this(devices, configs, capabilities, signer, null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public TorExportService(DeviceRegistryRepository devices, TorNodeConfigRowRepository configs,
+                            DomainCapabilityRepository capabilities, RegistrySigner signer,
+                            TorRotationRowRepository rotations) {
         this.devices = devices;
         this.configs = configs;
         this.capabilities = capabilities;
         this.signer = signer;
+        this.rotations = rotations;
     }
 
     /** Build + sign the export for the node addressed by its {@code machine_key_fp}. */
@@ -68,8 +77,11 @@ public class TorExportService {
                                         .defaultIfEmpty(Optional.empty()),
                                 capabilities.listAll()
                                         .filter(c -> DomainCapability.TOR_ONION.equals(c.capability()))
-                                        .collectList())
-                        .map(t -> sign(compile(node.machineKeyFp(), t.getT1().orElse(null), t.getT2()))))
+                                        .collectList(),
+                                rotations == null ? Mono.just(List.<TorRotationRow>of())
+                                        : rotations.findAll().collectList())
+                        .map(t -> sign(compile(node.machineKeyFp(), t.getT1().orElse(null), t.getT2(),
+                                t.getT3()))))
                 // fail-closed: unknown fp -> empty signed body, nothing managed.
                 .switchIfEmpty(Mono.fromSupplier(() -> sign(emptyBody())));
     }
@@ -80,6 +92,17 @@ public class TorExportService {
      * defensively).
      */
     static TorExportBody compile(String fp, TorNodeConfig config, List<DomainCapability> torOnionRows) {
+        return compile(fp, config, torOnionRows, List.of());
+    }
+
+    /**
+     * {@link #compile(String, TorNodeConfig, List)} plus the new-address requests
+     * (hugmesh-generator#652): a rotation is carried only for a domain the body LISTS and
+     * only with a count above 0, sorted by slug; their counts are added to the generation,
+     * so every request advances it.
+     */
+    static TorExportBody compile(String fp, TorNodeConfig config, List<DomainCapability> torOnionRows,
+                                 List<TorRotationRow> rotationRows) {
         boolean upstreamManaged = config != null && config.upstreamManaged();
         String upstream = upstreamManaged && config.upstream() != null ? config.upstream() : "";
 
@@ -106,9 +129,18 @@ public class TorExportService {
                 slugs.add(c.domain());
             }
         }
-        long generation = (config == null ? 0L : config.configGeneration()) + capGen;
+        java.util.TreeMap<String, Long> rot = new java.util.TreeMap<>();
+        long rotGen = 0L;
+        for (TorRotationRow r : rotationRows == null ? List.<TorRotationRow>of() : rotationRows) {
+            if (r == null || r.rotationCount() <= 0 || !slugs.contains(r.domain())) continue;
+            rot.put(r.domain(), r.rotationCount());
+            rotGen += r.rotationCount();
+        }
+        List<TorExportModels.TorRotation> rotList = new java.util.ArrayList<>();
+        rot.forEach((s, n) -> rotList.add(new TorExportModels.TorRotation(s, n)));
+        long generation = (config == null ? 0L : config.configGeneration()) + capGen + rotGen;
         return new TorExportBody(fp, generation, upstreamManaged, upstream, domainsManaged,
-                List.copyOf(slugs));
+                List.copyOf(slugs), rotList);
     }
 
     /** The fail-closed body for an unknown fingerprint: nothing managed. */
@@ -139,6 +171,7 @@ public class TorExportService {
      *   upstream=&lt;host:port or empty&gt;\n
      *   domains-managed=&lt;true|false&gt;\n
      *   domain=&lt;slug&gt;\n   (one per slug, sorted)
+     *   rotate=&lt;slug&gt;:&lt;count&gt;\n   (one per rotation, sorted; none when there is no request)
      * </pre>
      */
     static byte[] canonicalBytes(TorExportBody body) {
@@ -151,6 +184,9 @@ public class TorExportService {
         sb.append("domains-managed=").append(body.domainsManaged()).append('\n');
         for (String slug : body.domains()) {
             sb.append("domain=").append(slug).append('\n');
+        }
+        for (TorExportModels.TorRotation r : body.rotations()) {
+            sb.append("rotate=").append(r.slug()).append(':').append(r.count()).append('\n');
         }
         return sb.toString().getBytes(StandardCharsets.UTF_8);
     }

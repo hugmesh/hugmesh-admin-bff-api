@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+      420 — "a new Tor address for this domain" (hugmesh-generator#652).
+
+      One row per Tor domain a new onion address was asked for. rotation_count only grows:
+      the signed per-node Tor export carries it for every domain whose count is above 0,
+      and a node whose applied count is lower moves that domain's key aside and mints a new
+      address (specs/usr/sbin/hugmesh-tor-reconcile, step 4b). The counts are also added to
+      the export generation, so a request always advances it past the node's last-good one.
+    -->
+    <changeSet id="420-tor-onion-rotation-table" author="hugmesh">
+        <comment>Per-domain new-onion-address request counter carried by the signed Tor export.</comment>
+        <createTable tableName="tor_onion_rotation">
+            <column name="domain" type="varchar(63)">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="rotation_count" type="bigint" defaultValueNumeric="0">
+                <constraints nullable="false"/>
+            </column>
+            <column name="requested_by" type="varchar(400)"/>
+            <column name="requested_at" type="timestamp with time zone" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+    </changeSet>
+
+    <changeSet id="420-tor-onion-rotation-grant" author="hugmesh">
+        <preConditions onFail="MARK_RAN" onError="MARK_RAN">
+            <dbms type="postgresql"/>
+        </preConditions>
+        <comment>App role privileges (PG only).</comment>
+        <sql>GRANT SELECT, INSERT, UPDATE ON tor_onion_rotation TO adminbff_app</sql>
+    </changeSet>
+
+</databaseChangeLog>
