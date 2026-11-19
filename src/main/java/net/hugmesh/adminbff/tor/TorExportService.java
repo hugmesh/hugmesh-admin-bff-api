@@ -70,20 +70,24 @@ public class TorExportService {
     /** Build + sign the export for the node addressed by its {@code machine_key_fp}. */
     public Mono<SignedTorExport> exportNode(String machineKeyFp) {
         return devices.findByMachineKey(machineKeyFp)
-                .flatMap(node -> Mono.zip(
-                                configs.findByMachineKeyFp(node.machineKeyFp())
-                                        .map(TorNodeConfigRow::toDomain)
-                                        .map(Optional::of)
-                                        .defaultIfEmpty(Optional.empty()),
-                                capabilities.listAll()
-                                        .filter(c -> DomainCapability.TOR_ONION.equals(c.capability()))
-                                        .collectList(),
-                                rotations == null ? Mono.just(List.<TorRotationRow>of())
-                                        : rotations.findAll().collectList())
-                        .map(t -> sign(compile(node.machineKeyFp(), t.getT1().orElse(null), t.getT2(),
-                                t.getT3()))))
+                .flatMap(node -> exportFor(node.machineKeyFp()))
                 // fail-closed: unknown fp -> empty signed body, nothing managed.
                 .switchIfEmpty(Mono.fromSupplier(() -> sign(emptyBody())));
+    }
+
+    /** The signed export of a KNOWN node: its config, the tor-onion rows, the rotations. */
+    private Mono<SignedTorExport> exportFor(String fp) {
+        Mono<Optional<TorNodeConfig>> config = configs.findByMachineKeyFp(fp)
+                .map(TorNodeConfigRow::toDomain)
+                .map(Optional::of)
+                .defaultIfEmpty(Optional.empty());
+        Mono<List<DomainCapability>> torRows = capabilities.listAll()
+                .filter(c -> DomainCapability.TOR_ONION.equals(c.capability()))
+                .collectList();
+        Mono<List<TorRotationRow>> rotationRows = rotations == null
+                ? Mono.just(List.of()) : rotations.findAll().collectList();
+        return Mono.zip(config, torRows, rotationRows)
+                .map(t -> sign(compile(fp, t.getT1().orElse(null), t.getT2(), t.getT3())));
     }
 
     /**

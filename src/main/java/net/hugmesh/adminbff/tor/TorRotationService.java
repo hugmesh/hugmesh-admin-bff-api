@@ -59,18 +59,18 @@ public class TorRotationService {
         return capabilities.listAll()
                 .filter(c -> DomainCapability.TOR_ONION.equals(c.capability()))
                 .collectList()
-                .flatMap(rows -> {
-                    if (!torDomainIsLive(domain, rows)) {
-                        return Mono.error(ApiException.conflict(
-                                "This domain has no Tor address of its own, so there is nothing to replace."));
-                    }
-                    return rotations.increment(domain, actor)
-                            .then(rotations.findById(domain))
-                            .map(r -> {
-                                log.info("[tor-rotation] domain={} request={} by={}", domain,
-                                        r.rotationCount(), actor);
-                                return new TorRotationResult(domain, r.rotationCount(), "requested");
-                            });
+                .flatMap(rows -> torDomainIsLive(domain, rows) ? record(domain, actor)
+                        : Mono.error(ApiException.conflict(
+                                "This domain has no Tor address of its own, so there is nothing to replace.")));
+    }
+
+    /** Count the request and read the count back. */
+    private Mono<TorRotationResult> record(String domain, String actor) {
+        return rotations.increment(domain, actor)
+                .then(rotations.findById(domain))
+                .map(r -> {
+                    log.info("[tor-rotation] domain={} request={} by={}", domain, r.rotationCount(), actor);
+                    return new TorRotationResult(domain, r.rotationCount(), "requested");
                 });
     }
 
