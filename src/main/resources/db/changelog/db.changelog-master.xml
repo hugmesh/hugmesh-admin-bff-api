@@ -744,4 +744,7 @@
       fill in on their next sign-in. Appended LAST.
     -->
     <include file="db/changelog/410-account-casdoor-username.xml"/>
+    <!-- 420 — per-domain "new Tor address" request counter (hugmesh-generator#652), carried
+         by the signed per-node Tor export. Appended LAST. -->
+    <include file="db/changelog/420-tor-onion-rotation.xml"/>
 </databaseChangeLog>

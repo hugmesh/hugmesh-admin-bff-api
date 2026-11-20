@@ -41,6 +41,11 @@ public final class TorExportModels {
      *                        {@code false}: leave the file alone
      * @param domains         the Tor domain slugs, sorted and de-duplicated, each matching
      *                        the agent's {@code [a-z0-9][a-z0-9-]{0,62}}
+     * @param rotations       hugmesh-generator#652: one entry per listed domain a new onion
+     *                        address was asked for (count above 0), sorted by slug. The node
+     *                        agent rotates a domain whose count is above the one it last
+     *                        applied. Empty adds nothing to the canonical bytes, so a body
+     *                        with no request is byte-identical to before this field existed
      */
     public record TorExportBody(
             String node,
@@ -48,11 +53,23 @@ public final class TorExportModels {
             boolean upstreamManaged,
             String upstream,
             boolean domainsManaged,
-            List<String> domains) {
+            List<String> domains,
+            List<TorRotation> rotations) {
 
         public TorExportBody {
             domains = domains == null ? null : Collections.unmodifiableList(new ArrayList<>(domains));
+            rotations = Collections.unmodifiableList(new ArrayList<>(rotations == null ? List.of() : rotations));
         }
+
+        /** A body with no rotation request (every caller before #652). */
+        public TorExportBody(String node, long generation, boolean upstreamManaged, String upstream,
+                             boolean domainsManaged, List<String> domains) {
+            this(node, generation, upstreamManaged, upstream, domainsManaged, domains, List.of());
+        }
+    }
+
+    /** One domain's new-address request count (hugmesh-generator#652). */
+    public record TorRotation(String slug, long count) {
     }
 
     /**

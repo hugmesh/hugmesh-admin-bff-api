@@ -240,4 +240,34 @@ class TorExportServiceTest {
         assertThat(b.domainsManaged()).isFalse();
         assertThat(b.generation()).isZero();
     }
+
+    // ── hugmesh-generator#652: rotation requests in the export ───────────────────────
+    private static net.hugmesh.adminbff.tor.TorRotationRow rot(String d, long n) {
+        return new net.hugmesh.adminbff.tor.TorRotationRow(d, n, "x", Instant.now());
+    }
+
+    @Test
+    void rotations_onlyForListedDomainsWithACount_sorted_andAddedToTheGeneration() {
+        List<DomainCapability> caps = List.of(
+                global(true, 1L), cap("shop", true, true, 2L), cap("brandb", true, true, 3L));
+        TorExportBody none = TorExportService.compile("fp-1", null, caps);
+        TorExportBody b = TorExportService.compile("fp-1", null, caps,
+                List.of(rot("shop", 2L), rot("brandb", 1L), rot("gone", 5L), rot("zero", 0L)));
+        assertThat(b.rotations()).extracting(TorExportModels.TorRotation::slug).containsExactly("brandb", "shop");
+        assertThat(b.rotations()).extracting(TorExportModels.TorRotation::count).containsExactly(1L, 2L);
+        assertThat(b.generation()).isEqualTo(none.generation() + 3L);
+    }
+
+    @Test
+    void canonicalBytes_withoutRotations_areExactlyThePreviousBytes_andWithThemAppendOneLineEach() {
+        TorExportBody plain = new TorExportBody("fp-1", 9L, false, "", true, List.of("brandb", "shop"));
+        String ref = "v1-tor\nnode=fp-1\ngeneration=9\nupstream-managed=false\nupstream=\n"
+                + "domains-managed=true\ndomain=brandb\ndomain=shop\n";
+        assertThat(new String(TorExportService.canonicalBytes(plain), java.nio.charset.StandardCharsets.UTF_8))
+                .isEqualTo(ref);
+        TorExportBody withRot = new TorExportBody("fp-1", 9L, false, "", true, List.of("brandb", "shop"),
+                List.of(new TorExportModels.TorRotation("shop", 2L), new TorExportModels.TorRotation("brandb", 1L)));
+        assertThat(new String(TorExportService.canonicalBytes(withRot), java.nio.charset.StandardCharsets.UTF_8))
+                .isEqualTo(ref + "rotate=shop:2\nrotate=brandb:1\n");
+    }
 }

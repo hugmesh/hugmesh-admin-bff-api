@@ -61,6 +61,7 @@ class TorAdminControllerTest {
 
     @MockitoBean TorNodeService nodes;
     @MockitoBean TorExportService export;
+    @MockitoBean TorRotationService rotations;
     @MockitoBean ReactiveJwtDecoder jwtDecoder;
 
     private WebTestClient as(String... roles) {
@@ -162,5 +163,41 @@ class TorAdminControllerTest {
         as("ADMIN").get().uri("/bff/admin/tor/export?node=fp-1").exchange().expectStatus().isForbidden();
         as().get().uri("/bff/admin/tor/export?node=fp-1").exchange().expectStatus().isForbidden();
         verify(export, never()).exportNode(anyString());
+    }
+
+    // ── hugmesh-generator#652: a new Tor address for one domain ─────────────────────
+    @Test
+    void newAddress_asAdminOrSuperadmin_reachesTheService_withTheTypedConfirmation() {
+        when(rotations.request(eq("shop"), eq("shop"), any(), anyString())).thenReturn(Mono.just(
+                new TorRotationService.TorRotationResult("shop", 2L, "requested")));
+        for (String role : new String[] {"ADMIN", "SUPERADMIN"}) {
+            as(role).post().uri("/bff/admin/tor/domains/shop/new-address")
+                    .contentType(MediaType.APPLICATION_JSON).bodyValue("{\"confirm\":\"shop\"}")
+                    .exchange().expectStatus().isOk()
+                    .expectBody().jsonPath("$.domain").isEqualTo("shop")
+                    .jsonPath("$.requestCount").isEqualTo(2)
+                    .jsonPath("$.status").isEqualTo("requested");
+        }
+        verify(rotations).request(eq("shop"), eq("shop"), argThat(PrincipalDomain::superadmin), anyString());
+        verify(rotations).request(eq("shop"), eq("shop"), argThat(d -> !d.superadmin()), anyString());
+    }
+
+    @Test
+    void newAddress_asModOrUser_isForbidden_andTheServiceIsNeverCalled() {
+        as("MOD").post().uri("/bff/admin/tor/domains/shop/new-address")
+                .contentType(MediaType.APPLICATION_JSON).bodyValue("{\"confirm\":\"shop\"}")
+                .exchange().expectStatus().isForbidden();
+        as().post().uri("/bff/admin/tor/domains/shop/new-address")
+                .contentType(MediaType.APPLICATION_JSON).bodyValue("{\"confirm\":\"shop\"}")
+                .exchange().expectStatus().isForbidden();
+        verify(rotations, never()).request(any(), any(), any(), any());
+    }
+
+    @Test
+    void newAddress_withoutAConfirmation_isA400() {
+        as("SUPERADMIN").post().uri("/bff/admin/tor/domains/shop/new-address")
+                .contentType(MediaType.APPLICATION_JSON).bodyValue("{}")
+                .exchange().expectStatus().isBadRequest();
+        verify(rotations, never()).request(any(), any(), any(), any());
     }
 }
