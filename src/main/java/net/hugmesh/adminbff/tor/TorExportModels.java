@@ -58,7 +58,7 @@ public final class TorExportModels {
 
         public TorExportBody {
             domains = domains == null ? null : Collections.unmodifiableList(new ArrayList<>(domains));
-            rotations = rotations == null ? List.of() : Collections.unmodifiableList(new ArrayList<>(rotations));
+            rotations = Collections.unmodifiableList(new ArrayList<>(rotations == null ? List.of() : rotations));
         }
 
         /** A body with no rotation request (every caller before #652). */
