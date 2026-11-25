@@ -42,13 +42,15 @@ public record DomainResponse(
         long lastReconciledGeneration,
         String idp,
         String selinuxLevel,
-        String selinuxLevelPg) {
+        String selinuxLevelPg,
+        String brandTitle,
+        String headscaleUrl) {
 
     public static DomainResponse of(DomainRegistration d) {
         return new DomainResponse(d.id(), d.clusterDomain(), d.brand(), d.org(), d.caRef(),
                 d.nsPrefix(), d.casdoorOrg(), d.meshTag(), d.enabled(), d.createdAt(),
                 d.createdBySubject(), d.updatedAt(),
                 d.caProvisioned(), d.appsetRegistered(), d.lastReconciledGeneration(),
-                d.idp(), d.selinuxLevel(), d.selinuxLevelPg());
+                d.idp(), d.selinuxLevel(), d.selinuxLevelPg(), d.brandTitle(), d.headscaleUrl());
     }
 }

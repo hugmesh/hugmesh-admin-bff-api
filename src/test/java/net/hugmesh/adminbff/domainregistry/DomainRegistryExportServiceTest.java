@@ -212,7 +212,7 @@ class DomainRegistryExportServiceTest {
         DomainExportBody tampered = new DomainExportBody(export.body().node(), export.body().generation(),
                 List.of(new DomainEntry("evil.test", "evil", "Evil", "vault:pki/evil", "ns-evil",
                         "casdoor-evil", "tag:evil", true, true, 99L,
-                        DomainIdp.OWN, "s0:c256", "s0:c257")));
+                        DomainIdp.OWN, "s0:c256", "s0:c257", null, null)));
         byte[] tamperedBytes = DomainRegistryExportService.canonicalBytes(tampered);
         assertThat(RegistrySigner.verify(tamperedBytes, export.signature(), export.publicKey())).isFalse();
     }
