@@ -2,6 +2,7 @@ package net.hugmesh.adminbff.domainregistry;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -87,6 +88,8 @@ import java.util.regex.Pattern;
  * SUPERADMIN re-provision endpoint covers imported domains.
  */
 @Component
+@SuppressFBWarnings(value = "EI_EXPOSE_REP2",
+        justification = "Spring constructor injection: the repository and the TransactionalOperator are container-owned singleton collaborators, never mutated by this class; a defensive copy of a bean is meaningless (not caller-owned mutable data).")
 public class DomainRegistryFirstStartImporter implements ApplicationRunner {
 
     private static final Logger log = LoggerFactory.getLogger(DomainRegistryFirstStartImporter.class);
