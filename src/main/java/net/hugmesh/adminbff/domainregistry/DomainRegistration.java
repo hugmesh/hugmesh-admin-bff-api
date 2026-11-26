@@ -50,6 +50,12 @@ import java.time.Instant;
  * so it names the tenant namespace, the Application and the Vault path alike &mdash; see
  * {@link DomainSlug}. It is UNIQUE in the schema and immutable after create.
  *
+ * <h3>Decision-87e fields (2026-09-23 &mdash; Liquibase 380)</h3>
+ * {@link #brandTitle()} / {@link #headscaleUrl()} &mdash; the BRAND_TITLE and HEADSCALE_URL
+ * hugmesh-generator {@code generate-brand-repos.sh} requires, set by the SUPERADMIN and carried
+ * on the signed export OUTSIDE the v1 canonical bytes. {@code null} = not set, in which case the
+ * node agent keeps its documented derivation. Validated by {@link DomainBrandFields}.
+ *
  * <h3>Provisioning-status fields (Liquibase band 190)</h3>
  * {@link #caProvisioned()} / {@link #appsetRegistered()} / {@link #lastReconciledGeneration()}
  * are the bridge between a SUPERADMIN-REGISTERED domain (this table) and an actually
@@ -59,7 +65,11 @@ import java.time.Instant;
  * registered domain reads "registered but not yet provisioned" so the admin-ui can render the
  * platform-capability-gating chip (the SUPERADMIN console mandate). They are READ-only here +
  * carried on the signed {@link DomainRegistryExportService} export the effector reconciles
- * against; NO write path in this band (the create/update CRUD never sets them).
+ * against. The create/update CRUD never sets them. Their ONE writer is the node agent's
+ * {@code POST /bff/internal/domains/{clusterDomain}/reconcile-ack}
+ * ({@link DomainRegistryInternalController}, decision 89b), and it writes only
+ * {@code appset_registered} + a strictly-increasing {@code last_reconciled_generation} &mdash;
+ * never {@code ca_provisioned}, which decision 87a = B gives to an admin-bff Vault step.
  */
 public record DomainRegistration(
         String id,
@@ -79,7 +89,24 @@ public record DomainRegistration(
         long lastReconciledGeneration,
         String idp,
         String selinuxLevel,
-        String selinuxLevelPg) {
+        String selinuxLevelPg,
+        String brandTitle,
+        String headscaleUrl) {
+
+    /**
+     * Pre-decision-87e 18-arg shape: no {@code brandTitle} / {@code headscaleUrl} (both
+     * {@code null} = "not set by the SUPERADMIN", the node agent keeps deriving them).
+     */
+    public DomainRegistration(
+            String id, String clusterDomain, String brand, String org, String caRef,
+            String nsPrefix, String casdoorOrg, String meshTag, boolean enabled,
+            Instant createdAt, String createdBySubject, Instant updatedAt,
+            boolean caProvisioned, boolean appsetRegistered, long lastReconciledGeneration,
+            String idp, String selinuxLevel, String selinuxLevelPg) {
+        this(id, clusterDomain, brand, org, caRef, nsPrefix, casdoorOrg, meshTag, enabled,
+                createdAt, createdBySubject, updatedAt, caProvisioned, appsetRegistered,
+                lastReconciledGeneration, idp, selinuxLevel, selinuxLevelPg, null, null);
+    }
 
     /**
      * Pre-decision-29 15-arg shape. Defaults {@code idp} to {@link DomainIdp#SUPERDOMAIN} (the

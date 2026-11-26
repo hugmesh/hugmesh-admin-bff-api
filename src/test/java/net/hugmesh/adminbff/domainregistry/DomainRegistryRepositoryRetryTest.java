@@ -71,7 +71,7 @@ class DomainRegistryRepositoryRetryTest {
                                    Mono<String>... rest) {
         when(rows.insertReturningId(anyString(), anyString(), anyString(), anyString(),
                 anyString(), anyString(), anyString(), anyBoolean(), any(), anyString(),
-                any(), anyString(), anyString(), anyString()))
+                any(), anyString(), anyString(), anyString(), any(), any()))
                 .thenReturn(first, rest);
     }
 
@@ -90,7 +90,7 @@ class DomainRegistryRepositoryRetryTest {
 
         verify(rows, times(5)).insertReturningId(anyString(), anyString(), anyString(),
                 anyString(), anyString(), anyString(), anyString(), anyBoolean(), any(),
-                anyString(), any(), anyString(), anyString(), anyString());
+                anyString(), any(), anyString(), anyString(), anyString(), any(), any());
     }
 
     @Test
@@ -121,7 +121,7 @@ class DomainRegistryRepositoryRetryTest {
         // Exactly the bound: fewer means the retry was weakened, more means it was unbounded.
         verify(rows, times(5)).insertReturningId(anyString(), anyString(), anyString(),
                 anyString(), anyString(), anyString(), anyString(), anyBoolean(), any(),
-                anyString(), any(), anyString(), anyString(), anyString());
+                anyString(), any(), anyString(), anyString(), anyString(), any(), any());
     }
 
     @Test
@@ -136,6 +136,6 @@ class DomainRegistryRepositoryRetryTest {
 
         verify(rows, times(1)).insertReturningId(anyString(), anyString(), anyString(),
                 anyString(), anyString(), anyString(), anyString(), anyBoolean(), any(),
-                anyString(), any(), anyString(), anyString(), anyString());
+                anyString(), any(), anyString(), anyString(), anyString(), any(), any());
     }
 }

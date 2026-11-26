@@ -744,4 +744,10 @@
       fill in on their next sign-in. Appended LAST.
     -->
     <include file="db/changelog/410-account-casdoor-username.xml"/>
+    <!--
+      420 — domain_registry.brand_title / headscale_url (hugmesh-admin-bff-api#100, decision
+      87e = A): the two values the generator's brand-repo render needs and the node agent had
+      to derive. Additive, nullable columns on the 012 table; appended LAST.
+    -->
+    <include file="db/changelog/420-domain-registry-brand-title-headscale-url.xml"/>
 </databaseChangeLog>

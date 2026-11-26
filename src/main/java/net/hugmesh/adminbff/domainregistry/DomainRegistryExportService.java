@@ -92,7 +92,10 @@ public class DomainRegistryExportService {
                     // validates it as a CLOSED enum and refuses the entry otherwise; the MCS
                     // pair is carried RAW, nulls included — a row allocated before 29c has no
                     // categories and must read as "not provisionable", never as a default.
-                    DomainIdp.normalize(d.idp()), d.selinuxLevel(), d.selinuxLevelPg()));
+                    DomainIdp.normalize(d.idp()), d.selinuxLevel(), d.selinuxLevelPg(),
+                    // DECISION 87e: carried RAW (null = not set, the agent keeps deriving) and,
+                    // like the decision-29 fields, OUTSIDE canonicalBytes — see its javadoc.
+                    d.brandTitle(), d.headscaleUrl()));
         }
         // Deterministic ordering so the content-hash + signature are reproducible.
         entries.sort(Comparator.comparing(DomainEntry::clusterDomain));
@@ -129,9 +132,10 @@ public class DomainRegistryExportService {
      * </pre>
      * The same bytes the generator domain-reconcile agent recomputes to verify.
      *
-     * <h3>WHY THE DECISION-29 FIELDS ARE NOT IN HERE (read before "fixing" it)</h3>
-     * {@code idp}, {@code selinuxLevel} and {@code selinuxLevelPg} are on the JSON entry but
-     * NOT in these bytes, and that is deliberate. hugmesh-generator
+     * <h3>WHY THE DECISION-29 AND DECISION-87e FIELDS ARE NOT IN HERE (read before "fixing" it)</h3>
+     * {@code idp}, {@code selinuxLevel}, {@code selinuxLevelPg}, {@code brandTitle} and
+     * {@code headscaleUrl} are on the JSON entry but NOT in these bytes, and that is deliberate
+     * (decision 87e = A says so for the last two in as many words). hugmesh-generator
      * {@code specs/usr/lib/hugmesh/domain-verify.sh:domain_canonical_bytes} reconstructs this
      * encoding from the JSON with a jq expression naming exactly these TEN fields, and
      * {@code domain_verify_export} FAILS CLOSED (keeps the last-good cache, emits no CA and no
@@ -141,8 +145,8 @@ public class DomainRegistryExportService {
      * <p>The correct migration is a two-repo lockstep in this order: (1) teach the consumer to
      * accept {@code v1-domain} AND {@code v2-domain}; (2) ship it; (3) only then emit v2 here.
      * Until that happens the three fields travel UNSIGNED inside a signed envelope — the
-     * residual risk is that anything that gets past the export's mTLS can flip {@code idp} or
-     * an MCS category without breaking the signature.
+     * residual risk is that anything that gets past the export's mTLS can flip {@code idp}, an
+     * MCS category, the brand title or the headscale URL without breaking the signature.
      * {@code DomainRegistryExportServiceTest.canonicalBytes_stillCarriesExactlyTheV1TenFields}
      * pins this shape so the change can only be made deliberately.
      */

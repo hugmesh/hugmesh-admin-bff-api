@@ -15,6 +15,7 @@ import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import net.hugmesh.adminbff.web.dto.AllocateDomainRequest;
 import net.hugmesh.adminbff.web.dto.CreateDomainRequest;
 import net.hugmesh.adminbff.web.dto.DomainResponse;
 import net.hugmesh.adminbff.web.dto.UpdateDomainRequest;
@@ -111,6 +112,27 @@ public class DomainRegistryController {
         return service.update(clusterDomain, body).map(DomainResponse::of);
     }
 
+    // ── Allocate now (SUPERADMIN; decision 89c — repair a pre-decision-29 row) ───────
+    /**
+     * Give a domain registered before decision 29 what it lacks to be provisionable: its MCS
+     * category pair (from the allocator, never from the caller) and, when it has none, its slug
+     * (from the body, set ONCE). 409 when the row already has both, when the body names a slug
+     * different from the stored one, or when the slug is taken; 400 for an invalid slug or a
+     * missing one on a slug-less row; 404 for an unknown domain. Audited by an
+     * {@code [domain-registry] AUDIT allocate-now} log line naming the actor.
+     */
+    @PreAuthorize("hasRole('SUPERADMIN')")
+    @Operation(summary = "Allocate now", operationId = "domainRegistryAllocateNow")
+    @PostMapping("/{clusterDomain}/allocate")
+    public Mono<DomainResponse> allocateNow(
+            @PathVariable @NotBlank @Size(max = 253) String clusterDomain,
+            @Valid @RequestBody(required = false) AllocateDomainRequest body,
+            Authentication auth) {
+        return service.allocateNow(clusterDomain, body == null ? null : body.nsPrefix(),
+                        subject(auth))
+                .map(DomainResponse::of);
+    }
+
     // ── Provisioning STATUS read (SUPERADMIN; "registered but not yet provisioned") ──
     /**
      * The provisioning-status read the admin-ui Domains console renders the
@@ -151,6 +173,11 @@ public class DomainRegistryController {
      * reconcile agent presents the SUPERADMIN service identity over mTLS). The optional
      * {@code node} fingerprint is pinned into the export header as PROVENANCE only (it does
      * NOT scope the cross-domain body).
+     *
+     * <p>DECISION 89b = A: a node agent does NOT call this route — it holds the shared
+     * {@code X-Internal-Token}, which grants {@code ROLE_SERVICE} and never SUPERADMIN. It fetches
+     * the byte-identical mirror {@code GET /bff/internal/domains/export}
+     * ({@link DomainRegistryInternalController}). This SUPERADMIN route stays for the console.
      */
     @PreAuthorize("hasRole('SUPERADMIN')")
     @Operation(summary = "Export", operationId = "domainRegistryExport")
