@@ -2938,48 +2938,6 @@
         }
       }
     },
-    "/bff/internal/domains/{clusterDomain}/reconcile-ack" : {
-      "post" : {
-        "tags" : [ "domain-registry-internal-controller" ],
-        "summary" : "Reconcile ack",
-        "operationId" : "domainRegistryInternalReconcileAck",
-        "parameters" : [ {
-          "name" : "clusterDomain",
-          "in" : "path",
-          "required" : true,
-          "schema" : {
-            "maxLength" : 253,
-            "minLength" : 0,
-            "type" : "string"
-          }
-        } ],
-        "requestBody" : {
-          "content" : {
-            "application/json" : {
-              "schema" : {
-                "$ref" : "#/components/schemas/DomainReconcileAckRequest"
-              }
-            }
-          },
-          "required" : true
-        },
-        "responses" : {
-          "200" : {
-            "description" : "OK",
-            "content" : {
-              "application/json" : {
-                "schema" : {
-                  "type" : "object",
-                  "additionalProperties" : {
-                    "type" : "object"
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/bff/internal/device-registry/phone-ingest" : {
       "post" : {
         "tags" : [ "phone-ingest-controller" ],
@@ -4841,44 +4799,6 @@
         }
       }
     },
-    "/bff/admin/domains/{clusterDomain}/allocate" : {
-      "post" : {
-        "tags" : [ "domain-registry-controller" ],
-        "summary" : "Allocate now",
-        "operationId" : "domainRegistryAllocateNow",
-        "parameters" : [ {
-          "name" : "clusterDomain",
-          "in" : "path",
-          "required" : true,
-          "schema" : {
-            "maxLength" : 253,
-            "minLength" : 0,
-            "type" : "string"
-          }
-        } ],
-        "requestBody" : {
-          "content" : {
-            "application/json" : {
-              "schema" : {
-                "$ref" : "#/components/schemas/AllocateDomainRequest"
-              }
-            }
-          }
-        },
-        "responses" : {
-          "200" : {
-            "description" : "OK",
-            "content" : {
-              "application/json" : {
-                "schema" : {
-                  "$ref" : "#/components/schemas/DomainResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/bff/admin/domain-lock/{role}/{user}" : {
       "post" : {
         "tags" : [ "admin-controller" ],
@@ -6607,93 +6527,6 @@
         }
       }
     },
-    "/bff/internal/go-live/export" : {
-      "get" : {
-        "tags" : [ "go-live-internal-export-controller" ],
-        "summary" : "Export (internal mirror)",
-        "operationId" : "goLiveInternalExport",
-        "parameters" : [ {
-          "name" : "node",
-          "in" : "query",
-          "required" : false,
-          "schema" : {
-            "maxLength" : 128,
-            "minLength" : 0,
-            "type" : "string"
-          }
-        } ],
-        "responses" : {
-          "200" : {
-            "description" : "OK",
-            "content" : {
-              "application/json" : {
-                "schema" : {
-                  "$ref" : "#/components/schemas/SignedGoLiveExport"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/bff/internal/egress-vpn/export" : {
-      "get" : {
-        "tags" : [ "egress-vpn-internal-export-controller" ],
-        "summary" : "Export (internal mirror)",
-        "operationId" : "egressVpnInternalExport",
-        "parameters" : [ {
-          "name" : "node",
-          "in" : "query",
-          "required" : true,
-          "schema" : {
-            "maxLength" : 128,
-            "minLength" : 0,
-            "type" : "string"
-          }
-        } ],
-        "responses" : {
-          "200" : {
-            "description" : "OK",
-            "content" : {
-              "application/json" : {
-                "schema" : {
-                  "$ref" : "#/components/schemas/SignedVpnExport"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/bff/internal/domains/export" : {
-      "get" : {
-        "tags" : [ "domain-registry-internal-controller" ],
-        "summary" : "Export (internal mirror)",
-        "operationId" : "domainRegistryInternalExport",
-        "parameters" : [ {
-          "name" : "node",
-          "in" : "query",
-          "required" : false,
-          "schema" : {
-            "maxLength" : 128,
-            "minLength" : 0,
-            "type" : "string"
-          }
-        } ],
-        "responses" : {
-          "200" : {
-            "description" : "OK",
-            "content" : {
-              "application/json" : {
-                "schema" : {
-                  "$ref" : "#/components/schemas/SignedDomainExport"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/bff/internal/domain-capabilities/{domain}/{capability}" : {
       "get" : {
         "tags" : [ "domain-capability-internal-controller" ],
@@ -6728,102 +6561,6 @@
                   "additionalProperties" : {
                     "type" : "boolean"
                   }
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/bff/internal/device-storage-pools/export" : {
-      "get" : {
-        "tags" : [ "storage-pool-internal-export-controller" ],
-        "summary" : "Export (internal mirror)",
-        "operationId" : "storagePoolInternalExport",
-        "parameters" : [ {
-          "name" : "node",
-          "in" : "query",
-          "required" : false,
-          "schema" : {
-            "maxLength" : 128,
-            "minLength" : 0,
-            "type" : "string"
-          }
-        } ],
-        "responses" : {
-          "200" : {
-            "description" : "OK",
-            "content" : {
-              "application/json" : {
-                "schema" : {
-                  "$ref" : "#/components/schemas/SignedStorageExport"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/bff/internal/device-radios/export" : {
-      "get" : {
-        "tags" : [ "radio-device-internal-export-controller" ],
-        "summary" : "Export (internal mirror)",
-        "operationId" : "deviceRadioInternalExport",
-        "parameters" : [ {
-          "name" : "node",
-          "in" : "query",
-          "required" : false,
-          "schema" : {
-            "maxLength" : 128,
-            "minLength" : 0,
-            "type" : "string"
-          }
-        } ],
-        "responses" : {
-          "200" : {
-            "description" : "OK",
-            "content" : {
-              "application/json" : {
-                "schema" : {
-                  "$ref" : "#/components/schemas/SignedRadioExport"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/bff/internal/device-licenses/export" : {
-      "get" : {
-        "tags" : [ "device-license-internal-export-controller" ],
-        "summary" : "Export (internal mirror)",
-        "operationId" : "deviceLicenseInternalExport",
-        "parameters" : [ {
-          "name" : "mesh",
-          "in" : "query",
-          "required" : false,
-          "schema" : {
-            "maxLength" : 64,
-            "minLength" : 0,
-            "type" : "string"
-          }
-        }, {
-          "name" : "node",
-          "in" : "query",
-          "required" : false,
-          "schema" : {
-            "maxLength" : 128,
-            "minLength" : 0,
-            "type" : "string"
-          }
-        } ],
-        "responses" : {
-          "200" : {
-            "description" : "OK",
-            "content" : {
-              "application/json" : {
-                "schema" : {
-                  "$ref" : "#/components/schemas/SignedExport"
                 }
               }
             }
@@ -10161,16 +9898,6 @@
             "maxLength" : 16,
             "minLength" : 0,
             "type" : "string"
-          },
-          "brandTitle" : {
-            "maxLength" : 128,
-            "minLength" : 0,
-            "type" : "string"
-          },
-          "headscaleUrl" : {
-            "maxLength" : 512,
-            "minLength" : 0,
-            "type" : "string"
           }
         }
       },
@@ -10232,12 +9959,6 @@
             "type" : "string"
           },
           "selinuxLevelPg" : {
-            "type" : "string"
-          },
-          "brandTitle" : {
-            "type" : "string"
-          },
-          "headscaleUrl" : {
             "type" : "string"
           }
         }
@@ -11436,22 +11157,6 @@
           }
         }
       },
-      "DomainReconcileAckRequest" : {
-        "required" : [ "appsetRegistered", "generation" ],
-        "type" : "object",
-        "properties" : {
-          "caProvisioned" : {
-            "type" : "boolean"
-          },
-          "appsetRegistered" : {
-            "type" : "boolean"
-          },
-          "generation" : {
-            "type" : "integer",
-            "format" : "int64"
-          }
-        }
-      },
       "EnterpriseProfile" : {
         "type" : "object",
         "properties" : {
@@ -12508,26 +12213,6 @@
             "maxLength" : 16,
             "minLength" : 0,
             "type" : "string"
-          },
-          "brandTitle" : {
-            "maxLength" : 128,
-            "minLength" : 0,
-            "type" : "string"
-          },
-          "headscaleUrl" : {
-            "maxLength" : 512,
-            "minLength" : 0,
-            "type" : "string"
-          }
-        }
-      },
-      "AllocateDomainRequest" : {
-        "type" : "object",
-        "properties" : {
-          "nsPrefix" : {
-            "maxLength" : 64,
-            "minLength" : 0,
-            "type" : "string"
           }
         }
       },
@@ -13409,437 +13094,6 @@
           }
         }
       },
-      "GoLiveExportBody" : {
-        "type" : "object",
-        "properties" : {
-          "node" : {
-            "type" : "string"
-          },
-          "generation" : {
-            "type" : "integer",
-            "format" : "int64"
-          },
-          "entries" : {
-            "type" : "array",
-            "items" : {
-              "$ref" : "#/components/schemas/GoLiveIntentEntry"
-            }
-          }
-        }
-      },
-      "GoLiveIntentEntry" : {
-        "type" : "object",
-        "properties" : {
-          "clusterDomain" : {
-            "type" : "string"
-          },
-          "targetState" : {
-            "type" : "string"
-          },
-          "exposureModel" : {
-            "type" : "string"
-          },
-          "provider" : {
-            "type" : "string"
-          },
-          "requestedBy" : {
-            "type" : "string"
-          },
-          "intentId" : {
-            "type" : "string"
-          },
-          "generation" : {
-            "type" : "integer",
-            "format" : "int64"
-          }
-        }
-      },
-      "SignedGoLiveExport" : {
-        "type" : "object",
-        "properties" : {
-          "body" : {
-            "$ref" : "#/components/schemas/GoLiveExportBody"
-          },
-          "contentHash" : {
-            "type" : "string"
-          },
-          "signature" : {
-            "type" : "string"
-          },
-          "publicKey" : {
-            "type" : "string"
-          },
-          "signed" : {
-            "type" : "boolean"
-          }
-        }
-      },
-      "SignedVpnExport" : {
-        "type" : "object",
-        "properties" : {
-          "body" : {
-            "$ref" : "#/components/schemas/VpnExportBody"
-          },
-          "contentHash" : {
-            "type" : "string"
-          },
-          "signature" : {
-            "type" : "string"
-          },
-          "publicKey" : {
-            "type" : "string"
-          },
-          "signed" : {
-            "type" : "boolean"
-          }
-        }
-      },
-      "VpnEgressEntry" : {
-        "type" : "object",
-        "properties" : {
-          "configName" : {
-            "type" : "string"
-          },
-          "kind" : {
-            "type" : "string"
-          },
-          "secretRef" : {
-            "type" : "string"
-          },
-          "endpoint" : {
-            "type" : "string"
-          },
-          "serviceSlugs" : {
-            "type" : "array",
-            "items" : {
-              "type" : "string"
-            }
-          }
-        }
-      },
-      "VpnExportBody" : {
-        "type" : "object",
-        "properties" : {
-          "node" : {
-            "type" : "string"
-          },
-          "generation" : {
-            "type" : "integer",
-            "format" : "int64"
-          },
-          "entries" : {
-            "type" : "array",
-            "items" : {
-              "$ref" : "#/components/schemas/VpnEgressEntry"
-            }
-          }
-        }
-      },
-      "DomainEntry" : {
-        "type" : "object",
-        "properties" : {
-          "clusterDomain" : {
-            "type" : "string"
-          },
-          "brand" : {
-            "type" : "string"
-          },
-          "org" : {
-            "type" : "string"
-          },
-          "caRef" : {
-            "type" : "string"
-          },
-          "nsPrefix" : {
-            "type" : "string"
-          },
-          "casdoorOrg" : {
-            "type" : "string"
-          },
-          "meshTag" : {
-            "type" : "string"
-          },
-          "caProvisioned" : {
-            "type" : "boolean"
-          },
-          "appsetRegistered" : {
-            "type" : "boolean"
-          },
-          "generation" : {
-            "type" : "integer",
-            "format" : "int64"
-          },
-          "idp" : {
-            "type" : "string"
-          },
-          "selinuxLevel" : {
-            "type" : "string"
-          },
-          "selinuxLevelPg" : {
-            "type" : "string"
-          },
-          "brandTitle" : {
-            "type" : "string"
-          },
-          "headscaleUrl" : {
-            "type" : "string"
-          }
-        }
-      },
-      "DomainExportBody" : {
-        "type" : "object",
-        "properties" : {
-          "node" : {
-            "type" : "string"
-          },
-          "generation" : {
-            "type" : "integer",
-            "format" : "int64"
-          },
-          "entries" : {
-            "type" : "array",
-            "items" : {
-              "$ref" : "#/components/schemas/DomainEntry"
-            }
-          }
-        }
-      },
-      "SignedDomainExport" : {
-        "type" : "object",
-        "properties" : {
-          "body" : {
-            "$ref" : "#/components/schemas/DomainExportBody"
-          },
-          "contentHash" : {
-            "type" : "string"
-          },
-          "signature" : {
-            "type" : "string"
-          },
-          "publicKey" : {
-            "type" : "string"
-          },
-          "signed" : {
-            "type" : "boolean"
-          }
-        }
-      },
-      "AssignmentEntry" : {
-        "type" : "object",
-        "properties" : {
-          "serviceName" : {
-            "type" : "string"
-          },
-          "pvcName" : {
-            "type" : "string"
-          },
-          "requestedBytes" : {
-            "type" : "integer",
-            "format" : "int64"
-          }
-        }
-      },
-      "PoolEntry" : {
-        "type" : "object",
-        "properties" : {
-          "poolId" : {
-            "type" : "string"
-          },
-          "diskSerial" : {
-            "type" : "string"
-          },
-          "poolPath" : {
-            "type" : "string"
-          },
-          "reservedBytes" : {
-            "type" : "integer",
-            "format" : "int64"
-          },
-          "isExclusive" : {
-            "type" : "boolean"
-          },
-          "filesystem" : {
-            "type" : "string"
-          },
-          "assignments" : {
-            "type" : "array",
-            "items" : {
-              "$ref" : "#/components/schemas/AssignmentEntry"
-            }
-          }
-        }
-      },
-      "SignedStorageExport" : {
-        "type" : "object",
-        "properties" : {
-          "body" : {
-            "$ref" : "#/components/schemas/StorageExportBody"
-          },
-          "contentHash" : {
-            "type" : "string"
-          },
-          "signature" : {
-            "type" : "string"
-          },
-          "publicKey" : {
-            "type" : "string"
-          },
-          "signed" : {
-            "type" : "boolean"
-          }
-        }
-      },
-      "StorageExportBody" : {
-        "type" : "object",
-        "properties" : {
-          "nodeFp" : {
-            "type" : "string"
-          },
-          "generation" : {
-            "type" : "integer",
-            "format" : "int64"
-          },
-          "pools" : {
-            "type" : "array",
-            "items" : {
-              "$ref" : "#/components/schemas/PoolEntry"
-            }
-          }
-        }
-      },
-      "RadioEntry" : {
-        "type" : "object",
-        "properties" : {
-          "radioId" : {
-            "type" : "string"
-          },
-          "transport" : {
-            "type" : "string"
-          },
-          "serialPath" : {
-            "type" : "string"
-          },
-          "host" : {
-            "type" : "string"
-          },
-          "port" : {
-            "type" : "integer",
-            "format" : "int32"
-          },
-          "topicRoot" : {
-            "type" : "string"
-          },
-          "channelName" : {
-            "type" : "string"
-          },
-          "gatewayNodeId" : {
-            "type" : "string"
-          },
-          "meshChannel" : {
-            "type" : "integer",
-            "format" : "int32"
-          }
-        }
-      },
-      "RadioExportBody" : {
-        "type" : "object",
-        "properties" : {
-          "nodeFp" : {
-            "type" : "string"
-          },
-          "generation" : {
-            "type" : "integer",
-            "format" : "int64"
-          },
-          "radios" : {
-            "type" : "array",
-            "items" : {
-              "$ref" : "#/components/schemas/RadioEntry"
-            }
-          }
-        }
-      },
-      "SignedRadioExport" : {
-        "type" : "object",
-        "properties" : {
-          "body" : {
-            "$ref" : "#/components/schemas/RadioExportBody"
-          },
-          "contentHash" : {
-            "type" : "string"
-          },
-          "signature" : {
-            "type" : "string"
-          },
-          "publicKey" : {
-            "type" : "string"
-          },
-          "signed" : {
-            "type" : "boolean"
-          }
-        }
-      },
-      "AuthorizedOperator" : {
-        "type" : "object",
-        "properties" : {
-          "operator" : {
-            "type" : "string"
-          },
-          "machineKeyFp" : {
-            "type" : "string"
-          },
-          "hostname" : {
-            "type" : "string"
-          },
-          "keyFingerprints" : {
-            "type" : "array",
-            "items" : {
-              "type" : "string"
-            }
-          },
-          "via" : {
-            "type" : "string"
-          }
-        }
-      },
-      "ExportBody" : {
-        "type" : "object",
-        "properties" : {
-          "meshId" : {
-            "type" : "string"
-          },
-          "generation" : {
-            "type" : "integer",
-            "format" : "int64"
-          },
-          "operators" : {
-            "type" : "array",
-            "items" : {
-              "$ref" : "#/components/schemas/AuthorizedOperator"
-            }
-          }
-        }
-      },
-      "SignedExport" : {
-        "type" : "object",
-        "properties" : {
-          "body" : {
-            "$ref" : "#/components/schemas/ExportBody"
-          },
-          "contentHash" : {
-            "type" : "string"
-          },
-          "signature" : {
-            "type" : "string"
-          },
-          "publicKey" : {
-            "type" : "string"
-          },
-          "signed" : {
-            "type" : "boolean"
-          }
-        }
-      },
       "GameInstanceConnectionResponse" : {
         "type" : "object",
         "properties" : {
@@ -14345,6 +13599,431 @@
       },
       "ServerSentEventImageBuildEvent" : {
         "type" : "object"
+      },
+      "GoLiveExportBody" : {
+        "type" : "object",
+        "properties" : {
+          "node" : {
+            "type" : "string"
+          },
+          "generation" : {
+            "type" : "integer",
+            "format" : "int64"
+          },
+          "entries" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/GoLiveIntentEntry"
+            }
+          }
+        }
+      },
+      "GoLiveIntentEntry" : {
+        "type" : "object",
+        "properties" : {
+          "clusterDomain" : {
+            "type" : "string"
+          },
+          "targetState" : {
+            "type" : "string"
+          },
+          "exposureModel" : {
+            "type" : "string"
+          },
+          "provider" : {
+            "type" : "string"
+          },
+          "requestedBy" : {
+            "type" : "string"
+          },
+          "intentId" : {
+            "type" : "string"
+          },
+          "generation" : {
+            "type" : "integer",
+            "format" : "int64"
+          }
+        }
+      },
+      "SignedGoLiveExport" : {
+        "type" : "object",
+        "properties" : {
+          "body" : {
+            "$ref" : "#/components/schemas/GoLiveExportBody"
+          },
+          "contentHash" : {
+            "type" : "string"
+          },
+          "signature" : {
+            "type" : "string"
+          },
+          "publicKey" : {
+            "type" : "string"
+          },
+          "signed" : {
+            "type" : "boolean"
+          }
+        }
+      },
+      "SignedVpnExport" : {
+        "type" : "object",
+        "properties" : {
+          "body" : {
+            "$ref" : "#/components/schemas/VpnExportBody"
+          },
+          "contentHash" : {
+            "type" : "string"
+          },
+          "signature" : {
+            "type" : "string"
+          },
+          "publicKey" : {
+            "type" : "string"
+          },
+          "signed" : {
+            "type" : "boolean"
+          }
+        }
+      },
+      "VpnEgressEntry" : {
+        "type" : "object",
+        "properties" : {
+          "configName" : {
+            "type" : "string"
+          },
+          "kind" : {
+            "type" : "string"
+          },
+          "secretRef" : {
+            "type" : "string"
+          },
+          "endpoint" : {
+            "type" : "string"
+          },
+          "serviceSlugs" : {
+            "type" : "array",
+            "items" : {
+              "type" : "string"
+            }
+          }
+        }
+      },
+      "VpnExportBody" : {
+        "type" : "object",
+        "properties" : {
+          "node" : {
+            "type" : "string"
+          },
+          "generation" : {
+            "type" : "integer",
+            "format" : "int64"
+          },
+          "entries" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/VpnEgressEntry"
+            }
+          }
+        }
+      },
+      "DomainEntry" : {
+        "type" : "object",
+        "properties" : {
+          "clusterDomain" : {
+            "type" : "string"
+          },
+          "brand" : {
+            "type" : "string"
+          },
+          "org" : {
+            "type" : "string"
+          },
+          "caRef" : {
+            "type" : "string"
+          },
+          "nsPrefix" : {
+            "type" : "string"
+          },
+          "casdoorOrg" : {
+            "type" : "string"
+          },
+          "meshTag" : {
+            "type" : "string"
+          },
+          "caProvisioned" : {
+            "type" : "boolean"
+          },
+          "appsetRegistered" : {
+            "type" : "boolean"
+          },
+          "generation" : {
+            "type" : "integer",
+            "format" : "int64"
+          },
+          "idp" : {
+            "type" : "string"
+          },
+          "selinuxLevel" : {
+            "type" : "string"
+          },
+          "selinuxLevelPg" : {
+            "type" : "string"
+          }
+        }
+      },
+      "DomainExportBody" : {
+        "type" : "object",
+        "properties" : {
+          "node" : {
+            "type" : "string"
+          },
+          "generation" : {
+            "type" : "integer",
+            "format" : "int64"
+          },
+          "entries" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/DomainEntry"
+            }
+          }
+        }
+      },
+      "SignedDomainExport" : {
+        "type" : "object",
+        "properties" : {
+          "body" : {
+            "$ref" : "#/components/schemas/DomainExportBody"
+          },
+          "contentHash" : {
+            "type" : "string"
+          },
+          "signature" : {
+            "type" : "string"
+          },
+          "publicKey" : {
+            "type" : "string"
+          },
+          "signed" : {
+            "type" : "boolean"
+          }
+        }
+      },
+      "AssignmentEntry" : {
+        "type" : "object",
+        "properties" : {
+          "serviceName" : {
+            "type" : "string"
+          },
+          "pvcName" : {
+            "type" : "string"
+          },
+          "requestedBytes" : {
+            "type" : "integer",
+            "format" : "int64"
+          }
+        }
+      },
+      "PoolEntry" : {
+        "type" : "object",
+        "properties" : {
+          "poolId" : {
+            "type" : "string"
+          },
+          "diskSerial" : {
+            "type" : "string"
+          },
+          "poolPath" : {
+            "type" : "string"
+          },
+          "reservedBytes" : {
+            "type" : "integer",
+            "format" : "int64"
+          },
+          "isExclusive" : {
+            "type" : "boolean"
+          },
+          "filesystem" : {
+            "type" : "string"
+          },
+          "assignments" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/AssignmentEntry"
+            }
+          }
+        }
+      },
+      "SignedStorageExport" : {
+        "type" : "object",
+        "properties" : {
+          "body" : {
+            "$ref" : "#/components/schemas/StorageExportBody"
+          },
+          "contentHash" : {
+            "type" : "string"
+          },
+          "signature" : {
+            "type" : "string"
+          },
+          "publicKey" : {
+            "type" : "string"
+          },
+          "signed" : {
+            "type" : "boolean"
+          }
+        }
+      },
+      "StorageExportBody" : {
+        "type" : "object",
+        "properties" : {
+          "nodeFp" : {
+            "type" : "string"
+          },
+          "generation" : {
+            "type" : "integer",
+            "format" : "int64"
+          },
+          "pools" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/PoolEntry"
+            }
+          }
+        }
+      },
+      "RadioEntry" : {
+        "type" : "object",
+        "properties" : {
+          "radioId" : {
+            "type" : "string"
+          },
+          "transport" : {
+            "type" : "string"
+          },
+          "serialPath" : {
+            "type" : "string"
+          },
+          "host" : {
+            "type" : "string"
+          },
+          "port" : {
+            "type" : "integer",
+            "format" : "int32"
+          },
+          "topicRoot" : {
+            "type" : "string"
+          },
+          "channelName" : {
+            "type" : "string"
+          },
+          "gatewayNodeId" : {
+            "type" : "string"
+          },
+          "meshChannel" : {
+            "type" : "integer",
+            "format" : "int32"
+          }
+        }
+      },
+      "RadioExportBody" : {
+        "type" : "object",
+        "properties" : {
+          "nodeFp" : {
+            "type" : "string"
+          },
+          "generation" : {
+            "type" : "integer",
+            "format" : "int64"
+          },
+          "radios" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/RadioEntry"
+            }
+          }
+        }
+      },
+      "SignedRadioExport" : {
+        "type" : "object",
+        "properties" : {
+          "body" : {
+            "$ref" : "#/components/schemas/RadioExportBody"
+          },
+          "contentHash" : {
+            "type" : "string"
+          },
+          "signature" : {
+            "type" : "string"
+          },
+          "publicKey" : {
+            "type" : "string"
+          },
+          "signed" : {
+            "type" : "boolean"
+          }
+        }
+      },
+      "AuthorizedOperator" : {
+        "type" : "object",
+        "properties" : {
+          "operator" : {
+            "type" : "string"
+          },
+          "machineKeyFp" : {
+            "type" : "string"
+          },
+          "hostname" : {
+            "type" : "string"
+          },
+          "keyFingerprints" : {
+            "type" : "array",
+            "items" : {
+              "type" : "string"
+            }
+          },
+          "via" : {
+            "type" : "string"
+          }
+        }
+      },
+      "ExportBody" : {
+        "type" : "object",
+        "properties" : {
+          "meshId" : {
+            "type" : "string"
+          },
+          "generation" : {
+            "type" : "integer",
+            "format" : "int64"
+          },
+          "operators" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/AuthorizedOperator"
+            }
+          }
+        }
+      },
+      "SignedExport" : {
+        "type" : "object",
+        "properties" : {
+          "body" : {
+            "$ref" : "#/components/schemas/ExportBody"
+          },
+          "contentHash" : {
+            "type" : "string"
+          },
+          "signature" : {
+            "type" : "string"
+          },
+          "publicKey" : {
+            "type" : "string"
+          },
+          "signed" : {
+            "type" : "boolean"
+          }
+        }
       },
       "BackupArtifact" : {
         "type" : "object",

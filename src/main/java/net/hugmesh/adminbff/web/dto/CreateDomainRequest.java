@@ -73,16 +73,5 @@ public record CreateDomainRequest(
          *  per-domain Casdoor). Anything else is a 400. */
         @Size(max = 16, message = "idp is too long")
         @Nullable
-        String idp,
-
-        // DECISION 87e (hugmesh-admin-bff-api#100): the BRAND_TITLE / HEADSCALE_URL
-        // generate-brand-repos.sh needs. Optional; null (or empty) = not set, and the node agent
-        // keeps deriving them. Character rules: DomainBrandFields.
-        @Size(max = 128, message = "brandTitle is too long")
-        @Nullable
-        String brandTitle,
-
-        @Size(max = 512, message = "headscaleUrl is too long")
-        @Nullable
-        String headscaleUrl) {
+        String idp) {
 }

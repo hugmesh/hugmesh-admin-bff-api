@@ -217,8 +217,7 @@ class DomainAppSetElementSchemaGuardTest {
         assertThat(components)
                 .as("the band-190 provisioning-status columns are the ack endpoint's write "
                         + "surface (changelog 190-domain-registry-provisioning-status.xml); "
-                        + "POST /bff/internal/domains/{d}/reconcile-ack (decision 89b) writes "
-                        + "appset_registered + last_reconciled_generation, never ca_provisioned")
+                        + "they are READ-only today — nothing in this repo writes them")
                 .contains("caProvisioned", "appsetRegistered", "lastReconciledGeneration");
     }
 
