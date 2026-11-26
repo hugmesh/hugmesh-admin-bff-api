@@ -1,8 +1,6 @@
 package net.hugmesh.adminbff.support;
 
 import net.hugmesh.commons.testsupport.PostgresTestSupport;
-import org.springframework.test.context.DynamicPropertyRegistry;
-import org.springframework.test.context.DynamicPropertySource;
 
 import java.sql.Connection;
 import java.sql.SQLException;
@@ -43,26 +41,5 @@ public abstract class AdminBffPostgresTestSupport extends PostgresTestSupport {
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to create test 'adminbff_app' role on Testcontainers Postgres", e);
         }
-    }
-
-    /**
-     * Cap each test context's R2DBC pool (hugmesh-admin-bff-api#185).
-     *
-     * <p>The commons base starts its container at Postgres's default
-     * {@code max_connections=100}, and Spring Boot's R2DBC pool defaults to
-     * {@code initial-size=10}: every Spring context the TestContext cache keeps alive opens
-     * ten connections up front and holds them. Around the tenth cached context the server
-     * refuses the next one ("FATAL: sorry, too many clients already", then
-     * "Failed to create test database cmtest_N"), and WHICH classes fail moves with test
-     * order, so main went red on unrelated classes run after run. One connection up front
-     * and at most four per context keeps even a full cache under the ceiling. Spring
-     * applies every {@code @DynamicPropertySource} in the class hierarchy, so this adds to
-     * the base's database wiring and replaces nothing.
-     */
-    @DynamicPropertySource
-    static void capR2dbcPool(DynamicPropertyRegistry registry) {
-        registry.add("spring.r2dbc.pool.initial-size", () -> "1");
-        registry.add("spring.r2dbc.pool.max-size", () -> "4");
-        registry.add("spring.r2dbc.pool.max-idle-time", () -> "30s");
     }
 }
