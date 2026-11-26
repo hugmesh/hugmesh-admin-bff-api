@@ -458,17 +458,12 @@ app:
       # The otpauth:// issuer (brand) shown in the authenticator app + the WebAuthn RP name.
       issuer: "${APP_MFA_TOTP_ISSUER:HugMesh}"
     webauthn:
-      # The WebAuthn Relying Party (hugmesh-auth-core#39). UNSET (the default) = PER REQUEST:
-      # each ceremony runs under the page's own host when it is localhost or one of the
-      # mesh's domains (the sign-in issuer's host + rp-domains below); IP and .onion
-      # addresses are refused with a reason. SET = that one fixed RP ID for every request
-      # (with the origins allowlist), the behaviour before #39. With an auth-core older
-      # than #39 an empty value still means localhost, exactly as before.
-      rp-id: "${APP_MFA_WEBAUTHN_RP_ID:}"
-      origins: "${APP_MFA_WEBAUTHN_ORIGINS:}"
-      # Extra mesh domains (CSV) the per-request mode accepts beyond the issuer's host —
-      # e.g. every brand's own domain on a multi-brand mesh.
-      rp-domains: "${APP_MFA_WEBAUTHN_RP_DOMAINS:}"
+      # The WebAuthn Relying Party ID (the registrable domain, e.g. hugmesh.net). The
+      # registration/assertion ceremonies enforce this RP ID + the origin allowlist below.
+      rp-id: "${APP_MFA_WEBAUTHN_RP_ID:localhost}"
+      # CSV origin allowlist for the WebAuthn ceremonies (e.g.
+      # https://admin.hugmesh.net). A response from any other origin is rejected.
+      origins: "${APP_MFA_WEBAUTHN_ORIGINS:https://localhost}"
   # A2 opaque-session COOKIE bridge (D6+D8). The cookie-OR-bearer dual-READ
   # (SessionCookieWebFilter) is ALWAYS-ON + UNFLAGGED + backward-compatible. This flag
   # gates ONLY the cookie MINT (login/register/sessionOut Set-Cookie) AND the
